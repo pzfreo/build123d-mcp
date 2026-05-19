@@ -113,10 +113,12 @@ annotate(d, "len_dim", label="25")
         assert abs(ann["measured_length"] - 25.0) < 0.01
         assert ann["type"] == "DimensionLine"
 
-    def test_annotate_vanilla_extension_line_without_label_auto_derives_from_length(self, session):
-        """Without an explicit label= kwarg, label_str is auto-derived from
-        the measured dimension length (build123d doesn't expose the constructor
-        label on the shape object)."""
+    def test_annotate_vanilla_extension_line_without_label_has_no_label_str(self, session):
+        """Without an explicit label= kwarg, label_str is absent.
+        build123d doesn't expose the constructor label after construction, so
+        we can't distinguish a correctly-labelled dim from an axis-swap bug.
+        Leaving label_str absent means lint skips the check rather than
+        producing a false negative."""
         session.execute("""
 from build123d import ExtensionLine, Draft
 draft = Draft(font_size=2.5, decimal_precision=1, arrow_length=1.0, line_width=0.1)
@@ -127,8 +129,36 @@ annotate(w, "no_label_dim")
         assert ann is not None
         assert "measured_length" in ann
         assert abs(ann["measured_length"] - 30.0) < 0.01
-        # Auto-derived label from measured_length rounded to 1 decimal place
-        assert ann["label_str"] == "30.0"
+        assert "label_str" not in ann
+
+    def test_annotate_vanilla_el_with_wrong_label_fires_lint(self, session):
+        """Regression for #119: annotate(el, name, label="99") on a 30mm path
+        must produce a lint violation, not a false negative."""
+        session.execute("""
+from build123d import ExtensionLine, Draft
+draft = Draft(font_size=2.5, decimal_precision=1, arrow_length=1.0, line_width=0.1)
+bad = ExtensionLine(border=[(-15, -30, 0), (15, -30, 0)], offset=-6, draft=draft, label="99")
+annotate(bad, "axis_swap_bug", label="99")
+""")
+        from build123d_mcp.tools.lint_drawing import lint_drawing
+        import json
+        out = json.loads(lint_drawing(session))
+        assert any(v["check"] == "label_vs_measured" for v in out["violations"]), (
+            "lint must flag 99 vs 30mm mismatch when label= is passed explicitly"
+        )
+
+    def test_annotate_vanilla_el_without_label_no_false_negative(self, session):
+        """Regression for #119: annotate(el, name) without label= on a 30mm
+        path labelled '99' must NOT produce a false-clean lint result."""
+        session.execute("""
+from build123d import ExtensionLine, Draft
+draft = Draft(font_size=2.5, decimal_precision=1, arrow_length=1.0, line_width=0.1)
+bad = ExtensionLine(border=[(-15, -30, 0), (15, -30, 0)], offset=-6, draft=draft, label="99")
+annotate(bad, "axis_swap_bug")   # no label= kwarg
+""")
+        ann = session.drawing_annotations.get("axis_swap_bug")
+        # label_str must be absent — lint cannot fire a false negative
+        assert "label_str" not in ann
 
     def test_annotate_label_kwarg_ignored_when_result_has_label_str(self, session):
         """For DimResult (which already exposes label_str), an explicit
@@ -294,7 +324,9 @@ annotate(w, "width")
 # ---------------------------------------------------------------------------
 
 class TestAnnotateLabelFallback:
-    def test_vanilla_extension_line_gets_auto_label(self, session):
+    def test_vanilla_extension_line_without_kwarg_has_no_label_str(self, session):
+        """Without label= kwarg, label_str is absent — not derived from measured_length.
+        Auto-derive was removed because it caused false-negative lint results (#119)."""
         session.execute("""
 from build123d import *
 from build123d import Draft, ExtensionLine, Mode
@@ -304,9 +336,7 @@ annotate(el, "dim")
 """)
         ann = session.drawing_annotations.get("dim")
         assert ann is not None
-        assert "label_str" in ann
-        # Auto-derived from measured length (20.0), not the custom "20" label
-        assert ann["label_str"] == "20.0"
+        assert "label_str" not in ann
         assert abs(ann["measured_length"] - 20.0) < 0.01
 
     def test_explicit_label_kwarg_wins(self, session):

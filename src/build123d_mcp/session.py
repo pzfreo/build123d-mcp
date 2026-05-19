@@ -60,13 +60,12 @@ class Session:
                     without annotation metadata.
                 name: object name for the session registry. Defaults to
                     label_str (when available) or "annotation".
-                label: explicit label string override. Use when the dim has a
-                    custom label that differs from the measured length (e.g.
-                    ExtensionLine(..., label="40") on a 20 mm segment). If
-                    omitted for vanilla ExtensionLine/DimensionLine, the label
-                    is auto-derived from the measured dimension length. To
-                    avoid manual duplication use dim_linear() from
-                    build123d_drafting, which stores the exact label.
+                label: explicit label string. Required for lint to check
+                    axis swaps on vanilla ExtensionLine/DimensionLine — pass
+                    the same string you gave to the ExtensionLine constructor
+                    (e.g. label="40"). Omit only when you don't need lint
+                    coverage. For automatic label capture without duplication
+                    use dim_linear() from build123d_drafting instead.
             """
             if name is None:
                 name = getattr(result, "label_str", None) or "annotation"
@@ -86,11 +85,15 @@ class Session:
             if "label_str" not in meta:
                 if label is not None:
                     meta["label_str"] = label
-                elif "measured_length" in meta:
-                    # build123d does not expose the constructor label after
-                    # construction (.label is always ''); derive from length.
-                    # Use dim_linear() from build123d_drafting for custom labels.
-                    meta["label_str"] = str(round(meta["measured_length"], 1))
+                # Do NOT auto-derive label_str from measured_length.
+                # build123d doesn't expose the constructor label after
+                # construction, so we can't distinguish ExtensionLine(label="99")
+                # (axis-swap bug) from one built without a label. Deriving
+                # label_str from measured_length makes lint always see
+                # label==measured → silent false negatives. Leave label_str
+                # absent so lint skips the check rather than falsely approving
+                # a potentially wrong drawing. Pass label= explicitly or use
+                # dim_linear() from build123d_drafting to enable lint.
             drawing_annotations[name] = meta
             shape = getattr(result, "shape", result)
             objects[name] = shape
