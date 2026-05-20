@@ -80,12 +80,35 @@ def _lint_overlap(annotations: dict, objects: dict) -> list[dict]:
 
     Uses dim_level_y (stored by annotate()) to skip stacked dims whose
     extension lines share the same X range but occupy different Y levels.
+
+    Handles centerline objects specially:
+    - centerline-vs-centerline pairs are skipped.
+    - dim-vs-centerline pairs use the dim's label_bbox for precision.
     """
     violations: list[dict] = []
     names = [n for n in annotations if n in objects]
     for i, name_a in enumerate(names):
         for name_b in names[i + 1:]:
             try:
+                is_cl_a = annotations[name_a].get("type") == "centerline"
+                is_cl_b = annotations[name_b].get("type") == "centerline"
+
+                # Skip centerline-vs-centerline
+                if is_cl_a and is_cl_b:
+                    continue
+
+                # Centerline-vs-dim: use label_bbox for precision
+                if is_cl_a or is_cl_b:
+                    dim_name = name_b if is_cl_a else name_a
+                    cl_name = name_a if is_cl_a else name_b
+                    v = _lint_centerline_label_overlap(
+                        dim_name, annotations[dim_name], objects[dim_name],
+                        cl_name, objects[cl_name],
+                    )
+                    if v:
+                        violations.append(v)
+                    continue
+
                 level_a = annotations[name_a].get("dim_level_y")
                 level_b = annotations[name_b].get("dim_level_y")
                 if (level_a is not None and level_b is not None
@@ -108,6 +131,60 @@ def _lint_overlap(annotations: dict, objects: dict) -> list[dict]:
             except Exception:
                 pass
     return violations
+
+
+def _lint_centerline_label_overlap(
+    dim_name: str,
+    dim_ann: dict,
+    dim_obj,
+    cl_name: str,
+    cl_obj,
+) -> dict | None:
+    """Return a violation dict if the dim's label overlaps the centerline, else None."""
+    try:
+        cl_bb = cl_obj.bounding_box()
+
+        # Use stored label_bbox when available; fall back to full object bbox
+        label_bbox = dim_ann.get("label_bbox")
+        if label_bbox is not None:
+            lmin_x, lmin_y, lmax_x, lmax_y = label_bbox
+        else:
+            db = dim_obj.bounding_box()
+            lmin_x, lmin_y = db.min.X, db.min.Y
+            lmax_x, lmax_y = db.max.X, db.max.Y
+
+        cl_w = cl_bb.max.X - cl_bb.min.X
+        cl_h = cl_bb.max.Y - cl_bb.min.Y
+
+        if cl_w < 0.1:
+            # Vertical centerline: check if its X falls inside label X range
+            cl_x = (cl_bb.min.X + cl_bb.max.X) / 2.0
+            ox = min(cl_x - lmin_x, lmax_x - cl_x) if lmin_x < cl_x < lmax_x else 0.0
+        else:
+            ox = max(0.0, min(lmax_x, cl_bb.max.X) - max(lmin_x, cl_bb.min.X))
+
+        if cl_h < 0.1:
+            # Horizontal centerline: check if its Y falls inside label Y range
+            cl_y = (cl_bb.min.Y + cl_bb.max.Y) / 2.0
+            oy = min(cl_y - lmin_y, lmax_y - cl_y) if lmin_y < cl_y < lmax_y else 0.0
+        else:
+            oy = max(0.0, min(lmax_y, cl_bb.max.Y) - max(lmin_y, cl_bb.min.Y))
+
+        if ox > 0.5 and oy > 0.5:
+            dim_label = dim_ann.get("label_str", dim_name)
+            return {
+                "severity": "warning",
+                "check": "label_centerline_overlap",
+                "object": f"{dim_name}+{cl_name}",
+                "message": (
+                    f"label '{dim_label}' overlaps centerline '{cl_name}' by "
+                    f"{ox:.1f}×{oy:.1f} mm — use label_offset_x to shift the label "
+                    f"or increase the dim offset to clear the centerline"
+                ),
+            }
+    except Exception:
+        pass
+    return None
 
 
 def _lint_page_bounds(annotations: dict, objects: dict, page: dict) -> list[dict]:

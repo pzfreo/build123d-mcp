@@ -420,6 +420,40 @@ show(result, "stacked_dims_demo")""",
 
     Section(
         text="""\
+## CENTERLINE-LABEL COLLISION AVOIDANCE
+## =====================================
+## Problem: when a dim line crosses a centerline at the label's midpoint, the
+## label text overlaps the centerline — most visible on diameter dims (Ø5.0 H8)
+## where the dim line passes through the bore centre.
+##
+## Detection: register centerlines with register_centerline(shape, name) so
+## lint_drawing() can flag the collision before rendering.
+##
+## Fix options:
+##   1. Shift the label along the dim line away from the crossing:
+##        d = dim_linear(p1, p2, "above", 8, draft, label="Ø5.0 H8", label_offset_x=15)
+##      label_offset_x is a signed distance from the midpoint (mm). Positive
+##      shifts toward p2; negative shifts toward p1.
+##
+##   2. Replace the inline label with a leader annotation pointing to the feature:
+##        ann = leader(tip=(0, 0, 0), elbow=(20, 12, 0), label="Ø5.0 H8", draft=draft)
+##        annotate(ann, "bore_dim")
+##      A leader always places its text to one side of the tip, never across it.
+##
+##   3. Increase the dim offset so the dim line clears the centerline region:
+##        d = dim_linear(p1, p2, "above", 20, draft, label="Ø5.0 H8")
+##      Only works if the dim layout has room for a larger offset.
+##
+## Lint workflow:
+##   cl = Edge.make_line((0, -50, 0), (0, 50, 0))  # vertical centreline through bore
+##   register_centerline(Compound(children=[cl]), "bore_cl")
+##   d = dim_linear((-10, 0, 0), (10, 0, 0), "above", 8, draft, label="Ø5.0 H8")
+##   annotate(d, "bore_dim")
+##   lint_drawing()  # → label_centerline_overlap warning if label crosses bore_cl"""
+    ),
+
+    Section(
+        text="""\
 ## Limitations and gaps in build123d.drafting today
 # - No HoleTable class: roll your own via face_inventory + DimensionLine (see above).
 # - No GD&T symbols: surface finish marks, datum triangles, control frames.

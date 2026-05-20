@@ -13,7 +13,8 @@ from build123d_mcp.security import (
 
 
 # Names injected by the session itself — excluded from rollback and new-key detection.
-_INJECTED = frozenset({"__builtins__", "show", "named_face", "annotate"})
+_INJECTED = frozenset({"__builtins__", "show", "named_face", "annotate",
+                       "register_centerline", "set_page"})
 
 
 class Session:
@@ -72,7 +73,8 @@ class Session:
                 name = getattr(result, "label_str", None) or "annotation"
             meta: dict[str, Any] = {"type": type(result).__name__}
             # Helper-library duck-typed extraction.
-            for attr in ("label_str", "measured_length", "tip", "elbow"):
+            for attr in ("label_str", "measured_length", "tip", "elbow",
+                         "label_bbox", "dim_level_y"):
                 val = getattr(result, attr, None)
                 if val is not None:
                     meta[attr] = val
@@ -155,6 +157,27 @@ class Session:
                   f"(drawable area {width-2*margin}×{height-2*margin} mm)")
 
         self.namespace["set_page"] = set_page
+
+        def register_centerline(shape: Any, name: str | None = None) -> None:
+            """Register a centerline shape for lint_drawing() overlap detection.
+
+            After calling register_centerline(), lint_drawing() will flag any
+            dimension annotation whose label bbox overlaps this centerline.
+
+            Args:
+                shape: the centerline compound/edge (e.g. from centerline() helper
+                    or Edge.make_line wrapped in Compound).
+                name:  object name for the session registry.
+                    Defaults to "centerline".
+            """
+            if name is None:
+                name = "centerline"
+            drawing_annotations[name] = {"type": "centerline"}
+            objects[name] = shape
+            session_ref.current_shape = shape
+            print(f"Registered centerline '{name}'")
+
+        self.namespace["register_centerline"] = register_centerline
 
         def named_face(shape: Any, name: str) -> Any:
             """Return a face of shape by semantic name: top/bottom/front/back/left/right."""
