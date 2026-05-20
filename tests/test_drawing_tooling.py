@@ -73,6 +73,81 @@ annotate(w, "good_dim")
 """)
         assert self._run(session)["violations"] == []
 
+    def test_flags_annotation_overlap(self, session):
+        # Two dims at the same offset on the same segment will collide.
+        session.execute("""
+from build123d import *
+from build123d_drafting import dim_linear
+draft = Draft(font_size=2.5, decimal_precision=1)
+a = dim_linear((-10, 0, 0), (10, 0, 0), "above", 8, draft, label="20")
+b = dim_linear((-10, 0, 0), (10, 0, 0), "above", 8, draft, label="20")
+annotate(a, "dim_a")
+annotate(b, "dim_b")
+""")
+        out = self._run(session)
+        assert any(v["check"] == "annotation_overlap" for v in out["violations"])
+
+    def test_no_false_overlap_for_separated_dims(self, session):
+        # Dims stacked at distinct offsets must not be flagged.
+        session.execute("""
+from build123d import *
+from build123d_drafting import dim_linear
+draft = Draft(font_size=2.5, decimal_precision=1)
+inner = dim_linear((-10, 0, 0), (10, 0, 0), "above",  8, draft, label="20")
+outer = dim_linear((-10, 0, 0), (10, 0, 0), "above", 18, draft, label="20")
+annotate(inner, "inner_dim")
+annotate(outer, "outer_dim")
+""")
+        out = self._run(session)
+        overlap_violations = [v for v in out["violations"] if v["check"] == "annotation_overlap"]
+        assert overlap_violations == []
+
+    def test_flags_annotation_out_of_bounds(self, session):
+        session.execute("""
+from build123d import *
+from build123d_drafting import dim_linear
+draft = Draft(font_size=2.5, decimal_precision=1)
+# Dim placed far outside a tiny 50x50 mm page
+d = dim_linear((-10, 0, 0), (10, 0, 0), "above", 8, draft, label="20")
+annotate(d, "offpage_dim")
+set_page(50, 50, margin=5)
+""")
+        out = self._run(session)
+        assert any(v["check"] == "annotation_out_of_bounds" for v in out["violations"])
+
+    def test_no_out_of_bounds_when_within_page(self, session):
+        session.execute("""
+from build123d import *
+from build123d_drafting import dim_linear
+draft = Draft(font_size=2.5, decimal_precision=1)
+# Dim centred at (100, 50) — well within A4 landscape page (5..292, 5..205)
+d = dim_linear((90, 50, 0), (110, 50, 0), "above", 8, draft, label="20")
+annotate(d, "dim")
+set_page(297, 210, margin=5)
+""")
+        out = self._run(session)
+        bounds_violations = [v for v in out["violations"] if v["check"] == "annotation_out_of_bounds"]
+        assert bounds_violations == []
+
+    def test_no_page_bounds_check_without_set_page(self, session):
+        # Without set_page(), out-of-bounds check must not fire.
+        session.execute("""
+from build123d import *
+from build123d_drafting import dim_linear
+draft = Draft(font_size=2.5, decimal_precision=1)
+d = dim_linear((-10, 0, 0), (10, 0, 0), "above", 8, draft, label="20")
+annotate(d, "dim")
+""")
+        out = self._run(session)
+        bounds_violations = [v for v in out["violations"] if v["check"] == "annotation_out_of_bounds"]
+        assert bounds_violations == []
+
+    def test_set_page_resets_on_session_reset(self, session):
+        session.execute("set_page(297, 210)")
+        assert session.drawing_page is not None
+        session.reset()
+        assert session.drawing_page is None
+
 
 # ---------------------------------------------------------------------------
 # lint_drawing (SVG mode)

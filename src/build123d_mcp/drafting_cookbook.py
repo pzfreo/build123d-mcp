@@ -36,13 +36,25 @@ SECTIONS: list[Section] = [
         "     annotations and a TechnicalDrawing title block.\n"
         "  4. Export to DXF or SVG via ExportDXF / ExportSVG with layers.\n"
         "\n"
+        "REQUIRED PACKAGE: build123d-drafting-helpers\n"
+        "=============================================\n"
+        "All examples below import from 'build123d_drafting'. You MUST install\n"
+        "this package in the user's Python environment before any drawing code\n"
+        "will work:\n"
+        "\n"
+        "  pip install build123d-drafting-helpers\n"
+        "\n"
+        "If you get 'ModuleNotFoundError: No module named build123d_drafting',\n"
+        "tell the user to run that pip command (or uv add build123d-drafting-helpers)\n"
+        "and then retry.\n"
+        "\n"
+        "The package is separate from build123d-mcp because it is also useful as\n"
+        "a standalone library. It is on the MCP server's import allowlist, so once\n"
+        "installed it can be used directly inside execute() calls.\n"
+        "\n"
         "PREFERRED: use build123d-drafting helpers instead of raw build123d.drafting\n"
         "============================================================================\n"
-        "build123d-drafting wraps the rough edges of build123d.drafting and is\n"
-        "available in this MCP session (already on the import allowlist).\n"
-        "\n"
-        "Install (users need this in their Python env alongside build123d-mcp):\n"
-        "  pip install build123d-drafting-helpers\n"
+        "build123d-drafting wraps the rough edges of build123d.drafting.\n"
         "\n"
         "Key helpers and why to use them:\n"
         "\n"
@@ -360,6 +372,50 @@ exporter.add_shape(length, layer="dims")
 
 result = Compound(children=list(visible) + [length])
 show(result, "clean_svg_demo")""",
+    ),
+
+    Section(
+        label="stacking_and_page_bounds",
+        text="""\
+## Dim stacking, overlap detection, and page-bounds checking
+# Two common LLM mistakes: (1) dims at the same offset collide when the labels
+# are wide; (2) dims near the page edge push their text off the sheet.
+# lint_drawing() catches both — but only if you register the page first.
+
+# --- Standard stacking pattern ---
+# Place parallel dims at increasing offsets: innermost first, step by ~8 mm.
+# For font_size=2.5 with decimal_precision=1, a label like "127.5" is ~10 mm
+# wide. An 8 mm step keeps witness lines clear of the next dim's text.
+from build123d import *
+from build123d_drafting import dim_linear
+
+draft = Draft(font_size=2.5, decimal_precision=1)
+
+plate = Box(80, 50, 5)
+visible, _ = plate.project_to_viewport((0, 0, 100), (0, 1, 0), (0, 0, 0))
+show(Compound(children=list(visible)), "plate")
+
+# Three stacked dims on the bottom edge — offsets 10, 18, 26 mm
+total  = dim_linear((-40, -25, 0), (40, -25, 0), "below", 10, draft, label="80")
+left   = dim_linear((-40, -25, 0), ( 0, -25, 0), "below", 18, draft, label="40")
+right  = dim_linear((  0, -25, 0), (40, -25, 0), "below", 26, draft, label="40")
+height = dim_linear(( 40, -25, 0), (40,  25, 0), "right", 10, draft, label="50")
+
+annotate(total,  "total_width",  label="80")
+annotate(left,   "left_half",    label="40")
+annotate(right,  "right_half",   label="40")
+annotate(height, "height",       label="50")
+
+# --- Register page so lint can check bounds ---
+# A4 landscape = 297 × 210 mm; 5 mm margin → drawable area 287 × 200 mm.
+# Call set_page() once after setting up the sheet/title block.
+set_page(297, 210, margin=10)
+
+# lint_drawing() now checks both overlap AND page bounds automatically.
+# Run it after placing all dims — before rendering or exporting.
+
+result = Compound(children=list(visible) + [total.shape, left.shape, right.shape, height.shape])
+show(result, "stacked_dims_demo")""",
     ),
 
     Section(

@@ -75,9 +75,82 @@ def _lint_annotations(annotations: dict, objects: dict | None = None) -> list[di
     return violations
 
 
+def _lint_overlap(annotations: dict, objects: dict) -> list[dict]:
+    """Check every pair of annotations for bounding-box overlap.
+
+    Uses dim_level_y (stored by annotate()) to skip stacked dims whose
+    extension lines share the same X range but occupy different Y levels.
+    """
+    violations: list[dict] = []
+    names = [n for n in annotations if n in objects]
+    for i, name_a in enumerate(names):
+        for name_b in names[i + 1:]:
+            try:
+                level_a = annotations[name_a].get("dim_level_y")
+                level_b = annotations[name_b].get("dim_level_y")
+                if (level_a is not None and level_b is not None
+                        and abs(level_a - level_b) > 3.0):
+                    continue  # different Y levels → stacked, not colliding
+                ba = objects[name_a].bounding_box()
+                bb = objects[name_b].bounding_box()
+                ox = max(0.0, min(ba.max.X, bb.max.X) - max(ba.min.X, bb.min.X))
+                oy = max(0.0, min(ba.max.Y, bb.max.Y) - max(ba.min.Y, bb.min.Y))
+                if ox > 0.5 and oy > 0.5:
+                    violations.append({
+                        "severity": "warning",
+                        "check": "annotation_overlap",
+                        "object": f"{name_a}+{name_b}",
+                        "message": (
+                            f"annotations '{name_a}' and '{name_b}' overlap by "
+                            f"{ox:.1f}×{oy:.1f} mm — increase offset or spacing"
+                        ),
+                    })
+            except Exception:
+                pass
+    return violations
+
+
+def _lint_page_bounds(annotations: dict, objects: dict, page: dict) -> list[dict]:
+    """Check every annotation stays within the drawable page area."""
+    violations: list[dict] = []
+    for name in annotations:
+        if name not in objects:
+            continue
+        try:
+            bb = objects[name].bounding_box()
+        except Exception:
+            continue
+        overshoots = []
+        if bb.min.X < page["min_x"]:
+            overshoots.append(f"left by {page['min_x'] - bb.min.X:.1f} mm")
+        if bb.max.X > page["max_x"]:
+            overshoots.append(f"right by {bb.max.X - page['max_x']:.1f} mm")
+        if bb.min.Y < page["min_y"]:
+            overshoots.append(f"bottom by {page['min_y'] - bb.min.Y:.1f} mm")
+        if bb.max.Y > page["max_y"]:
+            overshoots.append(f"top by {bb.max.Y - page['max_y']:.1f} mm")
+        for detail in overshoots:
+            violations.append({
+                "severity": "error",
+                "check": "annotation_out_of_bounds",
+                "object": name,
+                "message": (
+                    f"annotation '{name}' extends past page edge ({detail}) "
+                    f"— move it inward or reduce offset"
+                ),
+            })
+    return violations
+
+
 def _lint_session(session) -> list[dict]:
     """Run structural lint on session-registered annotations."""
-    return _lint_annotations(session.drawing_annotations, objects=session.objects)
+    violations = _lint_annotations(session.drawing_annotations, objects=session.objects)
+    violations += _lint_overlap(session.drawing_annotations, session.objects)
+    if session.drawing_page:
+        violations += _lint_page_bounds(
+            session.drawing_annotations, session.objects, session.drawing_page
+        )
+    return violations
 
 
 _SVG_NS = "{http://www.w3.org/2000/svg}"

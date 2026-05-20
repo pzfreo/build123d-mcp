@@ -82,11 +82,17 @@ show(axle, "axle")
 
 **Use `build123d.drafting` for all 2D drawings and annotations. Never use reportlab, matplotlib, cairosvg, svgwrite, or any other external drawing/PDF library — the server has a complete, parametric drafting stack built in.**
 
+**Required package:** Drawing helpers live in `build123d-drafting-helpers` (PyPI), which is separate from `build123d-mcp`. If you get `ModuleNotFoundError: No module named build123d_drafting`, ask the user to run:
+```
+pip install build123d-drafting-helpers
+```
+or with uv: `uv add build123d-drafting-helpers`. Do not switch to any other drawing library — install the package and retry.
+
 When asked to produce a technical drawing, dimensioned view, or annotated sheet:
 
 1. **Read `build123d://drafting` first, before writing a single line of drawing code.** It contains the complete workflow with tested, working examples.
 2. Project 3D geometry with `project_to_viewport(...)` (built into build123d).
-3. Annotate with `build123d.drafting` helpers: `dim_linear`, `ExtensionLine`, `DimensionLine`, `leader`, `annotate`.
+3. Annotate with `build123d_drafting` helpers: `dim_linear`, `safe_dim_line`, `leader`, `annotate`.
 4. Compose the sheet with `TechnicalDrawing` from `build123d.drafting` — title block, border, and multi-view layout are all handled for you.
 5. Export to SVG via `export("drawing", format="svg")` or DXF via `format="dxf"`.
 6. Review with `render_view()` — the server's 2D pipeline renders drafting objects natively.
