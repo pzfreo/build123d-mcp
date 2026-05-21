@@ -344,9 +344,10 @@ Clear the session back to empty state, including all snapshots.
 3. Read `build123d://quickref` — get accurate API syntax before writing any `execute()` code
 4. `reset` — start clean
 5. `execute` — imports and initial geometry; use `show()` for named parts
-6. `measure` — verify geometry numerically (check `volume` and `topology.faces` after every boolean)
+6. `measure` — verify geometry numerically (check `volume` and `topology.faces` after every boolean). **Do not proceed to render_view until measure passes** — a failed boolean leaves counts unchanged.
+6a. For assemblies: `clearance` — check mating parts are `touching` or `apart`, not `interpenetrating`, before rendering.
 7. `session_state` — confirm active shapes after any complex step
-8. `render_view` — visually verify (try `iso` first; use `quality="high"` for curved surfaces)
+8. `render_view` — visually verify **only after measure (and clearance for assemblies) confirm geometry is correct** (try `iso` first; use `quality="high"` for curved surfaces)
 9. `save_snapshot` — checkpoint before complex or risky operations
 10. `execute` — add features; if something breaks, `restore_snapshot`
 11. `diff_snapshot` — confirm what changed (use `format="json"` for programmatic checks)

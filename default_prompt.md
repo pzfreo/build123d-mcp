@@ -22,6 +22,20 @@ You have access to a build123d CAD MCP server. Core tools include `execute`, `re
 
 **When something looks wrong:** restore the last good snapshot, or call `reset` to start fresh. Don't layer fixes on a broken state.
 
+## Validation protocol
+
+Follow this order — deterministic checks before visual:
+
+1. **After every `execute()`** — call `measure()`. Check `topology.faces` changed as expected after a boolean, and `volume` is plausible. If not, diagnose before proceeding.
+2. **After assembly positioning** — call `clearance()` between mating parts. Status should be `touching` or `apart`, not `interpenetrating`.
+3. **Only after (1) and (2) pass** — call `render_view()`.
+
+**When to render:** assembling parts for the first time; after fillet/shell/loft; when the user asks to see something specific. Do not render after a simple boolean that `measure()` already confirmed.
+
+**Source vs derived:** always re-run `execute()` to regenerate geometry. Never edit an exported STEP/STL/3MF — those are derived artifacts.
+
+**With skill-based workflows:** if using build123d-mcp alongside a Claude Code skill (e.g. text-to-cad), let MCP own the geometry loop (execute → measure → clearance) and the skill own visual review and manufacturing handoff. Neither needs to duplicate the other's role.
+
 ## Session model
 
 All `execute` calls share a single persistent Python namespace. Variables survive between calls. Always start with `from build123d import *`. Assign your final shape to `result` so the server can detect it reliably:
