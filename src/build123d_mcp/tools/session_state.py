@@ -78,4 +78,5 @@ def session_state(session) -> str:
     state = _collect(session.current_shape, session.objects)
     state["snapshots"] = list(session.snapshots.keys())
     state["variables"] = _namespace_summary(session.namespace)
+    state["geometry_refs"] = dict(getattr(session, "geometry_refs", {}))
     return json.dumps(state, indent=2)

@@ -558,7 +558,8 @@ def test_mcp_lists_all_tools():
                      "search_library", "load_part", "workflow_hints", "session_state", "health_check",
                      "version", "last_error", "shape_compare", "repair_hints",
                      "import_cad_file", "cross_sections", "clearance", "inspect_drawing",
-                     "view_axes", "lint_drawing", "render_drawing", "save_drawing_annotations"}
+                     "view_axes", "lint_drawing", "render_drawing", "save_drawing_annotations",
+                     "align_check", "resolve", "script"}
 
 
 @_skip_mcp_on_win
