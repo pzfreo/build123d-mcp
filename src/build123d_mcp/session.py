@@ -27,6 +27,8 @@ class Session:
         self.last_error_detail: dict[str, Any] | None = None
         self.drawing_annotations: dict[str, Any] = {}
         self.drawing_page: dict[str, Any] | None = None
+        self.geometry_refs: dict[str, Any] = {}
+        self.execute_history: list[str] = []
         self._inject_builtins()
 
     def _inject_builtins(self) -> None:
@@ -368,6 +370,7 @@ class Session:
             return f"Error: {type(exc).__name__}: {exc}"
 
         self.last_error_detail = None
+        self.execute_history.append(code)
         new_keys = {k for k in self.namespace if k not in _INJECTED} - values_before.keys()
         self._update_current_shape(new_keys)
 
@@ -474,4 +477,6 @@ class Session:
         self.drawing_annotations.clear()
         self.drawing_page = None
         self.last_error_detail = None
+        self.geometry_refs.clear()
+        self.execute_history = []
         self._inject_builtins()
