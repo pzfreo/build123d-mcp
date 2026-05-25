@@ -109,7 +109,7 @@ def export(filename: str, format: str = "step", object_name: str = "") -> str:
 
 @mcp.tool()
 def interference(object_a: str, object_b: str) -> str:
-    """Check whether two named objects (from show()) intersect. Returns interferes (bool), volume (mm³ of overlap), and bounds of the interference region."""
+    """[Deprecated — use clearance() instead, which supersedes this tool with richer diagnostics.] Check whether two named objects (from show()) intersect. Returns interferes (bool), volume (mm³ of overlap), and bounds of the interference region."""
     return _session.interference(object_a, object_b)
 
 

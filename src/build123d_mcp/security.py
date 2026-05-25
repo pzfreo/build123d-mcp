@@ -170,6 +170,11 @@ _BLOCKED_BUILTINS = frozenset({
     "getattr", "vars", "hasattr",
 })
 
+# Dunder attributes that are safe to read (no traversal to __subclasses__ etc.
+# because those are still blocked).  __class__ is safe: __subclasses__ is still
+# blocked, and __init__.__globals__ is also blocked via __globals__ / __init__.
+_ALLOWED_DUNDER_ATTRS = frozenset({"__name__", "__doc__", "__class__"})
+
 # Bare-name calls that are caught at the AST level (before exec runs).
 _BLOCKED_CALL_NAMES = frozenset({
     "__import__", "eval", "exec", "compile", "open", "breakpoint", "input",
@@ -216,10 +221,12 @@ def check_ast(code: str) -> None:
                 )
         elif isinstance(node, ast.Attribute):
             if node.attr.startswith("__") and node.attr.endswith("__"):
-                raise ValueError(
-                    f"Access to dunder attribute '{node.attr}' is not allowed. "
-                    f"Use operators and language syntax instead of explicit dunder access."
-                )
+                if node.attr not in _ALLOWED_DUNDER_ATTRS:
+                    raise ValueError(
+                        f"Access to dunder attribute '{node.attr}' is not allowed. "
+                        f"Use operators and language syntax instead of explicit dunder access. "
+                        f"Read-only inspection dunders allowed: {sorted(_ALLOWED_DUNDER_ATTRS)}"
+                    )
 
 
 def _check_module(dotted_name: str) -> None:

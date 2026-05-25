@@ -360,12 +360,9 @@ class Session:
                 signal.signal(signal.SIGALRM, _old_handler)
 
         if exc is not None:
-            self._rollback_namespace(values_before)
-            self.current_shape = shape_before
-            self.objects.clear()
-            self.objects.update(objects_before)
-            self.drawing_annotations.clear()
-            self.drawing_annotations.update(annotations_before)
+            # Preserve namespace, objects, and current_shape — partial execution results
+            # (variables defined before the error, show() calls that succeeded) are kept
+            # so iterative workflows can continue without losing context.
             self.last_error_detail = self._make_error_detail(exc, code)
             return f"Error: {type(exc).__name__}: {exc}"
 
@@ -378,6 +375,14 @@ class Session:
         if self.current_shape is not None and self.current_shape is not shape_before:
             diag, warnings = self._diagnose_change(self.current_shape, shape_before)
             if diag:
+                shape_name = next(
+                    (k for k, v in self.objects.items() if v is self.current_shape), None
+                )
+                if shape_name:
+                    diag = diag.replace(
+                        "--- current_shape ---",
+                        f'--- current_shape ("{shape_name}") ---',
+                    )
                 output = output.rstrip("\n") + "\n" + diag
             for w in warnings:
                 output += "\n" + w

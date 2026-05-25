@@ -155,6 +155,31 @@ def test_normal_workflow_unaffected_by_security(session):
     assert data["bbox"]["zsize"] > 0
 
 
+def test_dunder_name_allowed(session):
+    """type(x).__name__ is a common debugging pattern and must be allowed."""
+    result = execute_code(session, "from build123d import Box\nb = Box(1,1,1)\nname = type(b).__name__")
+    assert "Error" not in result
+    assert session.namespace.get("name") == "Box"
+
+
+def test_dunder_doc_allowed(session):
+    """Reading __doc__ for API discovery must be allowed."""
+    result = execute_code(session, "from build123d import Box\ndoc = Box.__doc__")
+    assert "Error" not in result
+
+
+def test_dunder_subclasses_still_blocked(session):
+    """__subclasses__ traversal must remain blocked."""
+    result = execute_code(session, "x = object.__subclasses__()")
+    assert "not allowed" in result.lower() or "Error" in result
+
+
+def test_current_shape_name_in_diagnostic(session):
+    """When current_shape is a named show() object, its name appears in the diagnostic."""
+    result = execute_code(session, "show(Box(10, 10, 10), 'mybox')")
+    assert 'current_shape ("mybox")' in result or "mybox" in result
+
+
 def test_builtins_import_restriction_independent_of_ast(session):
     """The builtins __import__ restriction provides a second layer: even if a
     future change widened the AST allowlist, the namespace-level filter still

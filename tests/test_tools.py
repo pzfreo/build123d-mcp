@@ -370,6 +370,21 @@ def test_runtime_error_does_not_update_current_shape(session):
     assert session.current_shape is shape_before
 
 
+def test_runtime_error_preserves_prior_namespace(session):
+    """Variables from previous successful executes survive a later failing execute."""
+    execute_code(session, "leaf_a = Box(10, 10, 5)\nleaf_b = Box(8, 8, 3)")
+    execute_code(session, "leaf_a.volume  # this doesn't fail\nraise AttributeError('boom')")
+    assert "leaf_a" in session.namespace
+    assert "leaf_b" in session.namespace
+
+
+def test_runtime_error_preserves_partial_namespace(session):
+    """Variables defined in the failing execute before the error point also persist."""
+    execute_code(session, "x = 1")
+    execute_code(session, "new_var = 42\nraise ValueError('oops')")
+    assert session.namespace.get("new_var") == 42
+
+
 def test_show_sets_current_shape(session):
     execute_code(session, "show(Box(10, 10, 10), 'part')")
     assert session.current_shape is not None

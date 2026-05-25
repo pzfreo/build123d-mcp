@@ -3,6 +3,13 @@ import re
 
 _HINTS: list[tuple[list[str], str]] = [
     (
+        [r"AttributeError.*'ShapeList'.*has no attribute", r"'ShapeList'.*has no attribute"],
+        "ShapeList is not a Part — `Box() + Cylinder()` concatenates shapes into a list "
+        "rather than fusing them. Fix: use `Part() + Box(...) + Cylinder(...)` to get a "
+        "fused solid, or call `.fuse()` explicitly, or iterate over `.solids()` for "
+        "per-solid access.",
+    ),
+    (
         [r"NoneType.*has no attribute", r"AttributeError.*None"],
         "Shape is None. If you used BuildPart context manager, access the result with "
         "`.part` (e.g. `result = bp.part`). In algebra mode, assign directly: "

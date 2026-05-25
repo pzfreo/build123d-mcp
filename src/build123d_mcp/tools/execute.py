@@ -17,6 +17,12 @@ _SUGGESTED_FIXES = {
         "The selector returned an empty list; "
         "use inspect_drawing() or measure() to list available faces/edges before selecting."
     ),
+    "shapelist_attr": (
+        "Box() + Cylinder() returns a ShapeList, not a fused Part — it won't have "
+        ".volume, .faces(), etc. Fix: wrap in Part(): `Part() + Box(...) + Cylinder(...)`, "
+        "or fuse explicitly: `Box(...).fuse(Cylinder(...))`, "
+        "or iterate solids: `sum(s.volume for s in result.solids())`."
+    ),
     "fillet_fail": (
         "Fillet radius may be too large or the selected edges are non-manifold; "
         "try a smaller radius or select fewer edges."
@@ -47,6 +53,8 @@ def _classify_error(exc: Exception, code: str) -> dict:
         cls = "boolean_fail"
     elif isinstance(exc, (SyntaxError, IndentationError)):
         cls = "syntax_error"
+    elif isinstance(exc, AttributeError) and "ShapeList" in msg:
+        cls = "shapelist_attr"
     elif "ShapeList" in msg or ("index" in msg_lower and "faces" in str(exc)):
         cls = "selector_empty"
     elif "fillet" in msg_lower or "non-manifold" in msg_lower:
@@ -70,6 +78,8 @@ def _classify_from_error_string(error_result: str) -> dict:
         cls = "boolean_fail"
     elif "SyntaxError" in msg or "IndentationError" in msg:
         cls = "syntax_error"
+    elif "AttributeError" in msg and "ShapeList" in msg:
+        cls = "shapelist_attr"
     elif "ShapeList" in msg or ("index" in msg_lower and "faces" in msg):
         cls = "selector_empty"
     elif "fillet" in msg_lower or "non-manifold" in msg_lower:

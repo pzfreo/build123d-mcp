@@ -70,3 +70,18 @@ def test_suggested_fix_present(session):
 def test_successful_execute_has_no_failure_class(session):
     result = execute_code(session, "x = 1 + 1")
     assert "failure_class" not in result
+
+
+def test_shapelist_attr_classification(session):
+    """AttributeError on ShapeList should classify as shapelist_attr, not selector_empty."""
+    code = "result = ShapeList([Box(10,10,10), Cylinder(3,12)])\nv = result.volume"
+    result = execute_code(session, code)
+    assert result.startswith("Error:"), f"Expected error, got: {result!r}"
+    fc = _get_failure_class(result)
+    assert fc == "shapelist_attr", f"Expected shapelist_attr, got {fc!r}. Full result:\n{result}"
+
+
+def test_shapelist_attr_hint_mentions_part(session):
+    code = "result = ShapeList([Box(10,10,10), Cylinder(3,12)])\nv = result.volume"
+    result = execute_code(session, code)
+    assert "Part" in result
