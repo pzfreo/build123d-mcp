@@ -167,6 +167,8 @@ The server runs over stdio — the client launches it as a subprocess using `uv 
 
 > **Note on Python version.** All examples below pass `--python 3.12`. VTK and cadquery-ocp do not yet ship wheels for Python 3.13+, so pinning to 3.12 is required. uv will auto-download a managed Python 3.12 if you don't already have one.
 
+> **Note on `--upgrade`.** The examples pass `--upgrade` so each launch re-resolves to the latest published `build123d-mcp` instead of reusing uv's cached environment — without it, the client can stay pinned to whatever version uv first cached and silently miss releases. The trade-off is a short dependency-resolution step at every startup (and it needs network access to check for updates). Drop `--upgrade` if you prefer faster, offline-capable starts and update manually with `uv tool upgrade build123d-mcp`.
+
 ### Claude Code
 
 Add to your project's `.mcp.json` (or `~/.claude/mcp.json` for global use):
@@ -176,7 +178,7 @@ Add to your project's `.mcp.json` (or `~/.claude/mcp.json` for global use):
   "mcpServers": {
     "build123d-mcp": {
       "command": "uv",
-      "args": ["tool", "run", "--python", "3.12", "build123d-mcp"]
+      "args": ["tool", "run", "--upgrade", "--python", "3.12", "build123d-mcp"]
     }
   }
 }
@@ -193,7 +195,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
   "mcpServers": {
     "build123d-mcp": {
       "command": "uv",
-      "args": ["tool", "run", "--python", "3.12", "build123d-mcp"]
+      "args": ["tool", "run", "--upgrade", "--python", "3.12", "build123d-mcp"]
     }
   }
 }
@@ -210,7 +212,7 @@ Open **Settings → MCP** and add a new server entry, or edit `~/.cursor/mcp.jso
   "mcpServers": {
     "build123d-mcp": {
       "command": "uv",
-      "args": ["tool", "run", "--python", "3.12", "build123d-mcp"]
+      "args": ["tool", "run", "--upgrade", "--python", "3.12", "build123d-mcp"]
     }
   }
 }
@@ -226,7 +228,7 @@ For **Continue** extension, add to `.continue/config.json`:
     {
       "name": "build123d-mcp",
       "command": "uv",
-      "args": ["tool", "run", "--python", "3.12", "build123d-mcp"]
+      "args": ["tool", "run", "--upgrade", "--python", "3.12", "build123d-mcp"]
     }
   ]
 }
@@ -240,7 +242,7 @@ For **GitHub Copilot** with MCP support, add to `.vscode/mcp.json` in your works
     "build123d-mcp": {
       "type": "stdio",
       "command": "uv",
-      "args": ["tool", "run", "--python", "3.12", "build123d-mcp"]
+      "args": ["tool", "run", "--upgrade", "--python", "3.12", "build123d-mcp"]
     }
   }
 }
