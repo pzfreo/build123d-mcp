@@ -248,7 +248,9 @@ def _check_module(dotted_name: str) -> None:
             f"Import of '{dotted_name}' is not allowed. "
             f"This blocks filesystem (os, pathlib, shutil), network (socket, urllib, "
             f"requests), and shell access (subprocess). "
-            f"Permitted: {permitted}"
+            f"Permitted: {permitted}. "
+            f"To allow project-local packages add their top-level name to "
+            f"--allow-imports or the BUILD123D_ALLOW_IMPORTS env var."
         )
 
 
@@ -292,7 +294,13 @@ def make_restricted_builtins() -> dict[str, Any]:
             permitted = sorted(IMPORT_ALLOWLIST | EXTRA_ALLOWED_IMPORTS)
             raise ImportError(
                 f"Import of '{name}' is not allowed. "
-                f"Permitted: {permitted}"
+                f"Permitted: {permitted}. "
+                f"To allow project-local packages, add their top-level name to the "
+                f"server's --allow-imports flag or BUILD123D_ALLOW_IMPORTS env var "
+                f"(e.g. --allow-imports my_package). The package must be on PYTHONPATH "
+                f"or installed in the server's environment. Transitive dependencies of "
+                f"the allowed package also need to be on the allowlist or in the stdlib "
+                f"safe list above."
             )
         return _original_import(name, *args, **kwargs)
 

@@ -250,6 +250,46 @@ def test_extras_message_lists_added_modules(monkeypatch):
     assert "'os'" in result
 
 
+def test_pythonpath_package_importable_when_allowlisted(monkeypatch, tmp_path):
+    """A package on PYTHONPATH (not installed) becomes importable when its
+    root name is added to the allowlist via --allow-imports / EXTRA_ALLOWED_IMPORTS.
+    Regression for issue #150: the runtime __import__ wrapper should honour
+    EXTRA_ALLOWED_IMPORTS and let _original_import resolve the package from
+    sys.path (which includes PYTHONPATH)."""
+    import sys
+    import build123d_mcp.security as _sec
+
+    # Create a minimal package in a temp directory (not installed).
+    pkg_dir = tmp_path / "my_test_parts"
+    pkg_dir.mkdir()
+    (pkg_dir / "__init__.py").write_text("VALUE = 42\n")
+
+    monkeypatch.setattr(_sec, "EXTRA_ALLOWED_IMPORTS", set(_sec.EXTRA_ALLOWED_IMPORTS))
+    _sec.EXTRA_ALLOWED_IMPORTS.add("my_test_parts")
+    # Add the tmp_path to sys.path so Python can find the package.
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    s = Session()
+    result = s.execute(
+        "from my_test_parts import VALUE\n"
+        "assert VALUE == 42, f'expected 42, got {VALUE}'"
+    )
+    assert "Error" not in result, f"PYTHONPATH package import failed: {result}"
+    assert "not allowed" not in result.lower()
+
+
+def test_blocked_import_error_message_mentions_allow_imports(monkeypatch):
+    """The ImportError message for a blocked module should tell the user how
+    to add it to the allowlist via --allow-imports / BUILD123D_ALLOW_IMPORTS."""
+    import build123d_mcp.security as _sec
+    monkeypatch.setattr(_sec, "EXTRA_ALLOWED_IMPORTS", set(_sec.EXTRA_ALLOWED_IMPORTS))
+    s = Session()
+    result = s.execute("import subprocess")
+    assert "--allow-imports" in result or "BUILD123D_ALLOW_IMPORTS" in result, (
+        "error message should mention how to add the module to the allowlist"
+    )
+
+
 def test_dir_allowed(session):
     result = execute_code(session, "attrs = dir([])")
     assert "Error" not in result
