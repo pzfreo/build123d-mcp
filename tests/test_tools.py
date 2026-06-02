@@ -256,7 +256,6 @@ def test_pythonpath_package_importable_when_allowlisted(monkeypatch, tmp_path):
     Regression for issue #150: the runtime __import__ wrapper should honour
     EXTRA_ALLOWED_IMPORTS and let _original_import resolve the package from
     sys.path (which includes PYTHONPATH)."""
-    import sys
     import build123d_mcp.security as _sec
 
     # Create a minimal package in a temp directory (not installed).
@@ -278,16 +277,24 @@ def test_pythonpath_package_importable_when_allowlisted(monkeypatch, tmp_path):
     assert "not allowed" not in result.lower()
 
 
-def test_blocked_import_error_message_mentions_allow_imports(monkeypatch):
-    """The ImportError message for a blocked module should tell the user how
-    to add it to the allowlist via --allow-imports / BUILD123D_ALLOW_IMPORTS."""
-    import build123d_mcp.security as _sec
-    monkeypatch.setattr(_sec, "EXTRA_ALLOWED_IMPORTS", set(_sec.EXTRA_ALLOWED_IMPORTS))
+def test_blocked_import_error_message_mentions_allow_imports():
+    """The Layer-1 AST error message for a blocked module should tell the user
+    how to add it to the allowlist via --allow-imports / BUILD123D_ALLOW_IMPORTS."""
     s = Session()
     result = s.execute("import subprocess")
     assert "--allow-imports" in result or "BUILD123D_ALLOW_IMPORTS" in result, (
         "error message should mention how to add the module to the allowlist"
     )
+
+
+def test_runtime_blocked_import_message_mentions_allow_imports():
+    """The Layer-2 _safe_import error message should also mention --allow-imports.
+    Exercises _safe_import directly, bypassing the AST check (Layer 1)."""
+    from build123d_mcp.security import make_restricted_builtins
+    builtins = make_restricted_builtins()
+    safe_import = builtins["__import__"]
+    with pytest.raises(ImportError, match="--allow-imports|BUILD123D_ALLOW_IMPORTS"):
+        safe_import("subprocess")
 
 
 def test_dir_allowed(session):
