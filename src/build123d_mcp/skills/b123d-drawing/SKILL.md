@@ -248,6 +248,7 @@ tb = TitleBlock(
     designed_by="Your Name",
     revision="A",         # ISO 7200 field 4 — revision indicator (≥ 0.4.0)
     legal_owner="COMPANY NAME",  # ISO 7200 field 1 — legal owner (≥ 0.4.0)
+    show_labels=True,    # render cell identifiers (TITLE, DWG NO., REV, etc.) — default True
     width=150.0,
     draft=draft,
 ).locate(Location((126, 11, 0)))
