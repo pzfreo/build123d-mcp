@@ -1,0 +1,179 @@
+"""Tests for the transitive-safe import checker.
+
+A pure-Python package whose entire import closure lies within the security
+allowlist must be importable without --allow-imports.  Any package that
+directly or indirectly imports a blocked module (os, subprocess, socket …)
+must still be blocked.
+"""
+
+import pytest
+
+import build123d_mcp.security as _sec
+from build123d_mcp.security import _is_transitively_safe, _clear_transitive_cache
+from build123d_mcp.session import Session
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_cache():
+    """Guarantee a clean cache before and after every test."""
+    _clear_transitive_cache()
+    yield
+    _clear_transitive_cache()
+
+
+def _make_pkg(tmp_path, name: str, files: dict[str, str], monkeypatch) -> str:
+    """Create a package under tmp_path and prepend it to sys.path."""
+    pkg = tmp_path / name
+    pkg.mkdir()
+    for rel, src in files.items():
+        path = pkg / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(src)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    return name
+
+
+# ---------------------------------------------------------------------------
+# _is_transitively_safe — unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_allowlist_root_is_safe():
+    assert _is_transitively_safe("math") is True
+
+
+def test_allowlist_submodule_is_safe():
+    assert _is_transitively_safe("collections.abc") is True
+
+
+def test_nonexistent_module_is_blocked():
+    assert _is_transitively_safe("no_such_module_xyz_abc_999") is False
+
+
+def test_safe_package_allowed(tmp_path, monkeypatch):
+    pkg = _make_pkg(tmp_path, "mypkg", {
+        "__init__.py": "from mypkg.utils import helper\n",
+        "utils.py": "import math\nimport collections\n\ndef helper(): pass\n",
+    }, monkeypatch)
+    assert _is_transitively_safe(pkg) is True
+
+
+def test_safe_submodule_allowed(tmp_path, monkeypatch):
+    _make_pkg(tmp_path, "mypkg2", {
+        "__init__.py": "",
+        "core.py": "import math\n",
+    }, monkeypatch)
+    assert _is_transitively_safe("mypkg2.core") is True
+
+
+def test_package_importing_os_is_blocked(tmp_path, monkeypatch):
+    pkg = _make_pkg(tmp_path, "badpkg", {
+        "__init__.py": "import os\n",
+    }, monkeypatch)
+    assert _is_transitively_safe(pkg) is False
+
+
+def test_transitive_unsafe_dep_is_blocked(tmp_path, monkeypatch):
+    """A package that looks safe on top but imports os via a helper is blocked."""
+    pkg = _make_pkg(tmp_path, "indirectpkg", {
+        "__init__.py": "from indirectpkg.helper import thing\n",
+        "helper.py": "import os\n\ndef thing(): pass\n",
+    }, monkeypatch)
+    assert _is_transitively_safe(pkg) is False
+
+
+def test_cyclic_safe_package_allowed(tmp_path, monkeypatch):
+    """Two modules that import each other, both using only allowed deps."""
+    _make_pkg(tmp_path, "cyclicpkg", {
+        "__init__.py": "",
+        "a.py": "from cyclicpkg.b import b_fn\nimport math\n\ndef a_fn(): pass\n",
+        "b.py": "from cyclicpkg.a import a_fn\nimport math\n\ndef b_fn(): pass\n",
+    }, monkeypatch)
+    assert _is_transitively_safe("cyclicpkg.a") is True
+    assert _is_transitively_safe("cyclicpkg.b") is True
+
+
+def test_result_is_cached(tmp_path, monkeypatch):
+    pkg = _make_pkg(tmp_path, "cachepkg", {
+        "__init__.py": "import math\n",
+    }, monkeypatch)
+    _is_transitively_safe(pkg)
+    assert pkg in _sec._transitive_safe_cache
+
+
+def test_relative_imports_within_package_ignored(tmp_path, monkeypatch):
+    """Relative imports within the same package don't need to be re-checked."""
+    pkg = _make_pkg(tmp_path, "relpkg", {
+        "__init__.py": "",
+        "sub.py": "from . import utils\n",
+        "utils.py": "import math\n",
+    }, monkeypatch)
+    assert _is_transitively_safe("relpkg.sub") is True
+
+
+def test_empty_package_is_safe(tmp_path, monkeypatch):
+    pkg = _make_pkg(tmp_path, "emptypkg", {
+        "__init__.py": "",
+    }, monkeypatch)
+    assert _is_transitively_safe(pkg) is True
+
+
+# ---------------------------------------------------------------------------
+# Integration: Session.execute() with transitive packages
+# ---------------------------------------------------------------------------
+
+
+def test_execute_safe_package_allowed(tmp_path, monkeypatch):
+    _make_pkg(tmp_path, "goodpkg", {
+        "__init__.py": "from goodpkg.core import helper\n",
+        "core.py": "import math\n\ndef helper(): return math.pi\n",
+    }, monkeypatch)
+    s = Session()
+    result = s.execute("import goodpkg")
+    assert "not allowed" not in result.lower()
+    assert "Error" not in result
+
+
+def test_execute_safe_submodule_from_import(tmp_path, monkeypatch):
+    _make_pkg(tmp_path, "goodpkg2", {
+        "__init__.py": "",
+        "geom.py": "import math\n\ndef area(r): return math.pi * r * r\n",
+    }, monkeypatch)
+    s = Session()
+    result = s.execute("from goodpkg2.geom import area; x = area(5)")
+    assert "not allowed" not in result.lower()
+    assert "Error" not in result
+
+
+def test_execute_unsafe_package_blocked(tmp_path, monkeypatch):
+    _make_pkg(tmp_path, "evilpkg", {
+        "__init__.py": "import subprocess\n",
+    }, monkeypatch)
+    s = Session()
+    result = s.execute("import evilpkg")
+    assert "not allowed" in result.lower()
+
+
+def test_execute_transitively_unsafe_blocked(tmp_path, monkeypatch):
+    _make_pkg(tmp_path, "sneakypkg", {
+        "__init__.py": "from sneakypkg.loader import load\n",
+        "loader.py": "import os\n\ndef load(): return os.listdir('.')\n",
+    }, monkeypatch)
+    s = Session()
+    result = s.execute("import sneakypkg")
+    assert "not allowed" in result.lower()
+
+
+def test_execute_hint_mentions_import_cad_file(tmp_path, monkeypatch):
+    """The error message for a blocked import should surface import_cad_file."""
+    _make_pkg(tmp_path, "blocked_hint_pkg", {
+        "__init__.py": "import os\n",
+    }, monkeypatch)
+    s = Session()
+    result = s.execute("import blocked_hint_pkg")
+    assert "import_cad_file" in result

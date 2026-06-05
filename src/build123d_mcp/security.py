@@ -16,6 +16,7 @@ The goal is to raise the bar against realistic prompt-injection payloads.
 """
 
 import ast
+import importlib.util
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -161,6 +162,94 @@ def _is_root_allowed(root: str) -> bool:
     return root in IMPORT_ALLOWLIST or root in EXTRA_ALLOWED_IMPORTS
 
 
+# ---------------------------------------------------------------------------
+# Transitive-safe import check
+# ---------------------------------------------------------------------------
+
+# Cache: dotted module name → True (safe) / False (unsafe).
+# Pure-Python packages whose full import closure lies within the allowlist
+# are permitted without an explicit --allow-imports entry.
+_transitive_safe_cache: dict[str, bool] = {}
+
+
+def _clear_transitive_cache() -> None:
+    """Clear the transitive-safety cache. Called in tests."""
+    _transitive_safe_cache.clear()
+
+
+def _source_path(dotted_name: str) -> str | None:
+    """Return the .py source file for a module, or None if not pure-Python / not found."""
+    try:
+        spec = importlib.util.find_spec(dotted_name)
+    except (ModuleNotFoundError, ValueError):
+        return None
+    if spec is None or spec.origin is None:
+        return None
+    if not spec.origin.endswith(".py"):
+        return None  # C extension or built-in — no AST to check
+    return spec.origin
+
+
+def _is_transitively_safe(
+    dotted_name: str, _visiting: frozenset[str] = frozenset()
+) -> bool:
+    """Return True if every transitive import of this module is from the allowlist.
+
+    Pure-Python packages whose full import closure stays within
+    IMPORT_ALLOWLIST / EXTRA_ALLOWED_IMPORTS are allowed automatically,
+    without an explicit --allow-imports entry.  C extensions (no .py source)
+    and modules not findable on sys.path are conservatively blocked.
+    """
+    root = dotted_name.split(".")[0]
+
+    # Explicitly allowed — fast path, no I/O.
+    if root == "OCP" or _is_root_allowed(root):
+        return True
+
+    # Cache hit.
+    cached = _transitive_safe_cache.get(dotted_name)
+    if cached is not None:
+        return cached
+
+    # Cycle guard: encountering the same module while already checking it
+    # means we are in a circular import; return True optimistically — any
+    # unsafe dep in the cycle will be caught on the non-cyclic entry path.
+    if dotted_name in _visiting:
+        return True
+
+    # Must be pure-Python with a findable source file.
+    path = _source_path(dotted_name)
+    if path is None:
+        _transitive_safe_cache[dotted_name] = False
+        return False
+
+    try:
+        with open(path) as f:  # server-side read; not user-sandbox open
+            source = f.read()
+        tree = ast.parse(source)
+    except (OSError, SyntaxError):
+        _transitive_safe_cache[dotted_name] = False
+        return False
+
+    visiting = _visiting | {dotted_name}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if not _is_transitively_safe(alias.name, visiting):
+                    _transitive_safe_cache[dotted_name] = False
+                    return False
+        elif isinstance(node, ast.ImportFrom):
+            if node.level > 0:
+                # Relative import — stays within the same package; skip.
+                continue
+            if node.module and not _is_transitively_safe(node.module, visiting):
+                _transitive_safe_cache[dotted_name] = False
+                return False
+
+    _transitive_safe_cache[dotted_name] = True
+    return True
+
+
 # Builtins that are dangerous even without an import.
 _BLOCKED_BUILTINS = frozenset({
     "eval", "exec", "compile", "open", "breakpoint", "input",
@@ -243,18 +332,19 @@ def _check_module(dotted_name: str) -> None:
                 )
         return  # bare 'OCP' or allowed sub-module
     if not _is_root_allowed(root):
+        if _is_transitively_safe(dotted_name):
+            return  # pure-Python package; full import closure is within the allowlist
         permitted = sorted(IMPORT_ALLOWLIST | EXTRA_ALLOWED_IMPORTS)
         raise ValueError(
             f"Import of '{dotted_name}' is not allowed. "
             f"This blocks filesystem (os, pathlib, shutil), network (socket, urllib, "
             f"requests), and shell access (subprocess). "
             f"Permitted: {permitted}. "
-            f"To allow project-local packages, add their top-level name to the "
-            f"server's --allow-imports flag or BUILD123D_ALLOW_IMPORTS env var "
-            f"(e.g. --allow-imports my_package). The package must be on PYTHONPATH "
-            f"or installed in the server's environment. Transitive dependencies of "
-            f"the allowed package also need to be on the allowlist or in the stdlib "
-            f"safe list above."
+            f"Pure-Python packages on sys.path whose full import closure lies within "
+            f"the permitted list above are allowed automatically — no config needed. "
+            f"To allow a package with broader dependencies (e.g. one that imports os "
+            f"for path handling), use --allow-imports or BUILD123D_ALLOW_IMPORTS env var. "
+            f"For project geometry, export to STEP and use import_cad_file() instead."
         )
 
 
@@ -295,16 +385,17 @@ def make_restricted_builtins() -> dict[str, Any]:
                         f"Permitted OCP modules: {sorted(OCP_ALLOWLIST)}"
                     )
         elif not _is_root_allowed(root):
+            if _is_transitively_safe(name):
+                return _original_import(name, *args, **kwargs)
             permitted = sorted(IMPORT_ALLOWLIST | EXTRA_ALLOWED_IMPORTS)
             raise ImportError(
                 f"Import of '{name}' is not allowed. "
                 f"Permitted: {permitted}. "
-                f"To allow project-local packages, add their top-level name to the "
-                f"server's --allow-imports flag or BUILD123D_ALLOW_IMPORTS env var "
-                f"(e.g. --allow-imports my_package). The package must be on PYTHONPATH "
-                f"or installed in the server's environment. Transitive dependencies of "
-                f"the allowed package also need to be on the allowlist or in the stdlib "
-                f"safe list above."
+                f"Pure-Python packages whose full import closure lies within the "
+                f"permitted list are allowed automatically. "
+                f"To allow a package with broader dependencies, use --allow-imports "
+                f"or BUILD123D_ALLOW_IMPORTS env var. "
+                f"For project geometry, export to STEP and use import_cad_file() instead."
             )
         return _original_import(name, *args, **kwargs)
 

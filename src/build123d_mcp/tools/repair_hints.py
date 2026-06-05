@@ -53,10 +53,14 @@ _HINTS: list[tuple[list[str], str]] = [
         [r"ImportError", r"SecurityError", r"not allowed.*import", r"import.*not allowed"],
         "Import blocked. Allowed modules include: build123d, bd_warehouse, math, numpy, "
         "json, re, collections, itertools, functools, copy, typing, dataclasses, enum, "
-        "and most OCP geometry sub-modules (OCP.gp, OCP.BRepGProp, OCP.TopExp, "
-        "OCP.BRepAlgoAPI, OCP.BRepAdaptor, OCP.GeomAbs, OCP.ShapeAnalysis, etc.). "
-        "Blocked: os, sys, pathlib, subprocess, socket, OCP.STEPControl, OCP.IGESControl, "
-        "OCP.OSD (file I/O). Start with --allow-all-imports to disable this check entirely.",
+        "and most OCP geometry sub-modules (OCP.gp, OCP.BRepGProp, OCP.TopExp, etc.). "
+        "Blocked: os, sys, pathlib, subprocess, socket (file/network/shell access). "
+        "Pure-Python packages on sys.path whose imports stay within the allowed list "
+        "above are permitted automatically — no config needed. "
+        "For project geometry (e.g. a build_shaft() function), export to STEP and use "
+        "import_cad_file(path, name) to load it without any import restrictions. "
+        "To force-allow a package that imports os or similar, use --allow-imports or "
+        "BUILD123D_ALLOW_IMPORTS env var.",
     ),
     (
         [r"Constraint failed", r"AssertionError"],
