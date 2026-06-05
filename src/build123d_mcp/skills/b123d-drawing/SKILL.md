@@ -227,15 +227,44 @@ ldr = Leader(
 annotate(ldr, "ldr_bearing_d")
 ```
 
-**Title block** (always include):
+**Title block** (always include — use real values for the part being drawn):
+
+ISO 7200:2004 mandatory fields and their parameter mapping:
+
+| ISO 7200 field | Parameter | Notes |
+|----------------|-----------|-------|
+| Field 1 — Legal owner | `legal_owner=` | Requires build123d-drafting-helpers ≥ 0.4.0. On older installs, prefix `part_name` instead: `"ACME Corp — BRACKET"` |
+| Field 2 — Document description | `part_name` | Always present |
+| Field 3 — Document identifier | `drawing_number` | Always present |
+| Field 4 — Revision indicator | `revision=` | Requires ≥ 0.4.0. On older installs, append to `drawing_number`: `"DWG-001 Rev A"` |
 
 ```python
 tb = TitleBlock(
-    "PART NAME", "DWG-NNN",
+    "PART NAME",          # ISO 7200 field 2 — document title
+    "DWG-NNN",            # ISO 7200 field 3 — document identifier
     scale="2:1",
     material="CZ121 BRASS",
     general_tolerance="ISO 2768-f",
-    designed_by="PROJECT NAME",
+    designed_by="Your Name",
+    revision="A",         # ISO 7200 field 4 — revision indicator (≥ 0.4.0)
+    legal_owner="COMPANY NAME",  # ISO 7200 field 1 — legal owner (≥ 0.4.0)
+    width=150.0,
+    draft=draft,
+).locate(Location((126, 11, 0)))
+annotate(tb, "title_block")
+```
+
+If `TitleBlock()` raises `TypeError: unexpected keyword argument 'revision'`, the installed
+version of build123d-drafting-helpers is older than 0.4.0. Fall back to:
+```python
+# Older API workaround — pack revision and owner into existing fields:
+tb = TitleBlock(
+    "COMPANY — PART NAME",  # owner prefix + title
+    "DWG-NNN Rev A",        # identifier + revision indicator
+    scale="2:1",
+    material="CZ121 BRASS",
+    general_tolerance="ISO 2768-f",
+    designed_by="Your Name",
     date="YYYY-MM-DD",
     width=150.0,
     draft=draft,
