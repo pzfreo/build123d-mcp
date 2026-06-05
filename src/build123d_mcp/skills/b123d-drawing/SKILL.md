@@ -77,47 +77,30 @@ else:
     SCALE, PAGE_W, PAGE_H = 0.5, 420.0, 297.0   # A3 1:2  — very large parts
 ```
 
-Compute sheet positions **from the geometry** so the layout stays correct when the
-part changes — no magic numbers, no manual paste-in:
+Compute sheet positions using the `suggest_view_layout` MCP tool — it accounts for the
+title block footprint and warns when views collide with it or with each other:
+
+```
+TB_W = 150.0  # title block width (mm) — must match the TitleBlock width= arg in Step 4
+
+mcp__build123d-mcp__suggest_view_layout(
+    object_name="part",        # name passed to show() in Step 0
+    page_w=PAGE_W, page_h=PAGE_H, scale=SCALE,
+    title_block_w=TB_W,
+    title_block_h=24,          # ISO 7200 title block height with revision + legal_owner rows
+)
+```
+
+Check `result["warnings"]` — if any view overlaps the title block or another view, the
+tool says so and may suggest a smaller scale or larger page. Address warnings before
+continuing. Then extract the positions:
 
 ```python
-import math as _m
-
-def _view_layout(part, scale, views=("front", "side", "plan", "iso"),
-                  margin=10, tb_h=30, gap=12):
-    """Derive view sheet positions from the part's bounding box."""
-    bb = part.bounding_box()
-    xs = bb.max.X - bb.min.X
-    ys = bb.max.Y - bb.min.Y
-    zs = bb.max.Z - bb.min.Z
-    def hw(v):
-        if v == "front": return xs*scale/2, zs*scale/2
-        if v == "plan":  return xs*scale/2, ys*scale/2
-        if v == "side":  return ys*scale/2, zs*scale/2
-        d = _m.sqrt(xs**2 + ys**2 + zs**2)*scale/2*0.75; return d, d
-    fhw, fhh = hw("front"); shw, _ = hw("side")
-    _,   phh = hw("plan");  ihw, ihh = hw("iso")
-    fx = margin + fhw
-    fy = margin + tb_h + gap + fhh
-    sx = fx + fhw + gap + shw
-    py = fy + fhh + gap + phh
-    # Iso falls back to front column/row when side or plan is absent
-    ix = (sx + shw + gap + ihw) if "side" in views else (fx + fhw + gap + ihw)
-    iy = py if "plan" in views else (fy + fhh + gap + ihh)
-    return dict(
-        front=(round(fx, 2), round(fy, 2)),
-        side= (round(sx, 2), round(fy, 2)),
-        plan= (round(fx, 2), round(py, 2)),
-        iso=  (round(ix, 2), round(iy, 2)),
-    )
-
-# Keep this list in sync with the VIEWS dict below; remove a name here when you
-# remove the corresponding entry from VIEWS so iso falls back to the correct column.
-_pos = _view_layout(part, SCALE, views=["front", "side", "plan", "iso"])
-FV_X, FV_Y   = _pos["front"]
-SV_X, SV_Y   = _pos["side"]
-PV_X, PV_Y   = _pos["plan"]
-ISO_X, ISO_Y = _pos["iso"]
+# Paste the numeric values returned by suggest_view_layout — do not recompute them.
+FV_X, FV_Y   = <result["views"]["front"]["VIEW_X"]>, <result["views"]["front"]["VIEW_Y"]>
+SV_X, SV_Y   = <result["views"]["side"]["VIEW_X"]>,  <result["views"]["side"]["VIEW_Y"]>
+PV_X, PV_Y   = <result["views"]["plan"]["VIEW_X"]>,  <result["views"]["plan"]["VIEW_Y"]>
+ISO_X, ISO_Y = <result["views"]["iso"]["VIEW_X"]>,   <result["views"]["iso"]["VIEW_Y"]>
 ```
 
 Then project:
@@ -247,8 +230,8 @@ tb = TitleBlock(
     material="CZ121 BRASS",
     general_tolerance="ISO 2768-f",
     designed_by="Your Name",
-    revision="A",         # ISO 7200 field 4 — revision indicator (≥ 0.4.0)
-    legal_owner="COMPANY NAME",  # ISO 7200 field 1 — legal owner (≥ 0.4.0)
+    revision="A",         # ISO 7200 field 4 — revision indicator (≥ 0.3.2)
+    legal_owner="COMPANY NAME",  # ISO 7200 field 1 — legal owner (≥ 0.3.2)
     width=TB_W,
     draft=draft,
 ).locate(Location((PAGE_W - TB_W - 10, 10, 0)))  # right-aligned: PAGE_W − block_width − margin
@@ -256,21 +239,17 @@ annotate(tb, "title_block")
 ```
 
 If `TitleBlock()` raises `TypeError: unexpected keyword argument 'revision'`, the installed
-version of build123d-drafting-helpers is older than 0.3.2. Fall back to:
+version of build123d-drafting-helpers is older than 0.3.2. Only the first two positional
+args differ — pack owner and revision into them; everything else stays the same:
 ```python
-# Older API workaround — pack revision and owner into existing fields:
-TB_W = 150.0
+# Older API workaround — only these two args change:
 tb = TitleBlock(
-    "COMPANY — PART NAME",  # owner prefix + title
-    "DWG-NNN Rev A",        # identifier + revision indicator
-    drawing_scale=SCALE,    # syncs title block cell text with lint_drawing(drawing_scale=SCALE)
-    material="CZ121 BRASS",
-    general_tolerance="ISO 2768-f",
-    designed_by="Your Name",
-    date="YYYY-MM-DD",
-    width=TB_W,
-    draft=draft,
-).locate(Location((PAGE_W - TB_W - 10, 10, 0)))  # right-aligned: PAGE_W − block_width − margin
+    "COMPANY — PART NAME",  # legal_owner prefix + part_name (replaces legal_owner= param)
+    "DWG-NNN Rev A",        # drawing_number + revision indicator (replaces revision= param)
+    # all other args identical to the primary block above
+    drawing_scale=SCALE, material="CZ121 BRASS", general_tolerance="ISO 2768-f",
+    designed_by="<DESIGNER>", date="<YYYY-MM-DD>", width=TB_W, draft=draft,
+).locate(Location((PAGE_W - TB_W - 10, 10, 0)))
 annotate(tb, "title_block")
 ```
 
@@ -281,22 +260,33 @@ export will not see it.
 
 ## Step 5 — Lint gate (run before export)
 
-Note: `lint_drawing` here is called from `build123d_drafting` (imported in Step 4),
-not the MCP tool `mcp__build123d-mcp__lint_drawing`. The Python function accepts the
-annotation list and scale directly; the MCP tool reads from session state instead.
+Use the MCP tool — it reads annotations and view shapes directly from session state:
+
+```
+# show() each placed view compound under a stable name so the MCP tool can find them.
+show(placed_front, "front_placed")
+show(placed_side,  "side_placed")
+show(placed_plan,  "plan_placed")
+show(iso,          "iso_placed")
+
+mcp__build123d-mcp__lint_drawing(
+    drawing_scale=SCALE,
+    view_shape_names=["front_placed", "side_placed", "plan_placed", "iso_placed"],
+)
+```
+
+The `view_shape_names` list enables `view_annotation_overlap` and `view_overlap` checks
+(requires build123d-drafting-helpers ≥ 0.3.1). Omit it if you only need label/overlap
+checks and don't need view-boundary detection.
 
 ```python
+# Alternatively, call the helper directly in execute() for more control:
 all_anns = list(dims) + [ldr1, ldr2, tb]
-set_page(PAGE_W, PAGE_H, margin=10)   # PAGE_W / PAGE_H set in Step 2
-
-# Collect projected view outlines for overlap checking (≥ 0.3.1).
-# Pass the placed visible geometry for each view — lint_drawing uses their
-# bounding boxes to detect annotation/view overlaps and view/view overlaps.
+set_page(PAGE_W, PAGE_H, margin=10)
 view_shapes = [placed for placed, _ in view_proj.values()] + [iso]
 issues = lint_drawing(all_anns, drawing_scale=SCALE, view_shapes=view_shapes)
 if issues:
-    for iss in issues:
-        print(f"  [{iss.severity}] {iss.code}: {iss.message}")
+    for iss in issues: print(f"  [{iss.severity}] {iss.code}: {iss.message}")
 else:
     print("Lint: OK")
 ```
@@ -308,7 +298,7 @@ Common lint failures and fixes:
 - `label_mismatch` — label string doesn't match the geometric distance; recheck scale
 - `page_bounds` — annotation is outside the 297×210 margin; adjust view position
 - `view_annotation_overlap` — an annotation's bbox overlaps a view outline; move the dim
-- `view_overlap` — two view outlines overlap each other; increase gap in `_view_layout`
+- `view_overlap` — two view outlines overlap each other; re-run `suggest_view_layout` at a smaller scale or larger page
 
 ---
 

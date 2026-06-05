@@ -105,10 +105,17 @@ def _reconstruct(session):
     return items
 
 
-def _lint_session(session, drawing_scale: float = 1.0) -> list[dict]:
+def _lint_session(
+    session, drawing_scale: float = 1.0, view_shape_names: list | None = None
+) -> list[dict]:
     items = _reconstruct(session)
     results = [r for _, r in items]
     violations: list[dict] = []
+
+    # Resolve named view-outline shapes for view_annotation_overlap / view_overlap checks.
+    view_shapes = None
+    if view_shape_names:
+        view_shapes = [session.objects[n] for n in view_shape_names if n in session.objects]
 
     # per-item checks (carry the session name)
     for name, res in items:
@@ -118,7 +125,7 @@ def _lint_session(session, drawing_scale: float = 1.0) -> list[dict]:
 
     # pairwise checks + geometry-precise interference over the whole set
     if len(results) >= 2:
-        for issue in _helper_lint(results, drawing_scale=drawing_scale):
+        for issue in _helper_lint(results, drawing_scale=drawing_scale, view_shapes=view_shapes):
             if issue.code not in _PER_ITEM_CODES:
                 violations.append(_violation(issue, _pair_object(issue, items)))
     for issue in find_interferences(results):
@@ -238,7 +245,10 @@ def _lint_svg(svg_path: str, drawing_scale: float = 1.0) -> list[dict]:
     return violations
 
 
-def lint_drawing(session, svg_path: str = "", drawing_scale: float = 1.0) -> str:
+def lint_drawing(
+    session, svg_path: str = "", drawing_scale: float = 1.0,
+    view_shape_names: list | None = None,
+) -> str:
     """Run structural drawing checks; return JSON with a `violations` list.
 
     Args:
@@ -252,5 +262,5 @@ def lint_drawing(session, svg_path: str = "", drawing_scale: float = 1.0) -> str
         JSON: {"violations": [{severity, check, object, message}, ...]}
     """
     violations = (_lint_svg(svg_path, drawing_scale) if svg_path
-                  else _lint_session(session, drawing_scale))
+                  else _lint_session(session, drawing_scale, view_shape_names))
     return json.dumps({"violations": violations}, indent=2)

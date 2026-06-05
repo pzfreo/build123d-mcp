@@ -169,7 +169,11 @@ def view_axes(viewport_origin: list[float], viewport_up: list[float] = [0.0, 1.0
 
 
 @mcp.tool()
-def lint_drawing(svg_path: str = "", drawing_scale: float = 1.0) -> str:
+def lint_drawing(
+    svg_path: str = "",
+    drawing_scale: float = 1.0,
+    view_shape_names: list[str] | None = None,
+) -> str:
     """Run structural drawing-quality checks and return JSON {violations: [...]}.
 
     Session mode (default): reconstructs the session's annotations and delegates
@@ -190,10 +194,16 @@ def lint_drawing(svg_path: str = "", drawing_scale: float = 1.0) -> str:
     while the geometry is drawn enlarged, instead of every dim tripping a false
     axis-swap warning. Session mode only; defaults to 1.0 (no scaling).
 
+    view_shape_names: list of shape names (from show()) representing the placed
+    view outlines. Used to detect view_annotation_overlap (annotation bbox
+    overlaps a view outline) and view_overlap (two view outlines overlap).
+    Pass the visible-side placed compounds from each projection, e.g.
+    ["front_placed", "side_placed", "plan_placed", "iso"]. Session mode only.
+
     Each violation is {severity, check, object, message}. Run this after major
     drawing additions; running it BEFORE rendering catches the bug at the source.
     """
-    return _session.lint_drawing(svg_path, drawing_scale)
+    return _session.lint_drawing(svg_path, drawing_scale, view_shape_names)
 
 
 @mcp.tool()
