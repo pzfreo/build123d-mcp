@@ -226,8 +226,31 @@ def _is_transitively_safe(
     # Must be pure-Python with a findable source file.
     path = _source_path(dotted_name)
     if path is None:
-        _transitive_safe_cache[dotted_name] = False
-        return False
+        # Could be a namespace package (directory on sys.path, no __init__.py).
+        # Namespace packages have no code to execute — safe as a parent; submodules
+        # are checked individually when they're actually imported.
+        try:
+            spec = importlib.util.find_spec(dotted_name)
+            is_ns = (spec is not None and spec.origin is None
+                     and spec.submodule_search_locations is not None)
+        except Exception:
+            is_ns = False
+        _transitive_safe_cache[dotted_name] = is_ns
+        return is_ns
+
+    # Determine package context so relative imports can be resolved to absolute names.
+    # is_package=True  → dotted_name is a package (source file is __init__.py)
+    # is_package=False → dotted_name is a module inside a package
+    is_package = path.endswith("__init__.py")
+    pkg_parts = dotted_name.split(".") if is_package else dotted_name.split(".")[:-1]
+
+    # A submodule's parent package runs its __init__.py at import time with real
+    # builtins (outside the restricted exec namespace). Check it before the submodule.
+    if not is_package and "." in dotted_name:
+        parent = dotted_name.rsplit(".", 1)[0]
+        if parent not in _visiting and not _is_transitively_safe(parent, _visiting):
+            _transitive_safe_cache[dotted_name] = False
+            return False
 
     try:
         with open(path, encoding="utf-8", errors="replace") as f:  # server-side read; not user-sandbox open
@@ -246,9 +269,25 @@ def _is_transitively_safe(
                     return False
         elif isinstance(node, ast.ImportFrom):
             if node.level > 0:
-                # Relative import — stays within the same package; skip.
-                continue
-            if node.module and not _is_transitively_safe(node.module, visiting):
+                # Resolve relative import to an absolute name and check transitively.
+                # `from .mod import X` → loads <pkg>.mod
+                # `from . import X`    → loads <pkg>.X
+                n_up = node.level - 1  # package levels to ascend above pkg_parts
+                if n_up >= len(pkg_parts):
+                    # Relative import escapes the root package — block.
+                    _transitive_safe_cache[dotted_name] = False
+                    return False
+                base = pkg_parts[: len(pkg_parts) - n_up]
+                if node.module:
+                    if not _is_transitively_safe(".".join(base + node.module.split(".")), visiting):
+                        _transitive_safe_cache[dotted_name] = False
+                        return False
+                else:
+                    for alias in node.names:
+                        if not _is_transitively_safe(".".join(base + [alias.name]), visiting):
+                            _transitive_safe_cache[dotted_name] = False
+                            return False
+            elif node.module and not _is_transitively_safe(node.module, visiting):
                 _transitive_safe_cache[dotted_name] = False
                 return False
 

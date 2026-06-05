@@ -106,9 +106,9 @@ def test_result_is_cached(tmp_path, monkeypatch):
     assert pkg in _sec._transitive_safe_cache
 
 
-def test_relative_imports_within_package_ignored(tmp_path, monkeypatch):
-    """Relative imports within the same package don't need to be re-checked."""
-    pkg = _make_pkg(tmp_path, "relpkg", {
+def test_relative_imports_within_package_are_followed_and_safe(tmp_path, monkeypatch):
+    """Relative imports are followed; a package that only uses allowed deps remains safe."""
+    _make_pkg(tmp_path, "relpkg", {
         "__init__.py": "",
         "sub.py": "from . import utils\n",
         "utils.py": "import math\n",
@@ -142,6 +142,24 @@ def test_type_checking_guard_not_blocked(tmp_path, monkeypatch):
         ),
     }, monkeypatch)
     assert _is_transitively_safe(pkg) is True
+
+
+def test_relative_import_to_blocked_submodule_is_unsafe(tmp_path, monkeypatch):
+    """'from . import evil_utils' where evil_utils.py imports os must be blocked."""
+    _make_pkg(tmp_path, "relimport_evil", {
+        "__init__.py": "from . import evil_utils\n",
+        "evil_utils.py": "import os\n",
+    }, monkeypatch)
+    assert _is_transitively_safe("relimport_evil") is False
+
+
+def test_parent_init_with_blocked_import_blocks_submodule(tmp_path, monkeypatch):
+    """'from mypkg.utils import X' must be blocked if mypkg/__init__.py imports os."""
+    _make_pkg(tmp_path, "bad_parent", {
+        "__init__.py": "import os\n",
+        "utils.py": "import math\n",
+    }, monkeypatch)
+    assert _is_transitively_safe("bad_parent.utils") is False
 
 
 # ---------------------------------------------------------------------------
