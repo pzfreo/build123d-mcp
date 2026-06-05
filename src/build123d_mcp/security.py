@@ -181,7 +181,7 @@ def _source_path(dotted_name: str) -> str | None:
     """Return the .py source file for a module, or None if not pure-Python / not found."""
     try:
         spec = importlib.util.find_spec(dotted_name)
-    except (ModuleNotFoundError, ValueError):
+    except Exception:
         return None
     if spec is None or spec.origin is None:
         return None
@@ -203,8 +203,14 @@ def _is_transitively_safe(
     root = dotted_name.split(".")[0]
 
     # Explicitly allowed — fast path, no I/O.
-    if root == "OCP" or _is_root_allowed(root):
+    if _is_root_allowed(root):
         return True
+    if root == "OCP":
+        # Mirror _check_module/_safe_import: only allowed OCP sub-modules are safe.
+        ocp_parts = dotted_name.split(".")
+        if len(ocp_parts) >= 2:
+            return f"OCP.{ocp_parts[1]}" in OCP_ALLOWLIST
+        return True  # bare 'OCP'
 
     # Cache hit.
     cached = _transitive_safe_cache.get(dotted_name)
@@ -224,7 +230,7 @@ def _is_transitively_safe(
         return False
 
     try:
-        with open(path) as f:  # server-side read; not user-sandbox open
+        with open(path, encoding="utf-8", errors="replace") as f:  # server-side read; not user-sandbox open
             source = f.read()
         tree = ast.parse(source)
     except (OSError, SyntaxError):
@@ -232,7 +238,7 @@ def _is_transitively_safe(
         return False
 
     visiting = _visiting | {dotted_name}
-    for node in ast.walk(tree):
+    for node in tree.body:  # top-level only — skips TYPE_CHECKING guards, try/except optional deps
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if not _is_transitively_safe(alias.name, visiting):

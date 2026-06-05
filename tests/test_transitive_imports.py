@@ -123,6 +123,27 @@ def test_empty_package_is_safe(tmp_path, monkeypatch):
     assert _is_transitively_safe(pkg) is True
 
 
+def test_package_importing_blocked_ocp_submodule_is_unsafe(tmp_path, monkeypatch):
+    """A package that imports a blocked OCP sub-module (OCP.OSD) must not be transitively safe."""
+    pkg = _make_pkg(tmp_path, "ocppkg", {
+        "__init__.py": "import OCP.OSD\n",
+    }, monkeypatch)
+    assert _is_transitively_safe(pkg) is False
+
+
+def test_type_checking_guard_not_blocked(tmp_path, monkeypatch):
+    """Imports inside 'if TYPE_CHECKING:' are not executed at runtime; package must be allowed."""
+    pkg = _make_pkg(tmp_path, "typechecking_pkg", {
+        "__init__.py": (
+            "from typing import TYPE_CHECKING\n"
+            "if TYPE_CHECKING:\n"
+            "    import os  # never executes at runtime\n"
+            "import math\n"
+        ),
+    }, monkeypatch)
+    assert _is_transitively_safe(pkg) is True
+
+
 # ---------------------------------------------------------------------------
 # Integration: Session.execute() with transitive packages
 # ---------------------------------------------------------------------------
