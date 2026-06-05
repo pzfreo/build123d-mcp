@@ -233,10 +233,10 @@ ISO 7200:2004 mandatory fields and their parameter mapping:
 
 | ISO 7200 field | Parameter | Notes |
 |----------------|-----------|-------|
-| Field 1 — Legal owner | `legal_owner=` | Requires build123d-drafting-helpers ≥ 0.4.0. On older installs, prefix `part_name` instead: `"ACME Corp — BRACKET"` |
+| Field 1 — Legal owner | `legal_owner=` | Requires build123d-drafting-helpers ≥ 0.3.2. On older installs, prefix `part_name` instead: `"ACME Corp — BRACKET"` |
 | Field 2 — Document description | `part_name` | Always present |
 | Field 3 — Document identifier | `drawing_number` | Always present |
-| Field 4 — Revision indicator | `revision=` | Requires ≥ 0.4.0. On older installs, append to `drawing_number`: `"DWG-001 Rev A"` |
+| Field 4 — Revision indicator | `revision=` | Requires ≥ 0.3.2. On older installs, append to `drawing_number`: `"DWG-001 Rev A"` |
 
 ```python
 TB_W = 150.0
@@ -256,7 +256,7 @@ annotate(tb, "title_block")
 ```
 
 If `TitleBlock()` raises `TypeError: unexpected keyword argument 'revision'`, the installed
-version of build123d-drafting-helpers is older than 0.4.0. Fall back to:
+version of build123d-drafting-helpers is older than 0.3.2. Fall back to:
 ```python
 # Older API workaround — pack revision and owner into existing fields:
 TB_W = 150.0
@@ -288,7 +288,12 @@ annotation list and scale directly; the MCP tool reads from session state instea
 ```python
 all_anns = list(dims) + [ldr1, ldr2, tb]
 set_page(PAGE_W, PAGE_H, margin=10)   # PAGE_W / PAGE_H set in Step 2
-issues = lint_drawing(all_anns, drawing_scale=SCALE)
+
+# Collect projected view outlines for overlap checking (≥ 0.3.1).
+# Pass the placed visible geometry for each view — lint_drawing uses their
+# bounding boxes to detect annotation/view overlaps and view/view overlaps.
+view_shapes = [placed for placed, _ in view_proj.values()] + [iso]
+issues = lint_drawing(all_anns, drawing_scale=SCALE, view_shapes=view_shapes)
 if issues:
     for iss in issues:
         print(f"  [{iss.severity}] {iss.code}: {iss.message}")
@@ -302,6 +307,8 @@ Common lint failures and fixes:
 - `label_axis_swap` — dimension endpoints are swapped (X↔Y); check coord helper signs
 - `label_mismatch` — label string doesn't match the geometric distance; recheck scale
 - `page_bounds` — annotation is outside the 297×210 margin; adjust view position
+- `view_annotation_overlap` — an annotation's bbox overlaps a view outline; move the dim
+- `view_overlap` — two view outlines overlap each other; increase gap in `_view_layout`
 
 ---
 
