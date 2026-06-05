@@ -239,19 +239,19 @@ ISO 7200:2004 mandatory fields and their parameter mapping:
 | Field 4 — Revision indicator | `revision=` | Requires ≥ 0.4.0. On older installs, append to `drawing_number`: `"DWG-001 Rev A"` |
 
 ```python
+TB_W = 150.0
 tb = TitleBlock(
     "PART NAME",          # ISO 7200 field 2 — document title
     "DWG-NNN",            # ISO 7200 field 3 — document identifier
-    scale="2:1",
+    drawing_scale=SCALE,  # syncs title block cell text with lint_drawing(drawing_scale=SCALE)
     material="CZ121 BRASS",
     general_tolerance="ISO 2768-f",
     designed_by="Your Name",
     revision="A",         # ISO 7200 field 4 — revision indicator (≥ 0.4.0)
     legal_owner="COMPANY NAME",  # ISO 7200 field 1 — legal owner (≥ 0.4.0)
-    show_labels=True,    # render cell identifiers (TITLE, DWG NO., REV, etc.) — default True
-    width=150.0,
+    width=TB_W,
     draft=draft,
-).locate(Location((126, 11, 0)))
+).locate(Location((PAGE_W - TB_W - 10, 10, 0)))  # right-aligned: PAGE_W − block_width − margin
 annotate(tb, "title_block")
 ```
 
@@ -259,17 +259,18 @@ If `TitleBlock()` raises `TypeError: unexpected keyword argument 'revision'`, th
 version of build123d-drafting-helpers is older than 0.4.0. Fall back to:
 ```python
 # Older API workaround — pack revision and owner into existing fields:
+TB_W = 150.0
 tb = TitleBlock(
     "COMPANY — PART NAME",  # owner prefix + title
     "DWG-NNN Rev A",        # identifier + revision indicator
-    scale="2:1",
+    drawing_scale=SCALE,    # syncs title block cell text with lint_drawing(drawing_scale=SCALE)
     material="CZ121 BRASS",
     general_tolerance="ISO 2768-f",
     designed_by="Your Name",
     date="YYYY-MM-DD",
-    width=150.0,
+    width=TB_W,
     draft=draft,
-).locate(Location((126, 11, 0)))
+).locate(Location((PAGE_W - TB_W - 10, 10, 0)))  # right-aligned: PAGE_W − block_width − margin
 annotate(tb, "title_block")
 ```
 
