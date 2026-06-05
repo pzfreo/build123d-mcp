@@ -96,7 +96,8 @@ tool says so and may suggest a smaller scale or larger page. Address warnings be
 continuing. Then extract the positions:
 
 ```python
-# Paste the numeric values returned by suggest_view_layout — do not recompute them.
+# Extract positions from suggest_view_layout result.
+# Re-run suggest_view_layout above if the part geometry changes before Step 2.
 FV_X, FV_Y   = <result["views"]["front"]["VIEW_X"]>, <result["views"]["front"]["VIEW_Y"]>
 SV_X, SV_Y   = <result["views"]["side"]["VIEW_X"]>,  <result["views"]["side"]["VIEW_Y"]>
 PV_X, PV_Y   = <result["views"]["plan"]["VIEW_X"]>,  <result["views"]["plan"]["VIEW_Y"]>
@@ -264,10 +265,10 @@ Use the MCP tool — it reads annotations and view shapes directly from session 
 
 ```
 # show() each placed view compound under a stable name so the MCP tool can find them.
-show(placed_front, "front_placed")
-show(placed_side,  "side_placed")
-show(placed_plan,  "plan_placed")
-show(iso,          "iso_placed")
+show(view_proj["front"][0], "front_placed")
+show(view_proj["side"][0],  "side_placed")
+show(view_proj["plan"][0],  "plan_placed")
+show(iso,                   "iso_placed")
 
 mcp__build123d-mcp__lint_drawing(
     drawing_scale=SCALE,

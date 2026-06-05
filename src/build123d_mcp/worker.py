@@ -395,7 +395,7 @@ class WorkerSession:
 
     def lint_drawing(
         self, svg_path: str = "", drawing_scale: float = 1.0,
-        view_shape_names: list | None = None,
+        view_shape_names: list[str] | None = None,
     ) -> str:
         return self._call(
             "lint_drawing",
