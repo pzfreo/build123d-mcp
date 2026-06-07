@@ -359,7 +359,7 @@ dxf_exp.write(str(output_dir / "part_name.dxf"))
 mcp__build123d-mcp__render_drawing(svg_path='drawings/part_name.svg', save_to='/tmp/dwg.png')
 ```
 
-Send with `[SEND: /tmp/dwg.png]` for user review before moving on.
+Review the rendered PNG before moving on.
 
 ---
 
