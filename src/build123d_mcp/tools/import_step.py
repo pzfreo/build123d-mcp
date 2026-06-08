@@ -1,7 +1,7 @@
 import json
 import os
 
-from build123d_mcp.tools._paths import safe_input_path
+from build123d_mcp.tools._paths import check_input_size, safe_input_path
 
 _STEP_EXTS = frozenset({".step", ".stp"})
 _STL_EXTS = frozenset({".stl"})
@@ -12,6 +12,8 @@ def import_cad_file(session, path: str, name: str = "") -> str:
     # Reject reads outside the allowed roots (traversal / symlink escape)
     # before touching the filesystem, mirroring safe_output_path on writes.
     resolved = safe_input_path(path)
+    # Reject an oversized file before the (expensive) OCC import begins (#189).
+    check_input_size(resolved, "cad")
     if not os.path.isfile(resolved):
         raise ValueError(f"File not found: '{path}'")
     ext = os.path.splitext(resolved)[1].lower()

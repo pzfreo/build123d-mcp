@@ -5,7 +5,10 @@ import os
 import re
 import xml.etree.ElementTree as ET
 
-from build123d_mcp.tools._paths import safe_input_path
+from defusedxml.common import DefusedXmlException
+from defusedxml.ElementTree import parse as _safe_xml_parse
+
+from build123d_mcp.tools._paths import check_input_size, safe_input_path
 
 
 def _bbox_dict(shape) -> dict | None:
@@ -38,12 +41,17 @@ def _inspect_svg(svg_path: str) -> str:
     # the .dims.json sidecar below derives from this resolved path so it stays
     # within the same validated directory.
     svg_path = safe_input_path(svg_path)
+    check_input_size(svg_path, "svg")
     if not os.path.isfile(svg_path):
         return json.dumps({"error": f"SVG file not found: {svg_path}"})
     try:
-        tree = ET.parse(svg_path)
+        # Hardened parse: defusedxml forbids entity/DTD expansion, so a
+        # billion-laughs SVG is rejected instead of exhausting memory (#189).
+        tree = _safe_xml_parse(svg_path)
     except ET.ParseError as e:
         return json.dumps({"error": f"SVG parse error: {e}"})
+    except DefusedXmlException as e:
+        return json.dumps({"error": f"SVG rejected by XML hardening: {e}"})
 
     root = tree.getroot()
 
