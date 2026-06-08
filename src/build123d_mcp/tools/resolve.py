@@ -1,5 +1,7 @@
 import json
 
+from build123d_mcp.security import check_ast, make_restricted_builtins
+
 
 def resolve(session, object_name: str, selector: str, label: str = "") -> str:
     """Evaluate a selector expression against a named object and return a face/edge descriptor.
@@ -33,9 +35,22 @@ def resolve(session, object_name: str, selector: str, label: str = "") -> str:
         return json.dumps({"error": f"build123d import failed: {exc}"})
 
     namespace["obj"] = obj
+    namespace["__builtins__"] = make_restricted_builtins()
+
+    # The selector is model/user-controlled (resolve() is MCP-exposed), so route
+    # it through the same sandbox checks execute() uses: reject dunder traversal,
+    # blocked builtins, and disallowed imports before evaluating (issue #186).
+    expression = f"obj{selector}"
+    try:
+        check_ast(expression)
+    except ValueError as exc:
+        return json.dumps({
+            "error": f"Selector rejected: {exc}",
+            "selector": selector,
+        })
 
     try:
-        result = eval(f"obj{selector}", namespace)  # noqa: S307
+        result = eval(expression, namespace)  # noqa: S307
     except Exception as exc:
         return json.dumps({
             "error": f"Selector evaluation failed: {exc}",

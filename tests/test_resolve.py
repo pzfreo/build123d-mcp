@@ -73,6 +73,29 @@ def test_bad_selector_returns_error(box_session):
     assert "error" in result
 
 
+def test_dunder_traversal_rejected(box_session):
+    """Selector cannot traverse dunder attributes (issue #186 sandbox escape)."""
+    result = json.loads(resolve(box_session, "box", ".__class__.__mro__"))
+    assert "error" in result
+    assert "rejected" in result["error"].lower()
+
+
+def test_subclasses_escape_rejected(box_session):
+    """The classic __subclasses__() escape chain is blocked (issue #186)."""
+    result = json.loads(
+        resolve(box_session, "box", ".__class__.__base__.__subclasses__()")
+    )
+    assert "error" in result
+    assert "type" not in result
+
+
+def test_blocked_builtin_in_selector_rejected(box_session):
+    """A blocked builtin call in the selector is rejected (issue #186)."""
+    result = json.loads(resolve(box_session, "box", " or getattr(obj, 'volume')"))
+    assert "error" in result
+    assert "rejected" in result["error"].lower()
+
+
 def test_geometry_refs_cleared_on_reset(box_session):
     resolve(box_session, "box", ".faces().sort_by(Axis.Z)[-1]", label="top_face")
     assert "top_face" in box_session.geometry_refs
