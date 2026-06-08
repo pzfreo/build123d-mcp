@@ -35,7 +35,6 @@ def resolve(session, object_name: str, selector: str, label: str = "") -> str:
         return json.dumps({"error": f"build123d import failed: {exc}"})
 
     namespace["obj"] = obj
-    namespace["__builtins__"] = make_restricted_builtins()
 
     # The selector is model/user-controlled (resolve() is MCP-exposed), so route
     # it through the same sandbox checks execute() uses: reject dunder traversal,
@@ -49,6 +48,7 @@ def resolve(session, object_name: str, selector: str, label: str = "") -> str:
             "selector": selector,
         })
 
+    namespace["__builtins__"] = make_restricted_builtins()
     try:
         result = eval(expression, namespace)  # noqa: S307
     except Exception as exc:
