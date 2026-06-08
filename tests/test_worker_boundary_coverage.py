@@ -152,29 +152,40 @@ def _session_state(ws, tmp_path):
 
 
 def _diff_snapshot(ws, tmp_path):
+    # The 'snap' snapshot captured the seeded objects; on an empty worker the
+    # missing snapshot yields a non-JSON "Error:" string and json.loads raises.
     r = json.loads(ws.diff_snapshot("snap", format="json"))
-    assert "error" not in r
+    assert "a" in r["a"]["objects"] and "b" in r["a"]["objects"]
 
 
 def _save_snapshot(ws, tmp_path):
+    # The summary lists the captured geometry; "current_shape" appears only when
+    # the worker holds the seeded state ("Geometry captured: none." when empty).
     r = ws.save_snapshot("s2")
-    assert "s2" in r
+    assert "current_shape" in r
 
 
 def _restore_snapshot(ws, tmp_path):
+    # Success says "restored"; an empty worker has no 'snap' and returns "Error:".
     r = ws.restore_snapshot("snap")
-    assert "snap" in r or "restored" in r.lower()
+    assert "restored" in r.lower() and "current_shape" in r
 
 
 def _last_error(ws, tmp_path):
-    # last_error reads the worker's recorded error slot; key is always present.
+    # Trigger a failure in the worker, then assert last_error reflects THAT error
+    # — distinguishing the worker's error slot from a fresh {"error": null}.
+    ws.execute("raise ValueError('boundary_marker')")
     r = json.loads(ws.last_error())
-    assert "error" in r
+    # A fresh/unrouted worker returns {"error": null}; only the worker that ran
+    # the failing snippet carries the marker in its recorded error detail.
+    assert "boundary_marker" in json.dumps(r)
 
 
-def _health_check(ws, tmp_path):
-    r = json.loads(ws.health_check())
-    assert isinstance(r, dict)
+def _inspect_drawing(ws, tmp_path):
+    # Session mode iterates session.objects (the worker-owned geometry seed);
+    # an empty worker returns {"error": "No objects in session ..."}.
+    r = json.loads(ws.inspect_drawing())
+    assert "error" not in r and "a" in r["objects"] and "b" in r["objects"]
 
 
 def _export_file(ws, tmp_path):
@@ -205,7 +216,7 @@ SESSION_STATEFUL_TOOLS = {
     "save_snapshot": _save_snapshot,
     "restore_snapshot": _restore_snapshot,
     "last_error": _last_error,
-    "health_check": _health_check,
+    "inspect_drawing": _inspect_drawing,
     "export_file": _export_file,
     "render_view": _render_view,
 }
@@ -221,7 +232,7 @@ NON_SMOKED_OPS = {
     "import_cad_file": "requires an external CAD file on disk",
     "view_axes": "pure: the helper takes no session (analytic axis mapping)",
     "render_drawing": "pure: rasterises an SVG file from disk; helper takes no session",
-    "inspect_drawing": "reads drawing-annotation state, not the geometry seed",
+    "health_check": "pure: builds its own Box to probe render/export; session arg unused",
     "lint_drawing": "reads drawing-annotation state, not the geometry seed",
     "save_drawing_annotations": "reads drawing-annotation state, not the geometry seed",
 }
