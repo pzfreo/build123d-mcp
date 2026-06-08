@@ -224,9 +224,16 @@ def _add_label_actors(renderer, labels) -> None:
         renderer.AddActor(actor)
 
 
-def _do_render_png(
-    shapes, tess, direction, clip_plane, clip_at, azimuth, elevation, labels=None
-) -> tuple[bytes, list[str]]:
+def _vtk_render_tesselated(
+    shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels=None
+) -> bytes:
+    """Pure VTK render from pre-tessellated mesh data.
+
+    shape_data: list of (name, [(x,y,z), ...], [(i,j,k), ...], color_or_None)
+
+    Separated from _do_render_png so it can be called in a subprocess on macOS,
+    where VTK's Cocoa context creation freezes the window server on cold-start.
+    """
     import tempfile
 
     import vtk
@@ -252,22 +259,15 @@ def _do_render_png(
         render_window.SetNumberOfLayers(2)
         render_window.AddRenderer(label_renderer)
 
-    failed: list[str] = []
     actor_count = 0
 
-    for i, (name, shape, obj_color) in enumerate(shapes):
-        try:
-            verts, tris = shape.tessellate(tess["linear_deflection"], tess["angular_deflection"])
-        except Exception as exc:
-            failed.append(f"{name}: {exc}")
-            continue
-
+    for i, (name, vert_tuples, tri_list, obj_color) in enumerate(shape_data):
         points = vtk.vtkPoints()
-        for v in verts:
-            points.InsertNextPoint(v.X, v.Y, v.Z)
+        for v in vert_tuples:
+            points.InsertNextPoint(v[0], v[1], v[2])
 
         cells = vtk.vtkCellArray()
-        for tri in tris:
+        for tri in tri_list:
             cells.InsertNextCell(3)
             cells.InsertCellPoint(tri[0])
             cells.InsertCellPoint(tri[1])
@@ -329,12 +329,7 @@ def _do_render_png(
         actor_count += 1
 
     if actor_count == 0:
-        msg = (
-            "All shapes failed to tessellate: " + "; ".join(failed)
-            if failed
-            else "No geometry to render"
-        )
-        raise RuntimeError(msg)
+        raise RuntimeError("No geometry to render")
 
     if label_renderer is not None:
         _add_label_actors(label_renderer, labels)
@@ -368,7 +363,100 @@ def _do_render_png(
         writer.Write()
 
         with open(png_path, "rb") as f:
-            return f.read(), failed
+            return f.read()
+
+
+def _vtk_subprocess_worker(
+    conn, shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels
+):
+    """Module-level worker for multiprocessing.Process (must be top-level to be picklable)."""
+    try:
+        png_bytes = _vtk_render_tesselated(
+            shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels
+        )
+        conn.send(("ok", png_bytes))
+    except Exception as exc:
+        conn.send(("error", f"{type(exc).__name__}: {exc}"))
+    finally:
+        conn.close()
+
+
+def _do_render_png(
+    shapes, tess, direction, clip_plane, clip_at, azimuth, elevation, labels=None
+) -> tuple[bytes, list[str]]:
+    # Tessellate shapes using build123d (no VTK) so the data is serializable.
+    shape_data = []
+    failed: list[str] = []
+    for name, shape, obj_color in shapes:
+        try:
+            verts, tris = shape.tessellate(tess["linear_deflection"], tess["angular_deflection"])
+            shape_data.append((name, [(v.X, v.Y, v.Z) for v in verts], list(tris), obj_color))
+        except Exception as exc:
+            failed.append(f"{name}: {exc}")
+
+    if not shape_data:
+        msg = (
+            "All shapes failed to tessellate: " + "; ".join(failed)
+            if failed
+            else "No geometry to render"
+        )
+        raise RuntimeError(msg)
+
+    if sys.platform == "darwin":
+        png_bytes = _vtk_render_subprocess(
+            shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels
+        )
+    else:
+        png_bytes = _vtk_render_tesselated(
+            shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels
+        )
+    return png_bytes, failed
+
+
+def _vtk_render_subprocess(
+    shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels, timeout=120
+) -> bytes:
+    """Run VTK rendering in an isolated subprocess on macOS.
+
+    VTK's Cocoa backend touches the macOS window server on first context
+    creation, which freezes all GUI applications when called from a non-
+    foreground process. Isolating the render in a child process prevents the
+    freeze from locking the MCP server itself, and the timeout+kill ensures
+    the server always recovers even if VTK hangs permanently.
+    """
+    import multiprocessing
+
+    # Daemon processes cannot spawn children (Python restriction). When
+    # render_view is called from inside WorkerSession (which runs as daemon=True),
+    # fall back to running VTK directly in the current process.
+    if multiprocessing.current_process().daemon:
+        return _vtk_render_tesselated(
+            shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels
+        )
+
+    parent_conn, child_conn = multiprocessing.Pipe(duplex=False)
+    p = multiprocessing.Process(
+        target=_vtk_subprocess_worker,
+        args=(child_conn, shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels),
+        daemon=True,
+    )
+    p.start()
+    child_conn.close()
+
+    try:
+        if parent_conn.poll(timeout):
+            try:
+                kind, data = parent_conn.recv()
+            except (EOFError, OSError) as exc:
+                raise RuntimeError(f"VTK render subprocess died unexpectedly: {exc}") from exc
+            if kind == "error":
+                raise RuntimeError(data)
+            return data
+        raise RuntimeError(f"VTK render subprocess timed out after {timeout}s")
+    finally:
+        if p.is_alive():
+            p.kill()
+        p.join(timeout=5)
 
 
 def _viewport_origin_for(direction: str, shapes, azimuth: float, elevation: float):
