@@ -69,14 +69,14 @@ def safe_input_path(filename: str) -> str:
 # parse/import/rasterise, rather than letting the work run until the exec
 # timeout kills the worker and destroys session state. Defaults are generous —
 # they reject only the absurd — and are env-overridable, matching the
-# BUILD123D_EXEC_TIMEOUT convention.
-MAX_SVG_BYTES = int(os.environ.get("BUILD123D_MAX_SVG_BYTES", str(20 * 1024 * 1024)))  # 20 MB
-MAX_CAD_BYTES = int(os.environ.get("BUILD123D_MAX_CAD_BYTES", str(200 * 1024 * 1024)))  # 200 MB
-MAX_RASTER_WIDTH = int(os.environ.get("BUILD123D_MAX_RASTER_WIDTH", "10000"))  # px
-
-# Env var names per kind, surfaced in the rejection message so the caller knows
-# which knob to turn.
-_SIZE_LIMIT_ENV = {"svg": "BUILD123D_MAX_SVG_BYTES", "cad": "BUILD123D_MAX_CAD_BYTES"}
+# BUILD123D_EXEC_TIMEOUT convention. Each limit is the single source of truth:
+# (default value, override env var). Read at call time so the override is
+# honoured per process and tests can set it with monkeypatch.setenv.
+_INPUT_SIZE_LIMITS = {
+    "svg": (20 * 1024 * 1024, "BUILD123D_MAX_SVG_BYTES"),  # 20 MB
+    "cad": (200 * 1024 * 1024, "BUILD123D_MAX_CAD_BYTES"),  # 200 MB
+}
+_RASTER_WIDTH_LIMIT = (10000, "BUILD123D_MAX_RASTER_WIDTH")  # px
 
 
 def check_input_size(path: str, kind: str) -> None:
@@ -84,12 +84,11 @@ def check_input_size(path: str, kind: str) -> None:
 
     `kind` is ``"svg"`` or ``"cad"``, selecting the byte limit. No-op when the
     file is missing or unreadable — the caller's own existence check reports
-    that. The limit globals are read at call time so they stay env-overridable
-    (and test-patchable). Raises ``ValueError`` when the file exceeds the limit;
-    callers let it propagate, like the path-policy check above.
+    that. Raises ``ValueError`` when the file exceeds the limit; callers let it
+    propagate, like the path-policy check above.
     """
-    limits = {"svg": MAX_SVG_BYTES, "cad": MAX_CAD_BYTES}
-    max_bytes = limits[kind]
+    default_bytes, env_var = _INPUT_SIZE_LIMITS[kind]
+    max_bytes = int(os.environ.get(env_var, default_bytes))
     try:
         size = os.path.getsize(path)
     except OSError:
@@ -97,7 +96,7 @@ def check_input_size(path: str, kind: str) -> None:
     if size > max_bytes:
         raise ValueError(
             f"Input file '{path}' is {size} bytes, exceeding the {max_bytes}-byte limit "
-            f"for {kind} inputs. Raise {_SIZE_LIMIT_ENV[kind]} to allow a larger file."
+            f"for {kind} inputs. Raise {env_var} to allow a larger file."
         )
 
 
@@ -105,11 +104,13 @@ def check_raster_width(width: int) -> None:
     """Reject an extreme raster width before the output bitmap is allocated.
 
     A bitmap is width × height × 4 bytes, so an unbounded width (e.g. 100000 px)
-    can demand tens of GB. Reads ``MAX_RASTER_WIDTH`` at call time. Raises
-    ``ValueError`` when exceeded; the caller lets it propagate.
+    can demand tens of GB. Raises ``ValueError`` when exceeded; the caller lets
+    it propagate.
     """
-    if width > MAX_RASTER_WIDTH:
+    default_width, env_var = _RASTER_WIDTH_LIMIT
+    max_width = int(os.environ.get(env_var, default_width))
+    if width > max_width:
         raise ValueError(
-            f"Requested raster width {width}px exceeds the {MAX_RASTER_WIDTH}px limit. "
-            f"Raise BUILD123D_MAX_RASTER_WIDTH to allow a larger raster."
+            f"Requested raster width {width}px exceeds the {max_width}px limit. "
+            f"Raise {env_var} to allow a larger raster."
         )

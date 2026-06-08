@@ -107,6 +107,9 @@ def _inspect_svg(svg_path: str) -> str:
     # build123d renders Text as filled glyph paths so <text> elements are absent;
     # the sidecar restores label content and measured-length metadata.
     sidecar_path = os.path.splitext(svg_path)[0] + ".dims.json"
+    # The sidecar is a separate caller-influenced file; bound its size too (#189)
+    # so it can't be the unguarded side door the SVG limit above closes.
+    check_input_size(sidecar_path, "svg")
     annotations: dict = {}
     if os.path.isfile(sidecar_path):
         try:

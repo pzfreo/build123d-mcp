@@ -7,20 +7,21 @@ exec timeout kills the worker and destroys session state. These tests prove:
   * render_drawing() rejects an extreme raster width (huge bitmap allocation)
     and an oversized SVG file.
   * import_cad_file(), inspect_drawing(), and lint_drawing() reject oversized
-    inputs via the shared ``check_input_size`` preflight.
+    inputs via the shared ``check_input_size`` preflight — including the
+    ``.dims.json`` sidecar, a separate caller-influenced file.
   * inspect_drawing() and lint_drawing() reject an XML entity-expansion
     ("billion laughs") SVG via the hardened defusedxml parser — stdlib
     ElementTree expands such entities and is memory-exhaustible.
 
-Size limits are patched small (instead of writing multi-MB files) so the tests
-stay fast; the real defaults are generous.
+Limits are read from the environment at call time, so the tests set them small
+with monkeypatch.setenv (instead of writing multi-MB files) to stay fast; the
+real defaults are generous.
 """
 
 import json
 
 import pytest
 
-import build123d_mcp.tools._paths as _paths
 from build123d_mcp.session import Session
 from build123d_mcp.tools.import_step import import_cad_file
 from build123d_mcp.tools.inspect_drawing import inspect_drawing
@@ -60,10 +61,11 @@ def _write(tmp_path, name, text) -> str:
 # --- raster width ----------------------------------------------------------
 
 
-def test_render_drawing_rejects_extreme_width(tmp_path):
+def test_render_drawing_rejects_extreme_width(tmp_path, monkeypatch):
+    monkeypatch.setenv("BUILD123D_MAX_RASTER_WIDTH", "100")
     svg = _write(tmp_path, "drawing.svg", _VALID_SVG)
     with pytest.raises(ValueError, match="raster width"):
-        render_drawing(svg, width=_paths.MAX_RASTER_WIDTH + 1)
+        render_drawing(svg, width=101)
 
 
 def test_render_drawing_allows_normal_width(tmp_path):
@@ -77,30 +79,52 @@ def test_render_drawing_allows_normal_width(tmp_path):
 
 
 def test_render_drawing_rejects_oversized_svg(tmp_path, monkeypatch):
-    monkeypatch.setattr(_paths, "MAX_SVG_BYTES", 10)
+    monkeypatch.setenv("BUILD123D_MAX_SVG_BYTES", "10")
     with pytest.raises(ValueError, match="exceeding"):
         render_drawing(_write(tmp_path, "drawing.svg", _VALID_SVG))
 
 
 def test_inspect_drawing_rejects_oversized_svg(session, tmp_path, monkeypatch):
-    monkeypatch.setattr(_paths, "MAX_SVG_BYTES", 10)
+    monkeypatch.setenv("BUILD123D_MAX_SVG_BYTES", "10")
     with pytest.raises(ValueError, match="exceeding"):
         inspect_drawing(session, svg_path=_write(tmp_path, "drawing.svg", _VALID_SVG))
 
 
 def test_lint_drawing_rejects_oversized_svg(session, tmp_path, monkeypatch):
-    monkeypatch.setattr(_paths, "MAX_SVG_BYTES", 10)
+    monkeypatch.setenv("BUILD123D_MAX_SVG_BYTES", "10")
     with pytest.raises(ValueError, match="exceeding"):
         lint_drawing(session, svg_path=_write(tmp_path, "drawing.svg", _VALID_SVG))
 
 
 def test_import_cad_file_rejects_oversized_file(session, tmp_path, monkeypatch):
     # Size is checked before the OCC import, so the file need not be valid CAD.
-    monkeypatch.setattr(_paths, "MAX_CAD_BYTES", 10)
+    monkeypatch.setenv("BUILD123D_MAX_CAD_BYTES", "10")
     big = tmp_path / "big.stl"
     big.write_bytes(b"x" * 100)
     with pytest.raises(ValueError, match="exceeding"):
         import_cad_file(session, str(big))
+
+
+# --- sidecar (.dims.json) size preflight -----------------------------------
+# The sidecar path derives from svg_path, so it must be size-bounded too — a
+# small SVG with a giant sidecar must still be rejected. Set the limit between
+# the two file sizes so only the sidecar trips it.
+
+
+def test_inspect_drawing_rejects_oversized_sidecar(session, tmp_path, monkeypatch):
+    monkeypatch.setenv("BUILD123D_MAX_SVG_BYTES", "1000")
+    svg = _write(tmp_path, "drawing.svg", _VALID_SVG)  # ~130 bytes, under the limit
+    (tmp_path / "drawing.dims.json").write_text(json.dumps({"k": "x" * 5000}))  # over it
+    with pytest.raises(ValueError, match="exceeding"):
+        inspect_drawing(session, svg_path=svg)
+
+
+def test_lint_drawing_rejects_oversized_sidecar(session, tmp_path, monkeypatch):
+    monkeypatch.setenv("BUILD123D_MAX_SVG_BYTES", "1000")
+    svg = _write(tmp_path, "drawing.svg", _VALID_SVG)
+    (tmp_path / "drawing.dims.json").write_text(json.dumps({"k": "x" * 5000}))
+    with pytest.raises(ValueError, match="exceeding"):
+        lint_drawing(session, svg_path=svg)
 
 
 # --- XML entity-expansion (billion laughs) ---------------------------------

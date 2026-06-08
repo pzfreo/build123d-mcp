@@ -272,6 +272,9 @@ def _lint_svg(svg_path: str, drawing_scale: float = 1.0) -> list[dict]:
     walk(tree.getroot(), None)
 
     sidecar = os.path.splitext(svg_path)[0] + ".dims.json"
+    # Bound the sidecar's size too (#189) — it is a separate caller-influenced
+    # file, so the SVG limit above does not cover it.
+    check_input_size(sidecar, "svg")
     if os.path.isfile(sidecar):
         try:
             with open(sidecar) as f:
