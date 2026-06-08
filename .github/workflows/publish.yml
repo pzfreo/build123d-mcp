@@ -121,11 +121,27 @@ jobs:
           base="${current%.dev*}"
           IFS='.' read -r major minor patch <<< "$base"
           uv version "${major}.${minor}.$((patch + 1)).dev0"
+      - name: Sync server.json to the new base version
+        run: |
+          new_base=$(grep '^version = ' pyproject.toml \
+            | sed 's/version = "\(.*\)"/\1/' | sed 's/\.dev[0-9]*$//')
+          python3 - "$new_base" <<'EOF'
+          import json, sys
+          base = sys.argv[1]
+          with open("server.json") as f:
+              data = json.load(f)
+          data["version"] = base
+          for package in data.get("packages", []):
+              package["version"] = base
+          with open("server.json", "w") as f:
+              json.dump(data, f, indent=2)
+              f.write("\n")
+          EOF
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           new_version=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
-          git add pyproject.toml uv.lock
+          git add pyproject.toml uv.lock server.json
           git commit -m "chore: bump version to ${new_version} after release"
           git push
