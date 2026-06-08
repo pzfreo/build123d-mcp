@@ -1,5 +1,7 @@
 """Tests for failure_class classification in execute() error responses."""
+
 import json
+
 import pytest
 
 from build123d_mcp.session import Session

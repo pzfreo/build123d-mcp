@@ -92,12 +92,14 @@ class _LibraryIndex:
         terms = query.lower().split()
         results = []
         for part in parts:
-            text = " ".join([
-                part["name"],
-                part["description"],
-                part["category"],
-                " ".join(part["tags"]),
-            ]).lower()
+            text = " ".join(
+                [
+                    part["name"],
+                    part["description"],
+                    part["category"],
+                    " ".join(part["tags"]),
+                ]
+            ).lower()
             if all(term in text for term in terms):
                 results.append(_public(part))
         return results
@@ -150,6 +152,7 @@ def load_part(session, index: _LibraryIndex, name: str, params: str = "") -> str
 
     # Execute part file in isolated restricted namespace
     from build123d_mcp.security import check_ast, make_restricted_builtins
+
     with open(entry["path"]) as f:
         source = f.read()
     check_ast(source)

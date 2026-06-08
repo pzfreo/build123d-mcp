@@ -17,26 +17,34 @@ TARGETS = ("claude", "agents-md", "cursor", "windsurf")
 
 # Delimiters used when appending to shared files (AGENTS.md, .windsurfrules)
 _START = "<!-- b123d-drawing:start -->"
-_END   = "<!-- b123d-drawing:end -->"
+_END = "<!-- b123d-drawing:end -->"
 
 
 def _load_raw() -> str:
-    return (files("build123d_mcp") / "skills" / "b123d-drawing" / "SKILL.md").read_text(encoding="utf-8")
+    return (files("build123d_mcp") / "skills" / "b123d-drawing" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
 
 
 def _strip_claude_markers(text: str) -> str:
     """Remove Claude Code-specific inline markers that other agents don't understand."""
     # [SEND: /tmp/foo.png]  →  show the rendered image at /tmp/foo.png to the user
     text = re.sub(
-        r'\[SEND:\s*([^\]]+)\]',
-        r'(show the rendered image at \1 to the user)',
+        r"\[SEND:\s*([^\]]+)\]",
+        r"(show the rendered image at \1 to the user)",
         text,
     )
+
     # [ASK: question | opt1 | opt2]  →  ask the user: question (opt1 / opt2)
     def _ask_replace(m: re.Match) -> str:
         parts = [p.strip() for p in m.group(1).split("|")]
-        return f"(ask the user: {parts[0]}" + (f" — options: {', '.join(parts[1:])}" if len(parts) > 1 else "") + ")"
-    text = re.sub(r'\[ASK:\s*([^\]]+)\]', _ask_replace, text)
+        return (
+            f"(ask the user: {parts[0]}"
+            + (f" — options: {', '.join(parts[1:])}" if len(parts) > 1 else "")
+            + ")"
+        )
+
+    text = re.sub(r"\[ASK:\s*([^\]]+)\]", _ask_replace, text)
     return text
 
 

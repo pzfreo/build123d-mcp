@@ -1,7 +1,7 @@
 import copy
 import io
 import signal
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from typing import Any
 
 from build123d_mcp.security import (
@@ -11,10 +11,10 @@ from build123d_mcp.security import (
     make_restricted_builtins,
 )
 
-
 # Names injected by the session itself — excluded from rollback and new-key detection.
-_INJECTED = frozenset({"__builtins__", "show", "named_face", "annotate",
-                       "register_centerline", "set_page"})
+_INJECTED = frozenset(
+    {"__builtins__", "show", "named_face", "annotate", "register_centerline", "set_page"}
+)
 
 
 class Session:
@@ -82,8 +82,14 @@ class Session:
                 meta["label_str"] = lbl
             if getattr(result, "is_centerline", False):
                 meta["is_centerline"] = True
-            for attr in ("measured_length", "tip", "elbow",
-                         "label_bbox", "dim_level_y", "segments"):
+            for attr in (
+                "measured_length",
+                "tip",
+                "elbow",
+                "label_bbox",
+                "dim_level_y",
+                "segments",
+            ):
                 val = getattr(result, attr, None)
                 if val is not None:
                     meta[attr] = val
@@ -162,8 +168,10 @@ class Session:
                 "max_x": width - margin,
                 "max_y": height - margin,
             }
-            print(f"Page set: {width}×{height} mm, margin={margin} mm "
-                  f"(drawable area {width-2*margin}×{height-2*margin} mm)")
+            print(
+                f"Page set: {width}×{height} mm, margin={margin} mm "
+                f"(drawable area {width - 2 * margin}×{height - 2 * margin} mm)"
+            )
 
         self.namespace["set_page"] = set_page
 
@@ -191,13 +199,20 @@ class Session:
         def named_face(shape: Any, name: str) -> Any:
             """Return a face of shape by semantic name: top/bottom/front/back/left/right."""
             from build123d import Axis
+
             match name.lower():
-                case "top":    return shape.faces().sort_by(Axis.Z)[-1]
-                case "bottom": return shape.faces().sort_by(Axis.Z)[0]
-                case "front":  return shape.faces().sort_by(Axis.Y)[-1]
-                case "back":   return shape.faces().sort_by(Axis.Y)[0]
-                case "right":  return shape.faces().sort_by(Axis.X)[-1]
-                case "left":   return shape.faces().sort_by(Axis.X)[0]
+                case "top":
+                    return shape.faces().sort_by(Axis.Z)[-1]
+                case "bottom":
+                    return shape.faces().sort_by(Axis.Z)[0]
+                case "front":
+                    return shape.faces().sort_by(Axis.Y)[-1]
+                case "back":
+                    return shape.faces().sort_by(Axis.Y)[0]
+                case "right":
+                    return shape.faces().sort_by(Axis.X)[-1]
+                case "left":
+                    return shape.faces().sort_by(Axis.X)[0]
                 case _:
                     raise ValueError(
                         f"Unknown face name '{name}'. Use: top, bottom, front, back, left, right"
@@ -211,8 +226,12 @@ class Session:
             bb = shape.bounding_box()
             return {
                 "vol": shape.volume,
-                "size_x": bb.size.X, "size_y": bb.size.Y, "size_z": bb.size.Z,
-                "center_x": bb.center().X, "center_y": bb.center().Y, "center_z": bb.center().Z,
+                "size_x": bb.size.X,
+                "size_y": bb.size.Y,
+                "size_z": bb.size.Z,
+                "center_x": bb.center().X,
+                "center_y": bb.center().Y,
+                "center_z": bb.center().Z,
                 "faces": len(shape.faces()),
                 "edges": len(shape.edges()),
                 "verts": len(shape.vertices()),
@@ -273,8 +292,12 @@ class Session:
             and a["faces"] == b["faces"]
             and a["edges"] == b["edges"]
             and a["verts"] == b["verts"]
-            and a["size_x"] == b["size_x"] and a["size_y"] == b["size_y"] and a["size_z"] == b["size_z"]
-            and a["center_x"] == b["center_x"] and a["center_y"] == b["center_y"] and a["center_z"] == b["center_z"]
+            and a["size_x"] == b["size_x"]
+            and a["size_y"] == b["size_y"]
+            and a["size_z"] == b["size_z"]
+            and a["center_x"] == b["center_x"]
+            and a["center_y"] == b["center_y"]
+            and a["center_z"] == b["center_z"]
         )
         if identical:
             warnings.append(
@@ -296,14 +319,24 @@ class Session:
         try:
             check_ast(code)
         except ValueError as e:
-            self.last_error_detail = {"type": "SecurityError", "message": str(e), "line": None, "excerpt": None}
+            self.last_error_detail = {
+                "type": "SecurityError",
+                "message": str(e),
+                "line": None,
+                "excerpt": None,
+            }
             return f"Error: SecurityError: {e}"
 
         try:
             compiled = compile(code, "<mcp>", "exec")
         except SyntaxError as e:
             excerpt = self._syntax_excerpt(code, e.lineno)
-            self.last_error_detail = {"type": "SyntaxError", "message": str(e), "line": e.lineno, "excerpt": excerpt}
+            self.last_error_detail = {
+                "type": "SyntaxError",
+                "message": str(e),
+                "line": e.lineno,
+                "excerpt": excerpt,
+            }
             return f"Error: SyntaxError: {e}"
 
         values_before = {
@@ -324,10 +357,12 @@ class Session:
         _alarm_set = False
         _old_handler: Any = None
         try:
+
             def _timeout_handler(signum: int, frame: Any) -> None:
                 raise ExecutionTimeout(
                     f"Code exceeded the {self.exec_timeout}s execution time limit."
                 )
+
             _old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
             signal.alarm(max(1, self.exec_timeout - 2))
             _alarm_set = True
@@ -347,7 +382,12 @@ class Session:
             self.objects.update(objects_before)
             self.drawing_annotations.clear()
             self.drawing_annotations.update(annotations_before)
-            self.last_error_detail = {"type": "ExecutionTimeout", "message": str(e), "line": None, "excerpt": None}
+            self.last_error_detail = {
+                "type": "ExecutionTimeout",
+                "message": str(e),
+                "line": None,
+                "excerpt": None,
+            }
             return f"Error: ExecutionTimeout: {e}"
         except AssertionError as e:
             self._rollback_namespace(values_before)
@@ -357,7 +397,12 @@ class Session:
             self.drawing_annotations.clear()
             self.drawing_annotations.update(annotations_before)
             msg = str(e) or "Constraint failed"
-            self.last_error_detail = {"type": "AssertionError", "message": msg, "line": None, "excerpt": None}
+            self.last_error_detail = {
+                "type": "AssertionError",
+                "message": msg,
+                "line": None,
+                "excerpt": None,
+            }
             return f"Constraint failed: {e}" if str(e) else "Constraint failed"
         except Exception as e:
             exc = e
@@ -419,12 +464,12 @@ class Session:
         start = max(0, lineno - 3)
         end = min(len(lines), lineno + 2)
         return "\n".join(
-            f"{i + 1:3d}{'→ ' if i + 1 == lineno else '  '}{lines[i]}"
-            for i in range(start, end)
+            f"{i + 1:3d}{'→ ' if i + 1 == lineno else '  '}{lines[i]}" for i in range(start, end)
         )
 
     def _make_error_detail(self, exc: Exception, code: str) -> dict[str, Any]:
         import traceback as tb_module
+
         frames = tb_module.extract_tb(exc.__traceback__)
         mcp_frames = [f for f in frames if f.filename == "<mcp>"]
         lineno: int | None = mcp_frames[-1].lineno if mcp_frames else None
@@ -441,7 +486,7 @@ class Session:
 
     def _update_current_shape(self, new_keys: set[str]) -> None:
         try:
-            from build123d import Shape, BuildPart
+            from build123d import BuildPart, Shape
         except ImportError:
             return
 

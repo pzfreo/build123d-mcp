@@ -3,19 +3,19 @@
 from pathlib import Path
 
 from build123d_mcp.tools.install_skill import (
-    TARGETS,
     _END,
     _START,
+    TARGETS,
     _dest_exists,
     _load_raw,
     _strip_claude_markers,
     install_skill,
 )
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
@@ -24,6 +24,7 @@ def _read(path: Path) -> str:
 # ---------------------------------------------------------------------------
 # _load_raw
 # ---------------------------------------------------------------------------
+
 
 def test_load_raw_returns_skill_content():
     content = _load_raw()
@@ -34,6 +35,7 @@ def test_load_raw_returns_skill_content():
 # ---------------------------------------------------------------------------
 # _strip_claude_markers
 # ---------------------------------------------------------------------------
+
 
 def test_strip_send_marker():
     out = _strip_claude_markers("See [SEND: /tmp/foo.png] for the result.")
@@ -57,6 +59,7 @@ def test_strip_ask_marker_no_options():
 # ---------------------------------------------------------------------------
 # target: claude
 # ---------------------------------------------------------------------------
+
 
 def test_install_claude(tmp_path):
     result = install_skill(target="claude", cwd=tmp_path)
@@ -89,6 +92,7 @@ def test_install_claude_preserves_claude_markers(tmp_path):
 # ---------------------------------------------------------------------------
 # target: agents-md
 # ---------------------------------------------------------------------------
+
 
 def test_install_agents_md_creates_file(tmp_path):
     result = install_skill(target="agents-md", cwd=tmp_path)
@@ -133,6 +137,7 @@ def test_install_agents_md_force_replaces_section(tmp_path):
 # target: cursor
 # ---------------------------------------------------------------------------
 
+
 def test_install_cursor_creates_mdc(tmp_path):
     result = install_skill(target="cursor", cwd=tmp_path)
     dest = tmp_path / ".cursor" / "rules" / "b123d-drawing.mdc"
@@ -164,6 +169,7 @@ def test_install_cursor_force(tmp_path):
 # target: windsurf
 # ---------------------------------------------------------------------------
 
+
 def test_install_windsurf_creates_file(tmp_path):
     result = install_skill(target="windsurf", cwd=tmp_path)
     dest = tmp_path / ".windsurfrules"
@@ -194,6 +200,7 @@ def test_install_windsurf_force_replaces_section(tmp_path):
 # _dest_exists
 # ---------------------------------------------------------------------------
 
+
 def test_dest_exists_false_before_install(tmp_path):
     for target in TARGETS:
         assert not _dest_exists(target, cwd=tmp_path)
@@ -212,6 +219,7 @@ def test_dest_exists_unknown_target():
 # ---------------------------------------------------------------------------
 # unknown target
 # ---------------------------------------------------------------------------
+
 
 def test_unknown_target_returns_error():
     result = install_skill(target="unknown-agent")

@@ -35,10 +35,10 @@ import pytest
 from build123d_mcp import worker
 from build123d_mcp.worker import WorkerSession
 
-
 # --------------------------------------------------------------------------- #
 # AST extraction of the dispatch / proxy op sets (single source of truth)      #
 # --------------------------------------------------------------------------- #
+
 
 def _dispatch_ops() -> set[str]:
     """Op strings compared in ``worker._dispatch`` (``if op == "...":``)."""
@@ -99,6 +99,7 @@ def test_dispatch_ops_match_proxy_methods():
 # tool reflects state created in the worker (objects 'a'/'b', snapshot 'snap',
 # execute_history). Were the tool reading the empty parent proxy, the seeded
 # object would be absent and the assertion would fail.
+
 
 def _measure(ws, tmp_path):
     r = json.loads(ws.measure("a"))

@@ -10,8 +10,8 @@ def _is_imported_symbol(val) -> bool:
     """Return True if val is a class/function/module imported from build123d, not a user value."""
     if isinstance(val, types.ModuleType):
         return True
-    mod = getattr(val, '__module__', '') or ''
-    if mod.startswith('build123d') or mod.startswith('cadquery') or mod.startswith('OCP'):
+    mod = getattr(val, "__module__", "") or ""
+    if mod.startswith("build123d") or mod.startswith("cadquery") or mod.startswith("OCP"):
         if isinstance(val, type) or (callable(val) and not isinstance(val, type)):
             return True
     return False
@@ -20,6 +20,7 @@ def _is_imported_symbol(val) -> bool:
 def _build123d_public_names() -> set[str]:
     try:
         import build123d
+
         return set(dir(build123d))
     except ImportError:
         return set()
@@ -36,6 +37,7 @@ def _namespace_summary(namespace: dict) -> dict:
     _shape_cls: type | None = None
     try:
         from build123d import Shape
+
         _shape_cls = Shape
     except ImportError:
         pass

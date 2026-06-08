@@ -12,14 +12,14 @@ Sections with a label are runnable code blocks executed by
 tests/test_drafting_cookbook.py — they must end with `result = ...`
 or `show(...)` so current_shape is set.
 """
+
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
 class Section:
     text: str
-    label: Optional[str] = None
+    label: str | None = None
 
 
 SECTIONS: list[Section] = [
@@ -150,7 +150,6 @@ SECTIONS: list[Section] = [
         "  # 3. Verify numerically before rendering\n"
         "  # => call inspect_drawing() to get bboxes + lint warnings"
     ),
-
     Section(
         text="""\
 ## ENGINEERING-DRAWING CONVENTIONS — read before you dimension
@@ -202,7 +201,6 @@ SECTIONS: list[Section] = [
 ## CLASSES → annotate() each → set_page() → lint_drawing() == 0 violations →
 ## render to eyeball → export. Never export before lint is clean."""
     ),
-
     Section(
         text="""\
 ## The Draft config — set once, reuse everywhere
@@ -213,7 +211,6 @@ SECTIONS: list[Section] = [
 # Common engineering settings: smaller font, single-decimal mm, narrow arrows
 # draft = Draft(font_size=2.5, decimal_precision=1, arrow_length=2.0)"""
     ),
-
     Section(
         label="basic_dimension",
         text="""\
@@ -232,7 +229,6 @@ show(result, "dim")
 # (Dimension wraps build123d's ExtensionLine; reach for raw ExtensionLine only
 #  when you need its lower-level offset/tolerance knobs directly.)""",
     ),
-
     Section(
         label="dimension_with_tolerance",
         text="""\
@@ -250,7 +246,6 @@ result = ExtensionLine(
 )
 show(result, "tol_dim")""",
     ),
-
     Section(
         label="diameter_dimension",
         text="""\
@@ -267,7 +262,6 @@ result = DimensionLine(
 )
 show(result, "dia_dim")""",
     ),
-
     Section(
         label="project_to_view",
         text="""\
@@ -289,7 +283,6 @@ print(f"visible edges: {len(visible.edges())}, hidden: {len(hidden.edges())}")
 result = Compound(children=list(visible))
 show(result, "top_view")""",
     ),
-
     Section(
         label="dimensioned_view",
         text="""\
@@ -312,7 +305,6 @@ hole   = Leader((10, 0, 0), (24, 12, 0), "⌀6 THRU", draft)   # hole → callou
 result = Compound(children=list(visible) + [length, width, hole])
 show(result, "dimensioned_top")""",
     ),
-
     Section(
         label="title_block",
         text="""\
@@ -331,7 +323,6 @@ result = TechnicalDrawing(
 )
 show(result, "title_sheet")""",
     ),
-
     Section(
         label="build_then_review_then_ship",
         text="""\
@@ -364,7 +355,6 @@ hole   = Leader((10, 0, 0), (24, 12, 0), "⌀6 THRU", draft)
 result = Compound(children=list(visible) + [length, width, hole])
 show(result, "bracket_top_view")""",
     ),
-
     Section(
         label="multi_view_layout",
         text="""\
@@ -391,7 +381,6 @@ side_view  = side.translate((30, 0, 0))
 result = Compound(children=[top_view, front_view, side_view])
 show(result, "three_view")""",
     ),
-
     Section(
         label="hole_table_pattern",
         text="""\
@@ -425,7 +414,6 @@ visible, _ = plate.project_to_viewport((0, 0, 100), (0, 1, 0), (0, 0, 0))
 result = Compound(children=list(visible) + labels)
 show(result, "hole_callouts_demo")""",
     ),
-
     Section(
         label="clean_svg_export",
         text="""\
@@ -469,7 +457,6 @@ exporter.add_shape(length, layer="dims")
 result = Compound(children=list(visible) + [length])
 show(result, "clean_svg_demo")""",
     ),
-
     Section(
         label="stacking_and_page_bounds",
         text="""\
@@ -513,7 +500,6 @@ set_page(297, 210, margin=10)
 result = Compound(children=list(visible) + [total, left, right, height])
 show(result, "stacked_dims_demo")""",
     ),
-
     Section(
         text="""\
 ## CENTERLINE-LABEL COLLISION AVOIDANCE
@@ -547,7 +533,6 @@ show(result, "stacked_dims_demo")""",
 ##   annotate(d, "bore_dim")
 ##   lint_drawing()  # → label_centerline_overlap warning if label crosses bore_cl"""
     ),
-
     Section(
         label="gdt_symbols",
         text="""\
@@ -590,7 +575,6 @@ result = Compound(children=[
 ])
 show(result, "gdt_demo")""",
     ),
-
     Section(
         text="""\
 ## Limitations and gaps in build123d.drafting today
@@ -606,7 +590,6 @@ show(result, "gdt_demo")""",
 # When you hit any of these, the answer is to compose the lower-level
 # build123d primitives yourself — Sketch + Line + Text + Polyline."""
     ),
-
     Section(
         text="""\
 ## When to use which output format
@@ -689,6 +672,7 @@ def _build123d_version_banner() -> str:
     """Reflect the actually-installed build123d version so callers know exactly
     which API surface these examples target."""
     from importlib.metadata import PackageNotFoundError, version
+
     try:
         v = version("build123d")
     except PackageNotFoundError:

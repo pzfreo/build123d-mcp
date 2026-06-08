@@ -16,15 +16,17 @@ Two modes:
 The structured violation list is JSON so the LLM can iterate without rendering.
 Each violation's `check` is the helpers' stable `LintIssue.code`.
 """
+
 import json
 import os
 import re
 import xml.etree.ElementTree as ET
-
 from types import SimpleNamespace
 
 from build123d_drafting import (
     find_interferences,
+)
+from build123d_drafting import (
     lint_drawing as _helper_lint,
 )
 
@@ -92,18 +94,42 @@ def _reconstruct(session):
         label = meta.get("label_str", "")
         segs = meta.get("segments") or []
         if meta.get("is_centerline") or meta.get("type") in ("Centerline", "centerline"):
-            items.append((name, _standin(shape, label=label, is_centerline=True,
-                                         label_bbox=None, segments=segs)))
+            items.append(
+                (
+                    name,
+                    _standin(
+                        shape, label=label, is_centerline=True, label_bbox=None, segments=segs
+                    ),
+                )
+            )
         elif meta.get("elbow") is not None:
-            items.append((name, _standin(shape, label=label,
-                                         tip=tuple(meta.get("tip") or (0.0, 0.0)),
-                                         elbow=tuple(meta["elbow"]),
-                                         label_bbox=meta.get("label_bbox"), segments=segs)))
+            items.append(
+                (
+                    name,
+                    _standin(
+                        shape,
+                        label=label,
+                        tip=tuple(meta.get("tip") or (0.0, 0.0)),
+                        elbow=tuple(meta["elbow"]),
+                        label_bbox=meta.get("label_bbox"),
+                        segments=segs,
+                    ),
+                )
+            )
         else:
-            items.append((name, _standin(shape, label=label,
-                                         measured_length=meta.get("measured_length") or 0.0,
-                                         dim_level_y=meta.get("dim_level_y"),
-                                         label_bbox=meta.get("label_bbox"), segments=segs)))
+            items.append(
+                (
+                    name,
+                    _standin(
+                        shape,
+                        label=label,
+                        measured_length=meta.get("measured_length") or 0.0,
+                        dim_level_y=meta.get("dim_level_y"),
+                        label_bbox=meta.get("label_bbox"),
+                        segments=segs,
+                    ),
+                )
+            )
     return items
 
 
@@ -127,16 +153,18 @@ def _lint_session(
         if view_shape_names is not None:
             missing = [n for n in view_shape_names if n not in session.objects]
             for m in missing:
-                violations.append({
-                    "severity": "warning",
-                    "check": "unknown_view_shape_name",
-                    "object": m,
-                    "message": (
-                        f"view_shape_names: '{m}' not found in session objects "
-                        f"— view-overlap check may be incomplete. "
-                        f"Call show(shape, '{m}') inside execute() before running lint."
-                    ),
-                })
+                violations.append(
+                    {
+                        "severity": "warning",
+                        "check": "unknown_view_shape_name",
+                        "object": m,
+                        "message": (
+                            f"view_shape_names: '{m}' not found in session objects "
+                            f"— view-overlap check may be incomplete. "
+                            f"Call show(shape, '{m}') inside execute() before running lint."
+                        ),
+                    }
+                )
             view_shapes = [session.objects[n] for n in view_shape_names if n in session.objects]
         for issue in _helper_lint(results, drawing_scale=drawing_scale, view_shapes=view_shapes):
             if issue.code not in _PER_ITEM_CODES:
@@ -148,7 +176,8 @@ def _lint_session(
     # helper's label↔frame check).
     if session.drawing_page:
         violations += _lint_page_bounds(
-            session.drawing_annotations, session.objects, session.drawing_page)
+            session.drawing_annotations, session.objects, session.drawing_page
+        )
     return violations
 
 
@@ -172,15 +201,17 @@ def _lint_page_bounds(annotations: dict, objects: dict, page: dict) -> list[dict
         if bb.max.Y > page["max_y"]:
             overshoots.append(f"top by {bb.max.Y - page['max_y']:.1f} mm")
         for detail in overshoots:
-            violations.append({
-                "severity": "error",
-                "check": "annotation_out_of_bounds",
-                "object": name,
-                "message": (
-                    f"annotation '{name}' extends past page edge ({detail}) "
-                    f"— move it inward or reduce offset"
-                ),
-            })
+            violations.append(
+                {
+                    "severity": "error",
+                    "check": "annotation_out_of_bounds",
+                    "object": name,
+                    "message": (
+                        f"annotation '{name}' extends past page edge ({detail}) "
+                        f"— move it inward or reduce offset"
+                    ),
+                }
+            )
     return violations
 
 
@@ -207,8 +238,7 @@ def _lint_svg(svg_path: str, drawing_scale: float = 1.0) -> list[dict]:
     try:
         tree = ET.parse(svg_path)
     except (FileNotFoundError, ET.ParseError) as e:
-        return [{"severity": "error", "check": "svg_parse",
-                 "object": svg_path, "message": str(e)}]
+        return [{"severity": "error", "check": "svg_parse", "object": svg_path, "message": str(e)}]
 
     def walk(elem, inherited_fill):
         fill = elem.get("fill", inherited_fill)
@@ -218,19 +248,20 @@ def _lint_svg(svg_path: str, drawing_scale: float = 1.0) -> list[dict]:
         if elem.tag.replace(_SVG_NS, "") == "text":
             layer_id = elem.get("id") or "?"
             no_fill = fill in (None, "none", "")
-            detail = (" and has no fill (renders as illegible outlines)"
-                      if no_fill else "")
-            violations.append({
-                "severity": "error",
-                "check": "native_svg_text",
-                "object": layer_id,
-                "message": (
-                    f"native <text> element id='{layer_id}'{detail}. build123d "
-                    f"renders text as filled glyph paths, not <text> — native SVG "
-                    f"text won't export to DXF and won't scale with the model. "
-                    f"Re-export the label from build123d geometry."
-                ),
-            })
+            detail = " and has no fill (renders as illegible outlines)" if no_fill else ""
+            violations.append(
+                {
+                    "severity": "error",
+                    "check": "native_svg_text",
+                    "object": layer_id,
+                    "message": (
+                        f"native <text> element id='{layer_id}'{detail}. build123d "
+                        f"renders text as filled glyph paths, not <text> — native SVG "
+                        f"text won't export to DXF and won't scale with the model. "
+                        f"Re-export the label from build123d geometry."
+                    ),
+                }
+            )
         for child in elem:
             walk(child, fill)
 
@@ -252,18 +283,22 @@ def _lint_svg(svg_path: str, drawing_scale: float = 1.0) -> list[dict]:
                     if issue.code == "label_vs_measured":
                         violations.append(_violation(issue, name))
         except Exception as exc:
-            violations.append({
-                "severity": "warning",
-                "check": "sidecar_read",
-                "object": sidecar,
-                "message": f"Could not read sidecar: {exc}",
-            })
+            violations.append(
+                {
+                    "severity": "warning",
+                    "check": "sidecar_read",
+                    "object": sidecar,
+                    "message": f"Could not read sidecar: {exc}",
+                }
+            )
 
     return violations
 
 
 def lint_drawing(
-    session, svg_path: str = "", drawing_scale: float = 1.0,
+    session,
+    svg_path: str = "",
+    drawing_scale: float = 1.0,
     view_shape_names: list[str] | None = None,
 ) -> str:
     """Run structural drawing checks; return JSON with a `violations` list.
@@ -278,6 +313,9 @@ def lint_drawing(
     Returns:
         JSON: {"violations": [{severity, check, object, message}, ...]}
     """
-    violations = (_lint_svg(svg_path, drawing_scale) if svg_path
-                  else _lint_session(session, drawing_scale, view_shape_names))
+    violations = (
+        _lint_svg(svg_path, drawing_scale)
+        if svg_path
+        else _lint_session(session, drawing_scale, view_shape_names)
+    )
     return json.dumps({"violations": violations}, indent=2)

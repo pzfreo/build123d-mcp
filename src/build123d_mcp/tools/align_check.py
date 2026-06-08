@@ -1,8 +1,7 @@
 import json
 
 
-def align_check(session, object_a: str, object_b: str,
-                axis: str = "Z", mode: str = "flush") -> str:
+def align_check(session, object_a: str, object_b: str, axis: str = "Z", mode: str = "flush") -> str:
     """Check alignment between two named objects along an axis.
 
     Args:
@@ -27,10 +26,12 @@ def align_check(session, object_a: str, object_b: str,
 
     for name in (object_a, object_b):
         if not name or name not in session.objects:
-            return json.dumps({
-                "error": f"Unknown object '{name}'.",
-                "registered": list(session.objects.keys()),
-            })
+            return json.dumps(
+                {
+                    "error": f"Unknown object '{name}'.",
+                    "registered": list(session.objects.keys()),
+                }
+            )
 
     shape_a = session.objects[object_a]
     shape_b = session.objects[object_b]
@@ -65,17 +66,23 @@ def align_check(session, object_a: str, object_b: str,
         if abs(delta) < 1e-4:
             interp = f"{object_a} and {object_b} are flush on {axis} axis."
         elif delta > 0:
-            interp = f"{object_a} extends {abs(delta):.4g} mm further than {object_b} on {axis} axis."
+            interp = (
+                f"{object_a} extends {abs(delta):.4g} mm further than {object_b} on {axis} axis."
+            )
         else:
-            interp = f"{object_b} extends {abs(delta):.4g} mm further than {object_a} on {axis} axis."
+            interp = (
+                f"{object_b} extends {abs(delta):.4g} mm further than {object_a} on {axis} axis."
+            )
 
     elif mode == "center":
         delta = round(a_cen - b_cen, 6)
         if abs(delta) < 1e-4:
             interp = f"Centers of {object_a} and {object_b} are aligned on {axis} axis."
         else:
-            interp = (f"Center of {object_a} is {abs(delta):.4g} mm "
-                      f"{'above' if delta > 0 else 'below'} center of {object_b} on {axis} axis.")
+            interp = (
+                f"Center of {object_a} is {abs(delta):.4g} mm "
+                f"{'above' if delta > 0 else 'below'} center of {object_b} on {axis} axis."
+            )
 
     else:  # clearance
         # Gap between nearest faces: b_min - a_max (A below B) vs a_min - b_max (B below A)
@@ -94,11 +101,14 @@ def align_check(session, object_a: str, object_b: str,
         else:
             interp = f"{object_a} and {object_b} are touching on {axis} axis."
 
-    return json.dumps({
-        "delta": delta,
-        "axis": axis,
-        "mode": mode,
-        "object_a": object_a,
-        "object_b": object_b,
-        "interpretation": interp,
-    }, indent=2)
+    return json.dumps(
+        {
+            "delta": delta,
+            "axis": axis,
+            "mode": mode,
+            "object_a": object_a,
+            "object_b": object_b,
+            "interpretation": interp,
+        },
+        indent=2,
+    )

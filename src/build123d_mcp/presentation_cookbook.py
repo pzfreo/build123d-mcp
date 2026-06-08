@@ -21,14 +21,14 @@ Sections with a label are runnable code blocks executed by
 tests/test_presentation_cookbook.py — they must end with `result = ...`
 or `show(...)` so current_shape is set.
 """
+
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
 class Section:
     text: str
-    label: Optional[str] = None
+    label: str | None = None
 
 
 SECTIONS: list[Section] = [
@@ -66,7 +66,6 @@ SECTIONS: list[Section] = [
         "still re-use the same constants and assertions as your canonical\n"
         "model — single source of truth is preserved."
     ),
-
     Section(
         label="scaled_draft",
         text="""\
@@ -100,7 +99,6 @@ result = ExtensionLine(
 )
 show(result, "scaled_dim")""",
     ),
-
     Section(
         label="layered_svg_export",
         text="""\
@@ -138,7 +136,6 @@ exporter.add_shape(length_dim, layer="dims")
 result = Compound(children=list(visible) + [length_dim])
 show(result, "layered_demo")""",
     ),
-
     Section(
         label="filled_feature_highlight",
         text="""\
@@ -172,7 +169,6 @@ peg_fill    = Pos( 6, 0, 0) * Circle(1.0)   # ø2 locating peg
 result = Compound(children=list(visible) + [insert_fill, peg_fill])
 show(result, "filled_features_demo")""",
     ),
-
     Section(
         label="legend_with_swatches",
         text="""\
@@ -216,7 +212,6 @@ labels   = [label(y, t) for y, t in entries]
 result = Compound(children=swatches + labels)
 show(result, "legend_demo")""",
     ),
-
     Section(
         label="reference_axes",
         text="""\
@@ -253,7 +248,6 @@ for ty in Y_TICKS:
 result = Compound(children=axis_parts)
 show(result, "axes_demo")""",
     ),
-
     Section(
         label="title_and_subtitle",
         text="""\
@@ -275,7 +269,6 @@ subtitle = Location((9, 13.0, 0)) * Text(
 result = Compound(children=[title, subtitle])
 show(result, "title_demo")""",
     ),
-
     Section(
         text="""\
 ## Recipe 7: layer ordering in the exporter
@@ -300,7 +293,6 @@ show(result, "title_demo")""",
 #   exporter.add_shape(axes,        layer="axes")           # 4. axes
 #   exporter.add_shape(title_block, layer="title")          # 5. title"""
     ),
-
     Section(
         text="""\
 ## Recipe 8: rasterise the SVG to PNG with resvg_py
@@ -318,7 +310,6 @@ show(result, "title_demo")""",
 # Run this from your repo's diagram script — the MCP sandbox blocks
 # resvg, so it lives outside the sandbox alongside your ExportSVG call."""
     ),
-
     Section(
         text="""\
 ## Decision: which output for which audience
@@ -340,6 +331,7 @@ def _build123d_version_banner() -> str:
     """Reflect the actually-installed build123d version so callers know exactly
     which API surface these examples target."""
     from importlib.metadata import PackageNotFoundError, version
+
     try:
         v = version("build123d")
     except PackageNotFoundError:

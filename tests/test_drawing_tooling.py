@@ -1,9 +1,9 @@
 """Tests for the #108 pass-1 drawing-side tools:
 view_axes, lint_drawing, render_drawing, inspect_drawing(svg_path=...).
 """
+
 import json
 import os
-from pathlib import Path
 
 import pytest
 
@@ -19,9 +19,11 @@ def session():
 # view_axes
 # ---------------------------------------------------------------------------
 
+
 class TestViewAxes:
     def test_top_view_identity_mapping(self):
         from build123d_mcp.tools.view_axes import view_axes
+
         result = json.loads(view_axes((0, 0, 100), (0, 1, 0), (0, 0, 0)))
         assert result["world_X"][0] == "page_X"
         assert result["world_X"][1] == 1.0
@@ -31,12 +33,14 @@ class TestViewAxes:
     def test_bottom_view_flips_world_x(self):
         """The bottom-view axis swap that the gramel shank drawing hit."""
         from build123d_mcp.tools.view_axes import view_axes
+
         result = json.loads(view_axes((0, 0, -100), (0, 1, 0), (0, 0, 0)))
         assert result["world_X"][0] == "page_X"
         assert result["world_X"][1] == -1.0
 
     def test_look_at_offset_zero_at_origin(self):
         from build123d_mcp.tools.view_axes import view_axes
+
         result = json.loads(view_axes((0, 0, 100), (0, 1, 0), (0, 0, 0)))
         assert "look_at_offset" in result
         assert result["look_at_offset"]["page_X"] == 0.0
@@ -45,6 +49,7 @@ class TestViewAxes:
     def test_look_at_offset_front_view_z_centroid(self):
         """Front view with part centroid at z=-4.65: page_Y offset should be -4.65."""
         from build123d_mcp.tools.view_axes import view_axes
+
         # camera on -Y axis, up=+Z → world_Z maps to page_Y
         result = json.loads(view_axes((0, -100, 0), (0, 0, 1), (0, 0, -4.65)))
         assert result["look_at_offset"]["page_Y"] == -4.65
@@ -52,6 +57,7 @@ class TestViewAxes:
     def test_look_at_offset_top_view_y_centroid(self):
         """Top view (camera +Z, up +Y): world_Y → page_Y. look_at y=3.0 offset captured."""
         from build123d_mcp.tools.view_axes import view_axes
+
         # Camera on +Z axis, look_at Y=3 → world_Y maps to page_Y → offset = 3.0
         result = json.loads(view_axes((0, 0, 100), (0, 1, 0), (0, 3.0, 0)))
         assert result["look_at_offset"]["page_Y"] == 3.0
@@ -59,6 +65,7 @@ class TestViewAxes:
 
     def test_helper_snippet_present_and_non_empty(self):
         from build123d_mcp.tools.view_axes import view_axes
+
         result = json.loads(view_axes((0, 0, 100), (0, 1, 0), (0, 0, 0)))
         assert "helper_snippet" in result
         assert "VIEW_X" in result["helper_snippet"]
@@ -67,6 +74,7 @@ class TestViewAxes:
     def test_helper_snippet_includes_offset_when_nonzero(self):
         """When look_at has a non-zero component, the snippet incorporates the offset."""
         from build123d_mcp.tools.view_axes import view_axes
+
         # Top view: world_X → page_X, world_Y → page_Y, look_at x=3.0
         result = json.loads(view_axes((0, 0, 100), (0, 1, 0), (3.0, 0, 0)))
         assert "3.0" in result["helper_snippet"]
@@ -74,6 +82,7 @@ class TestViewAxes:
     def test_helper_snippet_clean_when_offset_zero(self):
         """No offset terms when look_at is at origin."""
         from build123d_mcp.tools.view_axes import view_axes
+
         result = json.loads(view_axes((0, 0, 100), (0, 1, 0), (0, 0, 0)))
         # Clean form: def X(x): return VIEW_X + x * SCALE  (no subtraction)
         snippet = result["helper_snippet"]
@@ -85,9 +94,11 @@ class TestViewAxes:
 # lint_drawing (session mode)
 # ---------------------------------------------------------------------------
 
+
 class TestLintDrawingSession:
     def _run(self, session):
         from build123d_mcp.tools.lint_drawing import lint_drawing
+
         return json.loads(lint_drawing(session))
 
     def test_empty_session_no_violations(self, session):
@@ -201,7 +212,9 @@ annotate(d, "dim")
 set_page(297, 210, margin=5)
 """)
         out = self._run(session)
-        bounds_violations = [v for v in out["violations"] if v["check"] == "annotation_out_of_bounds"]
+        bounds_violations = [
+            v for v in out["violations"] if v["check"] == "annotation_out_of_bounds"
+        ]
         assert bounds_violations == []
 
     def test_no_page_bounds_check_without_set_page(self, session):
@@ -214,7 +227,9 @@ d = Dimension((-10, 0, 0), (10, 0, 0), "above", 8, draft, label="20")
 annotate(d, "dim")
 """)
         out = self._run(session)
-        bounds_violations = [v for v in out["violations"] if v["check"] == "annotation_out_of_bounds"]
+        bounds_violations = [
+            v for v in out["violations"] if v["check"] == "annotation_out_of_bounds"
+        ]
         assert bounds_violations == []
 
     def test_set_page_resets_on_session_reset(self, session):
@@ -237,6 +252,7 @@ annotate(w, "scaled_dim")
 
     def _run_scaled(self, session, drawing_scale):
         from build123d_mcp.tools.lint_drawing import lint_drawing
+
         return json.loads(lint_drawing(session, drawing_scale=drawing_scale))
 
     def test_scaled_dim_with_real_label_is_clean(self, session):
@@ -263,16 +279,18 @@ annotate(w, "scaled_dim")
 # lint_drawing (SVG mode)
 # ---------------------------------------------------------------------------
 
+
 class TestLintDrawingSvg:
     def test_flags_native_text(self, tmp_path):
         # build123d never emits <text> (it renders glyph paths), so any <text>
         # means native SVG text that won't DXF-export — flagged regardless of fill.
         from build123d_mcp.tools.lint_drawing import lint_drawing
-        svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50">
+
+        svg = """<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50">
   <g id="dims" fill="none">
     <text id="bad_label" x="10" y="20">40</text>
   </g>
-</svg>'''
+</svg>"""
         p = tmp_path / "bad.svg"
         p.write_text(svg)
         out = json.loads(lint_drawing(None, str(p)))
@@ -281,11 +299,12 @@ class TestLintDrawingSvg:
     def test_clean_svg_no_violations(self, tmp_path):
         # A real build123d export uses <path> glyphs, not <text> — clean.
         from build123d_mcp.tools.lint_drawing import lint_drawing
-        svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50">
+
+        svg = """<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50">
   <g id="dims" fill="black">
     <path id="glyph" d="M10,10 L20,10 L20,20 Z"/>
   </g>
-</svg>'''
+</svg>"""
         p = tmp_path / "good.svg"
         p.write_text(svg)
         out = json.loads(lint_drawing(None, str(p)))
@@ -293,6 +312,7 @@ class TestLintDrawingSvg:
 
     def test_missing_file_returns_error(self, tmp_path):
         from build123d_mcp.tools.lint_drawing import lint_drawing
+
         out = json.loads(lint_drawing(None, str(tmp_path / "does_not_exist.svg")))
         assert any(v["check"] == "svg_parse" for v in out["violations"])
 
@@ -301,17 +321,19 @@ class TestLintDrawingSvg:
 # inspect_drawing(svg_path=...)
 # ---------------------------------------------------------------------------
 
+
 class TestInspectDrawingSvg:
     def test_reports_page_layers_text(self, tmp_path):
         from build123d_mcp.tools.inspect_drawing import inspect_drawing
-        svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="297mm" height="210mm" viewBox="0 0 297 210">
+
+        svg = """<svg xmlns="http://www.w3.org/2000/svg" width="297mm" height="210mm" viewBox="0 0 297 210">
   <g id="part" fill="black">
     <path d="M10,10 L100,10"/>
   </g>
   <g id="dims" fill="blue">
     <text id="w_label" x="50" y="40">40</text>
   </g>
-</svg>'''
+</svg>"""
         p = tmp_path / "sheet.svg"
         p.write_text(svg)
         out = json.loads(inspect_drawing(None, "", str(p)))
@@ -328,6 +350,7 @@ class TestInspectDrawingSvg:
 
     def test_missing_file_returns_error(self, tmp_path):
         from build123d_mcp.tools.inspect_drawing import inspect_drawing
+
         out = json.loads(inspect_drawing(None, "", str(tmp_path / "missing.svg")))
         assert "error" in out
 
@@ -336,12 +359,14 @@ class TestInspectDrawingSvg:
 # render_drawing
 # ---------------------------------------------------------------------------
 
+
 class TestRenderDrawing:
     def test_rasterises_simple_svg(self, tmp_path):
         from build123d_mcp.tools.render_drawing import render_drawing
-        svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="50mm" viewBox="0 0 100 50">
+
+        svg = """<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="50mm" viewBox="0 0 100 50">
   <rect x="10" y="10" width="80" height="30" fill="blue"/>
-</svg>'''
+</svg>"""
         p = tmp_path / "tile.svg"
         p.write_text(svg)
         result = render_drawing(str(p), width=400)
@@ -353,14 +378,16 @@ class TestRenderDrawing:
 
     def test_missing_file_error(self, tmp_path):
         from build123d_mcp.tools.render_drawing import render_drawing
+
         result = render_drawing(str(tmp_path / "missing.svg"))
         assert "error" in result
 
     def test_save_to_writes_file(self, tmp_path):
         from build123d_mcp.tools.render_drawing import render_drawing
-        svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="50mm" height="50mm">
+
+        svg = """<svg xmlns="http://www.w3.org/2000/svg" width="50mm" height="50mm">
   <circle cx="25" cy="25" r="10" fill="red"/>
-</svg>'''
+</svg>"""
         src = tmp_path / "circle.svg"
         src.write_text(svg)
         out_path = tmp_path / "out.png"
@@ -376,9 +403,11 @@ class TestRenderDrawing:
 # End-to-end through WorkerSession — proves IPC routing for all four tools
 # ---------------------------------------------------------------------------
 
+
 class TestDrawingToolsViaWorker:
     def test_view_axes_through_worker(self):
         from build123d_mcp.worker import WorkerSession
+
         ws = WorkerSession(exec_timeout=30)
         try:
             result = json.loads(ws.view_axes((0, 0, 100), (0, 1, 0), (0, 0, 0)))
@@ -388,6 +417,7 @@ class TestDrawingToolsViaWorker:
 
     def test_lint_drawing_through_worker(self):
         from build123d_mcp.worker import WorkerSession
+
         ws = WorkerSession(exec_timeout=30)
         try:
             result = json.loads(ws.lint_drawing())
@@ -399,6 +429,7 @@ class TestDrawingToolsViaWorker:
         # #147: drawing_scale must survive the IPC round-trip (client -> dispatch
         # -> tool). A 20 mm dim labelled "10" is clean at 2:1, flagged at 1:1.
         from build123d_mcp.worker import WorkerSession
+
         ws = WorkerSession(exec_timeout=30)
         try:
             ws.execute(
@@ -417,9 +448,10 @@ class TestDrawingToolsViaWorker:
 
     def test_render_drawing_through_worker(self, tmp_path):
         from build123d_mcp.worker import WorkerSession
-        svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="50mm" height="50mm">
+
+        svg = """<svg xmlns="http://www.w3.org/2000/svg" width="50mm" height="50mm">
   <rect x="5" y="5" width="40" height="40" fill="green"/>
-</svg>'''
+</svg>"""
         p = tmp_path / "g.svg"
         p.write_text(svg)
         ws = WorkerSession(exec_timeout=30)
@@ -435,39 +467,55 @@ class TestDrawingToolsViaWorker:
 # lint_drawing SVG mode — sidecar annotation checks (#118)
 # ---------------------------------------------------------------------------
 
+
 class TestLintDrawingSvgSidecar:
     def _write_svg(self, path):
         path.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"/>')
 
     def test_sidecar_label_mismatch_flagged(self, tmp_path):
-        from build123d_mcp.tools.lint_drawing import lint_drawing
         import json as _json
+
+        from build123d_mcp.tools.lint_drawing import lint_drawing
+
         svg = tmp_path / "drawing.svg"
         self._write_svg(svg)
         sidecar = tmp_path / "drawing.dims.json"
         # 30 mm path labelled "99" — clear axis-swap mismatch
-        sidecar.write_text(_json.dumps({
-            "axis_swap_bug": {"type": "ExtensionLine", "label_str": "99", "measured_length": 30.0}
-        }))
+        sidecar.write_text(
+            _json.dumps(
+                {
+                    "axis_swap_bug": {
+                        "type": "ExtensionLine",
+                        "label_str": "99",
+                        "measured_length": 30.0,
+                    }
+                }
+            )
+        )
         out = json.loads(lint_drawing(None, str(svg)))
         assert any(v["check"] == "label_vs_measured" for v in out["violations"])
         assert any("99" in v["message"] for v in out["violations"])
 
     def test_sidecar_correct_label_no_violation(self, tmp_path):
-        from build123d_mcp.tools.lint_drawing import lint_drawing
         import json as _json
+
+        from build123d_mcp.tools.lint_drawing import lint_drawing
+
         svg = tmp_path / "drawing.svg"
         self._write_svg(svg)
         sidecar = tmp_path / "drawing.dims.json"
-        sidecar.write_text(_json.dumps({
-            "width": {"type": "ExtensionLine", "label_str": "20", "measured_length": 20.0}
-        }))
+        sidecar.write_text(
+            _json.dumps(
+                {"width": {"type": "ExtensionLine", "label_str": "20", "measured_length": 20.0}}
+            )
+        )
         out = json.loads(lint_drawing(None, str(svg)))
         label_violations = [v for v in out["violations"] if v["check"] == "label_vs_measured"]
         assert label_violations == []
 
     def test_no_sidecar_no_annotation_violations(self, tmp_path):
         from build123d_mcp.tools.lint_drawing import lint_drawing
+
         svg = tmp_path / "drawing.svg"
         self._write_svg(svg)
         out = json.loads(lint_drawing(None, str(svg)))

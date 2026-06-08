@@ -16,21 +16,45 @@ _has_library = False
 def execute(code: str) -> str:
     """Execute build123d Python code in the persistent session. Errors include automatic fix hints — read them before retrying. Use show(shape, name) to register named objects (name defaults to 'shape'); show() immediately prints volume and face count confirming the shape is non-empty. After any boolean operation (-, +, &) call measure() to confirm it succeeded (check topology.faces). named_face(shape, name) is a built-in helper: named_face(box, 'top') returns the highest-Z face, 'bottom'/'front'/'back'/'left'/'right' work similarly."""
     from build123d_mcp.tools.execute import execute_code
+
     return execute_code(_session, code)
 
 
 @mcp.tool()
-def render_view(direction: str = "iso", objects: str = "", quality: str = "standard", clip_plane: str = "", clip_at: float | None = None, azimuth: float = 0.0, elevation: float = 0.0, save_to: str = "", format: str = "png", label_objects: bool = False, highlights: list[dict] | None = None, colors: dict[str, str] | None = None, mode: str = "auto") -> list:
+def render_view(
+    direction: str = "iso",
+    objects: str = "",
+    quality: str = "standard",
+    clip_plane: str = "",
+    clip_at: float | None = None,
+    azimuth: float = 0.0,
+    elevation: float = 0.0,
+    save_to: str = "",
+    format: str = "png",
+    label_objects: bool = False,
+    highlights: list[dict] | None = None,
+    colors: dict[str, str] | None = None,
+    mode: str = "auto",
+) -> list:
     """Render model. Auto-detects 3D vs 2D inputs: solids go through the VTK tessellation path; 2D shapes (Sketches, Compounds of edges, dimensioned drawings composed via build123d.drafting) go through the ezdxf+matplotlib raster path. Use this to review your dimensioned drawings the same way you review 3D parts. format: 'png' (raster, default), 'svg' (HLR line drawing — works without a display, no shading but precise edges), 'dxf' (HLR line drawing as DXF — the standard 2D CAD interchange format; use when you need projected polylines as parseable geometry rather than as a raster, e.g. to draw an annotated overlay on top of an accurate base layer instead of redrawing the shape by hand), or 'both' (returns the PNG and SVG together — useful when you want shaded depth cues plus crisp edge geometry). If the raster path fails (typically headless host with no display backend) and format='png', the server falls back to SVG automatically. Renders confirm appearance, not geometry — verify boolean operations with measure() before rendering. direction: top, front, side, iso. objects: comma-separated names or name:color pairs e.g. 'u_frame:blue,roller:red' (default: all, auto-coloured). quality: standard, high. clip_plane: x, y, z to slice; clip_at: absolute world coordinate along that axis (default: each mesh's midpoint). azimuth/elevation: camera rotation in degrees applied after the direction preset. save_to: optional file path; for format='both' the PNG and SVG are written as <save_to>.png and <save_to>.svg. mode: render-pipeline selector. 'auto' (default) detects 2D vs 3D from shape content (no solids + flat in Z = 2D). '2d' forces the 2D pipeline (errors if any shape is 3D). '3d' forces the 3D pipeline (errors if every shape is flat 2D). Useful when the auto-detection picks wrong (e.g. a Compound with both a 2D Sketch and a 3D solid silently routes to 3D). The actual path used is reported in the response as 'Rendered via <mode> pipeline.' colors: optional dict mapping object names (e.g. 'bracket') and special layer keys (`_dims`, `_labels`) to colour names like 'red'/'blue' or '#aabbcc'. Overrides the per-object name:color syntax and the default blue dimension colour. Use this when you need fine-grained colour control for presentation diagrams (different parts in different hues, distinct dimension colour, etc.). Only affects PNG/SVG output for 2D drawings; ignored for 3D solids and DXF. label_objects: when true, each named object from show() is labelled at its centroid in the PNG. highlights: optional list of specific entities to label, e.g. [{"object": "bracket", "type": "edge", "index": 5, "label": "hinge_edge"}]; type is 'face', 'edge', or 'vertex' and index matches shape.faces()/edges()/vertices() position. The referenced object must already be registered with show() and included in the rendered set. Labels are PNG-only; SVG output is unlabelled."""
     result = _session.render_view(
-        direction=direction, objects=objects, quality=quality,
-        clip_plane=clip_plane, clip_at=clip_at, azimuth=azimuth,
-        elevation=elevation, save_to=save_to, format=format,
-        label_objects=label_objects, highlights=highlights, colors=colors,
+        direction=direction,
+        objects=objects,
+        quality=quality,
+        clip_plane=clip_plane,
+        clip_at=clip_at,
+        azimuth=azimuth,
+        elevation=elevation,
+        save_to=save_to,
+        format=format,
+        label_objects=label_objects,
+        highlights=highlights,
+        colors=colors,
         mode=mode,
     )
 
     contents: list = []
+
     # Helper: prefer the user-requested save_to path (in result["<fmt>_path"])
     # over a fresh tempfile. When save_to is set, render_view has already
     # written the file at the requested path; we just need a path to deliver
@@ -47,11 +71,13 @@ def render_view(direction: str = "iso", objects: str = "", quality: str = "stand
 
     if "png" in result:
         path = _path_for("png", ".png")
-        contents.append(ImageContent(
-            type="image",
-            data=base64.b64encode(result["png"]).decode(),
-            mimeType="image/png",
-        ))
+        contents.append(
+            ImageContent(
+                type="image",
+                data=base64.b64encode(result["png"]).decode(),
+                mimeType="image/png",
+            )
+        )
         contents.append(TextContent(type="text", text=f"[SEND: {path}]"))
 
     if "svg" in result:
@@ -62,10 +88,12 @@ def render_view(direction: str = "iso", objects: str = "", quality: str = "stand
     # so clients deliver the file without the ImageContent base64 round-trip.
     if "dxf" in result:
         path = _path_for("dxf", ".dxf")
-        contents.append(TextContent(
-            type="text",
-            text=f"DXF saved: {path}\n[SEND: {path}]",
-        ))
+        contents.append(
+            TextContent(
+                type="text",
+                text=f"DXF saved: {path}\n[SEND: {path}]",
+            )
+        )
     if result.get("fallback"):
         contents.append(TextContent(type="text", text=result["fallback"]))
     if result.get("png_error"):
@@ -77,9 +105,12 @@ def render_view(direction: str = "iso", objects: str = "", quality: str = "stand
         for w in result["label_warnings"]:
             contents.append(TextContent(type="text", text=f"Warning: {w}"))
     if result.get("render_mode"):
-        contents.append(TextContent(
-            type="text", text=f"Rendered via {result['render_mode']} pipeline.",
-        ))
+        contents.append(
+            TextContent(
+                type="text",
+                text=f"Rendered via {result['render_mode']} pipeline.",
+            )
+        )
     return contents
 
 
@@ -149,7 +180,11 @@ def inspect_drawing(objects: str = "", svg_path: str = "") -> str:
 
 
 @mcp.tool()
-def view_axes(viewport_origin: list[float], viewport_up: list[float] = [0.0, 1.0, 0.0], look_at: list[float] = [0.0, 0.0, 0.0]) -> str:
+def view_axes(
+    viewport_origin: list[float],
+    viewport_up: list[float] = [0.0, 1.0, 0.0],
+    look_at: list[float] = [0.0, 0.0, 0.0],
+) -> str:
     """Return the world→page axis mapping for a project_to_viewport call,
     computed analytically (no projection performed). Use this BEFORE rendering
     a projected view to confirm which world axis ends up on which page axis
@@ -236,16 +271,20 @@ def render_drawing(svg_path: str, width: int = 1200, save_to: str = "") -> list:
             os.close(fd)
             with open(path, "wb") as f:
                 f.write(result["png"])
-        contents.append(ImageContent(
-            type="image",
-            data=base64.b64encode(result["png"]).decode(),
-            mimeType="image/png",
-        ))
+        contents.append(
+            ImageContent(
+                type="image",
+                data=base64.b64encode(result["png"]).decode(),
+                mimeType="image/png",
+            )
+        )
         contents.append(TextContent(type="text", text=f"[SEND: {path}]"))
-        contents.append(TextContent(
-            type="text",
-            text=f"Rasterised {svg_path} to PNG ({result['size_bytes']} bytes, width={result['width']}px).",
-        ))
+        contents.append(
+            TextContent(
+                type="text",
+                text=f"Rasterised {svg_path} to PNG ({result['size_bytes']} bytes, width={result['width']}px).",
+            )
+        )
     return contents
 
 
@@ -363,6 +402,7 @@ def import_cad_file(path: str, name: str = "") -> str:
 def repair_hints(error_text: str) -> str:
     """Given an error message from execute(), return targeted fix suggestions for common build123d mistakes: wrong Location syntax, missing .part, CadQuery idioms, blocked imports, degenerate boolean results, fillet edge selection, and more. Pass the full error string from execute() or last_error()."""
     from build123d_mcp.tools.repair_hints import repair_hints as _repair_hints
+
     return _repair_hints(error_text)
 
 
@@ -379,6 +419,7 @@ def version() -> str:
     # it still answers when the worker subprocess is down — exactly the stale /
     # broken-install case this tool exists to diagnose.
     from build123d_mcp.tools.version import version_info
+
     return "\n".join(f"{name}: {ver}" for name, ver in version_info().items())
 
 
@@ -505,50 +546,73 @@ BUILD123D-MCP WORKFLOW GUIDE
 """
 
 
-@mcp.resource("build123d://quickref", mime_type="text/plain",
-              description="build123d API quick reference: primitives, booleans, positioning, sketch-to-3D, selectors, fillets.")
+@mcp.resource(
+    "build123d://quickref",
+    mime_type="text/plain",
+    description="build123d API quick reference: primitives, booleans, positioning, sketch-to-3D, selectors, fillets.",
+)
 def build123d_quickref() -> str:
     """build123d API quick reference."""
     from build123d_mcp.quickref import build_quickref_text
+
     return build_quickref_text()
 
 
-@mcp.resource("build123d://selectors", mime_type="text/plain",
-              description="Task-indexed cookbook of selector patterns: get the top face, find circular edges, filter by area/length/radius, Select.LAST in builder context, fillet detection, and the operator shortcuts.")
+@mcp.resource(
+    "build123d://selectors",
+    mime_type="text/plain",
+    description="Task-indexed cookbook of selector patterns: get the top face, find circular edges, filter by area/length/radius, Select.LAST in builder context, fillet detection, and the operator shortcuts.",
+)
 def build123d_selectors_cookbook() -> str:
     """build123d selectors cookbook — task-indexed patterns."""
     from build123d_mcp.selectors_cookbook import build_selectors_cookbook_text
+
     return build_selectors_cookbook_text()
 
 
-@mcp.resource("build123d://drafting", mime_type="text/plain",
-              description="Code-first 2D engineering drawings cookbook: project a 3D part to a 2D view, dimension with ExtensionLine/DimensionLine, add tolerances, compose a TechnicalDrawing title block, multi-view sheet layout, hole-table pattern, export to DXF/SVG.")
+@mcp.resource(
+    "build123d://drafting",
+    mime_type="text/plain",
+    description="Code-first 2D engineering drawings cookbook: project a 3D part to a 2D view, dimension with ExtensionLine/DimensionLine, add tolerances, compose a TechnicalDrawing title block, multi-view sheet layout, hole-table pattern, export to DXF/SVG.",
+)
 def build123d_drafting_cookbook() -> str:
     """build123d 2D drafting cookbook — code-first engineering drawings."""
     from build123d_mcp.drafting_cookbook import build_drafting_cookbook_text
+
     return build_drafting_cookbook_text()
 
 
-@mcp.resource("build123d://presentation", mime_type="text/plain",
-              description="Code-first design-discussion diagrams: per-group colour via ExportSVG layers, filled feature highlights, legends with swatches, reference axes, titles, and Draft scaling for small parts. Sister cookbook to build123d://drafting (which targets fabrication handoff).")
+@mcp.resource(
+    "build123d://presentation",
+    mime_type="text/plain",
+    description="Code-first design-discussion diagrams: per-group colour via ExportSVG layers, filled feature highlights, legends with swatches, reference axes, titles, and Draft scaling for small parts. Sister cookbook to build123d://drafting (which targets fabrication handoff).",
+)
 def build123d_presentation_cookbook() -> str:
     """build123d presentation cookbook — discussion diagrams (vs drafting's fab drawings)."""
     from build123d_mcp.presentation_cookbook import build_presentation_cookbook_text
+
     return build_presentation_cookbook_text()
 
 
-@mcp.resource("build123d://session", mime_type="application/json",
-              description="Live session state: current shape diagnostics, named objects, snapshots, and user-defined variables.")
+@mcp.resource(
+    "build123d://session",
+    mime_type="application/json",
+    description="Live session state: current shape diagnostics, named objects, snapshots, and user-defined variables.",
+)
 def build123d_session_state() -> str:
     """Live session state as JSON."""
     return _session.session_state()
 
 
-@mcp.resource("build123d://bd_warehouse", mime_type="text/plain",
-              description="Catalogue of pre-built parametric parts in bd_warehouse: bearings, fasteners, gears, pipes, threads, and more.")
+@mcp.resource(
+    "build123d://bd_warehouse",
+    mime_type="text/plain",
+    description="Catalogue of pre-built parametric parts in bd_warehouse: bearings, fasteners, gears, pipes, threads, and more.",
+)
 def build123d_bd_warehouse() -> str:
     """bd_warehouse component catalogue."""
     from build123d_mcp.bd_warehouse_resource import build_bd_warehouse_text
+
     return build_bd_warehouse_text()
 
 
@@ -589,15 +653,20 @@ def suggest_view_layout(
     Iso position is approximate (75% of 3-D diagonal as half-extent) — verify
     with render_view() and adjust manually if the iso overlaps a neighbour.
     """
-    return _session.suggest_view_layout(object_name, page_w, page_h, scale, views,
-                                        title_block_w, title_block_h, margin)
+    return _session.suggest_view_layout(
+        object_name, page_w, page_h, scale, views, title_block_w, title_block_h, margin
+    )
 
 
-@mcp.resource("build123d://skill/drawing", mime_type="text/plain",
-              description="The b123d-drawing engineering workflow skill: step-by-step guide for creating multi-view engineering drawings from build123d geometry (views, scale, annotation, lint, SVG/DXF/PDF export).")
+@mcp.resource(
+    "build123d://skill/drawing",
+    mime_type="text/plain",
+    description="The b123d-drawing engineering workflow skill: step-by-step guide for creating multi-view engineering drawings from build123d geometry (views, scale, annotation, lint, SVG/DXF/PDF export).",
+)
 def build123d_drawing_skill() -> str:
     """b123d-drawing engineering workflow skill."""
     from build123d_mcp.tools.install_skill import _load_raw
+
     return _load_raw()
 
 
@@ -616,6 +685,7 @@ def install_skill(target: str = "claude", force: bool = False) -> str:
     force: overwrite existing installation (default False)
     """
     from build123d_mcp.tools.install_skill import install_skill as _install
+
     return _install(target=target, force=force)
 
 
@@ -663,7 +733,9 @@ Call workflow_hints() if unsure which tool to use next.
 def _cmd_install_skill(argv: list) -> None:
     import argparse
     import sys
-    from build123d_mcp.tools.install_skill import TARGETS, install_skill as _install
+
+    from build123d_mcp.tools.install_skill import TARGETS
+    from build123d_mcp.tools.install_skill import install_skill as _install
 
     p = argparse.ArgumentParser(
         prog="build123d-mcp install-skill",
@@ -679,8 +751,12 @@ def _cmd_install_skill(argv: list) -> None:
     args = p.parse_args(argv)
 
     from build123d_mcp.tools.install_skill import _dest_exists
+
     if not args.force and _dest_exists(args.target):
-        print(f"Skill already installed for '{args.target}' — use --force to overwrite.", file=sys.stderr)
+        print(
+            f"Skill already installed for '{args.target}' — use --force to overwrite.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     print(_install(target=args.target, force=args.force))
 
@@ -750,44 +826,50 @@ Part library file format (Python, any .py file under --library path):
       return Box(width, width, width)
 """,
     )
-    parser.add_argument("--version", action="version", version=f"%(prog)s {version('build123d-mcp')}")
     parser.add_argument(
-        "--library", metavar="PATH",
+        "--version", action="version", version=f"%(prog)s {version('build123d-mcp')}"
+    )
+    parser.add_argument(
+        "--library",
+        metavar="PATH",
         default=os.environ.get("BUILD123D_PART_LIBRARY", ""),
         help="Path to part library directory (overrides BUILD123D_PART_LIBRARY env var)",
     )
     parser.add_argument(
-        "--allow-all-imports", action="store_true",
+        "--allow-all-imports",
+        action="store_true",
         default=os.environ.get("BUILD123D_ALLOW_ALL_IMPORTS", "").lower() in ("1", "true", "yes"),
         help="Disable the import allowlist — any Python module can be imported. "
-             "Use only in trusted environments. Overrides BUILD123D_ALLOW_ALL_IMPORTS env var.",
+        "Use only in trusted environments. Overrides BUILD123D_ALLOW_ALL_IMPORTS env var.",
     )
     parser.add_argument(
-        "--allow-imports", metavar="MODULES",
+        "--allow-imports",
+        metavar="MODULES",
         default=os.environ.get("BUILD123D_ALLOW_IMPORTS", ""),
         help="Comma-separated extra modules added to the import allowlist on top of "
-             "the defaults (e.g. --allow-imports scipy,pandas). Each entry permits the "
-             "named module and all its submodules. Use this for CAD scripts that need "
-             "extra packages without disabling the sandbox via --allow-all-imports. "
-             "Overrides BUILD123D_ALLOW_IMPORTS env var.",
+        "the defaults (e.g. --allow-imports scipy,pandas). Each entry permits the "
+        "named module and all its submodules. Use this for CAD scripts that need "
+        "extra packages without disabling the sandbox via --allow-all-imports. "
+        "Overrides BUILD123D_ALLOW_IMPORTS env var.",
     )
     parser.add_argument(
-        "--exec-timeout", metavar="SECONDS", type=int,
+        "--exec-timeout",
+        metavar="SECONDS",
+        type=int,
         default=int(os.environ.get("BUILD123D_EXEC_TIMEOUT", "120")),
         help="Execution time limit in seconds for user code (default: 120). "
-             "Overrides BUILD123D_EXEC_TIMEOUT env var.",
+        "Overrides BUILD123D_EXEC_TIMEOUT env var.",
     )
     args = parser.parse_args()
 
     if args.library and not os.path.isdir(args.library):
         parser.error(f"Library path is not a directory: {args.library}")
 
-    extra_imports = tuple(
-        m.strip() for m in args.allow_imports.split(",") if m.strip()
-    )
+    extra_imports = tuple(m.strip() for m in args.allow_imports.split(",") if m.strip())
 
     if args.allow_all_imports or extra_imports:
         import build123d_mcp.security as _sec
+
         if args.allow_all_imports:
             _sec.ALLOW_ALL_IMPORTS = True
         if extra_imports:

@@ -32,5 +32,14 @@ jobs:
         if: runner.os == 'Linux'
         run: uv run mypy src/build123d_mcp/
 
+      # Lint + format are OS-independent — run once on Linux (like mypy).
+      - name: Lint
+        if: runner.os == 'Linux'
+        run: uv run ruff check .
+
+      - name: Format check
+        if: runner.os == 'Linux'
+        run: uv run ruff format --check .
+
       - name: Run tests
         run: uv run pytest tests/ -v --timeout=300

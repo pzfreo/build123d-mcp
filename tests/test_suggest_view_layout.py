@@ -1,7 +1,9 @@
 """Tests for the suggest_view_layout tool."""
 
 import json
+
 import pytest
+
 from build123d_mcp.session import Session
 from build123d_mcp.tools.suggest_view_layout import suggest_view_layout
 
@@ -21,6 +23,7 @@ def session_with_named_box():
 
 
 # --- basic structure ---
+
 
 def test_returns_valid_json(session_with_box):
     r = json.loads(suggest_view_layout(session_with_box, "shape"))
@@ -64,10 +67,12 @@ def test_unknown_view_returns_error(session_with_box):
 
 # --- layout geometry ---
 
+
 def test_front_view_above_title_block(session_with_box):
     margin, tb_h = 10.0, 30.0
-    r = json.loads(suggest_view_layout(session_with_box, "shape",
-                                       margin=margin, title_block_h=tb_h))
+    r = json.loads(
+        suggest_view_layout(session_with_box, "shape", margin=margin, title_block_h=tb_h)
+    )
     fv = r["views"]["front"]
     assert fv["VIEW_Y"] - fv["half_h"] > margin + tb_h
 
@@ -106,6 +111,7 @@ def test_subset_views(session_with_box):
 
 # --- fit checking and suggestions ---
 
+
 def test_no_warnings_for_small_part_a4(session_with_box):
     r = json.loads(suggest_view_layout(session_with_box, "shape", scale=1.0))
     assert r["warnings"] == []
@@ -129,6 +135,7 @@ def test_suggestion_scale_smaller_than_requested(session_with_box):
 
 
 # --- look_at ---
+
 
 def test_iso_look_at_unscaled(session_with_box):
     """Iso view uses unscaled world centroid as look_at."""

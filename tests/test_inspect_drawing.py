@@ -1,5 +1,7 @@
 """Tests for inspect_drawing tool and annotate() session helper."""
+
 import json
+
 import pytest
 
 from build123d_mcp.session import Session
@@ -13,6 +15,7 @@ def session():
 # ---------------------------------------------------------------------------
 # annotate() helper
 # ---------------------------------------------------------------------------
+
 
 class TestAnnotate:
     def test_annotate_registers_shape(self, session):
@@ -140,8 +143,10 @@ draft = Draft(font_size=2.5, decimal_precision=1, arrow_length=1.0, line_width=0
 bad = ExtensionLine(border=[(-15, -30, 0), (15, -30, 0)], offset=-6, draft=draft, label="99")
 annotate(bad, "axis_swap_bug", label="99")
 """)
-        from build123d_mcp.tools.lint_drawing import lint_drawing
         import json
+
+        from build123d_mcp.tools.lint_drawing import lint_drawing
+
         out = json.loads(lint_drawing(session))
         assert any(v["check"] == "label_vs_measured" for v in out["violations"]), (
             "lint must flag 99 vs 30mm mismatch when label= is passed explicitly"
@@ -180,9 +185,11 @@ annotate(w, "width", label="WRONG")
 # inspect_drawing tool
 # ---------------------------------------------------------------------------
 
+
 class TestInspectDrawing:
     def _run(self, session, objects=""):
         from build123d_mcp.tools.inspect_drawing import inspect_drawing
+
         return json.loads(inspect_drawing(session, objects))
 
     def test_empty_session_returns_error(self, session):
@@ -295,6 +302,7 @@ annotate(w, "width")
 # uses WorkerSession, a parent-side IPC proxy whose state lives in a subprocess.
 # ---------------------------------------------------------------------------
 
+
 class TestInspectDrawingViaWorker:
     def test_inspect_drawing_through_worker(self):
         from build123d_mcp.worker import WorkerSession
@@ -322,6 +330,7 @@ annotate(w, "width")
 # ---------------------------------------------------------------------------
 # annotate() label auto-derivation (#115)
 # ---------------------------------------------------------------------------
+
 
 class TestAnnotateLabelFallback:
     def test_vanilla_extension_line_without_kwarg_has_no_label_str(self, session):
@@ -369,13 +378,16 @@ annotate(w, "width")
 # save_drawing_annotations / sidecar (#116)
 # ---------------------------------------------------------------------------
 
+
 class TestSaveDrawingAnnotations:
     def _run(self, session, objects=""):
         from build123d_mcp.tools.inspect_drawing import inspect_drawing
+
         return json.loads(inspect_drawing(session, objects))
 
     def test_save_writes_dims_json(self, session, tmp_path):
         from build123d_mcp.tools.save_drawing_annotations import save_drawing_annotations
+
         session.execute("""
 from build123d import *
 from build123d import Draft
@@ -391,8 +403,9 @@ annotate(w, "width")
         assert "1 annotation" in result
 
     def test_sidecar_loaded_by_inspect_svg_mode(self, session, tmp_path):
-        from build123d_mcp.tools.save_drawing_annotations import save_drawing_annotations
         from build123d_mcp.tools.inspect_drawing import _inspect_svg
+        from build123d_mcp.tools.save_drawing_annotations import save_drawing_annotations
+
         session.execute("""
 from build123d import *
 from build123d import Draft
@@ -416,6 +429,7 @@ annotate(w, "width")
 
     def test_no_sidecar_gives_guidance_note(self, tmp_path):
         from build123d_mcp.tools.inspect_drawing import _inspect_svg
+
         svg_path = tmp_path / "bare.svg"
         svg_path.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"/>')
         result = json.loads(_inspect_svg(str(svg_path)))

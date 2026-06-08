@@ -5,13 +5,13 @@ import sys
 import pytest
 
 from build123d_mcp.session import Session
+from build123d_mcp.tools.diff import diff_snapshot
 from build123d_mcp.tools.execute import execute_code
 from build123d_mcp.tools.export import export_file
-from build123d_mcp.tools.interference import interference
-from build123d_mcp.tools.measure import measure
-from build123d_mcp.tools.diff import diff_snapshot
 from build123d_mcp.tools.health_check import health_check
+from build123d_mcp.tools.interference import interference
 from build123d_mcp.tools.list_objects import list_objects
+from build123d_mcp.tools.measure import measure
 from build123d_mcp.tools.render import render_view
 from build123d_mcp.tools.session_state import session_state
 
@@ -19,9 +19,7 @@ from build123d_mcp.tools.session_state import session_state
 # on each platform. /etc/passwd on POSIX; on Windows we use the system hosts file,
 # which is always present and lives under C:\Windows so realpath stays under C:\Windows.
 _OUTSIDE_ROOT_PATH = (
-    r"C:\Windows\System32\drivers\etc\hosts"
-    if sys.platform == "win32"
-    else "/etc/passwd"
+    r"C:\Windows\System32\drivers\etc\hosts" if sys.platform == "win32" else "/etc/passwd"
 )
 
 
@@ -41,6 +39,7 @@ def fast_session():
 
 
 # --- execute ---
+
 
 def test_execute_persists_state(session):
     execute_code(session, "x = 42")
@@ -71,6 +70,7 @@ def test_execute_success_has_no_hint(session):
 
 
 # --- var summary ---
+
 
 def test_execute_var_summary_shows_new_scalar(session):
     result = execute_code(session, "FV_Y = 35.0")
@@ -144,6 +144,7 @@ def test_execute_detects_buildpart(session):
 
 # --- execute() diagnostics: deltas + anomaly warnings ---
 
+
 def test_execute_first_shape_shows_absolutes_no_warnings(session):
     """First shape ever: no previous to diff against, so no delta and no warnings."""
     out = execute_code(session, "result = Box(10, 10, 5)")
@@ -161,7 +162,7 @@ def test_execute_real_cut_shows_deltas(session):
     # Volume dropped, faces increased — delta markers should appear
     assert "(-" in out  # volume decreased
     assert "(+" in out  # faces increased
-    assert "%" in out   # percentage delta on volume
+    assert "%" in out  # percentage delta on volume
     assert "Warning:" not in out
 
 
@@ -208,6 +209,7 @@ def test_execute_no_warnings_when_shape_unchanged(session):
 
 
 # --- security ---
+
 
 def test_show_objects_persist_across_execute_calls(session):
     """Objects registered with show() in one execute call are accessible in later calls."""
@@ -266,11 +268,13 @@ def test_open_removed_from_builtins(session):
 
 # --- --allow-imports flag (granular allowlist extension) ---
 
+
 def test_extra_allowed_import_permits_specified_module(monkeypatch):
     """Modules added via --allow-imports become importable (using a stdlib
     module that's normally blocked, so the test doesn't depend on optional
     third-party packages being installed)."""
     import build123d_mcp.security as _sec
+
     monkeypatch.setattr(_sec, "EXTRA_ALLOWED_IMPORTS", set(_sec.EXTRA_ALLOWED_IMPORTS))
     _sec.EXTRA_ALLOWED_IMPORTS.add("os")
     s = Session()
@@ -283,6 +287,7 @@ def test_extra_allowed_import_permits_submodules(monkeypatch):
     """Allowing a root module also permits its submodules (e.g. allowing
     'os' lets 'os.path' through)."""
     import build123d_mcp.security as _sec
+
     monkeypatch.setattr(_sec, "EXTRA_ALLOWED_IMPORTS", set(_sec.EXTRA_ALLOWED_IMPORTS))
     _sec.EXTRA_ALLOWED_IMPORTS.add("os")
     s = Session()
@@ -294,6 +299,7 @@ def test_extra_allowed_import_permits_submodules(monkeypatch):
 def test_unspecified_module_still_blocked_when_extras_used(monkeypatch):
     """Adding 'foo' to extras must NOT allow 'bar'."""
     import build123d_mcp.security as _sec
+
     monkeypatch.setattr(_sec, "EXTRA_ALLOWED_IMPORTS", set(_sec.EXTRA_ALLOWED_IMPORTS))
     _sec.EXTRA_ALLOWED_IMPORTS.add("os")
     s = Session()
@@ -305,6 +311,7 @@ def test_extras_message_lists_added_modules(monkeypatch):
     """Error message for blocked imports should include user-added extras
     in the 'Permitted' list so the LLM sees the current state."""
     import build123d_mcp.security as _sec
+
     monkeypatch.setattr(_sec, "EXTRA_ALLOWED_IMPORTS", set(_sec.EXTRA_ALLOWED_IMPORTS))
     _sec.EXTRA_ALLOWED_IMPORTS.add("os")
     s = Session()
@@ -332,8 +339,7 @@ def test_pythonpath_package_importable_when_allowlisted(monkeypatch, tmp_path):
 
     s = Session()
     result = s.execute(
-        "from my_test_parts import VALUE\n"
-        "assert VALUE == 42, f'expected 42, got {VALUE}'"
+        "from my_test_parts import VALUE\nassert VALUE == 42, f'expected 42, got {VALUE}'"
     )
     assert "Error" not in result, f"PYTHONPATH package import failed: {result}"
     assert "not allowed" not in result.lower()
@@ -353,6 +359,7 @@ def test_runtime_blocked_import_message_mentions_allow_imports():
     """The Layer-2 _safe_import error message should also mention --allow-imports.
     Exercises _safe_import directly, bypassing the AST check (Layer 1)."""
     from build123d_mcp.security import make_restricted_builtins
+
     builtins = make_restricted_builtins()
     safe_import = builtins["__import__"]
     with pytest.raises(ImportError, match="--allow-imports|BUILD123D_ALLOW_IMPORTS"):
@@ -376,7 +383,9 @@ def test_inspect_import_allowed(session):
 
 
 def test_inspect_signature_works(session):
-    result = execute_code(session, "import inspect\nfrom build123d import Box\nsig = str(inspect.signature(Box))")
+    result = execute_code(
+        session, "import inspect\nfrom build123d import Box\nsig = str(inspect.signature(Box))"
+    )
     assert "Error" not in result
 
 
@@ -405,6 +414,7 @@ def test_worker_execution_timeout():
     SIGALRM guard is a no-op. A `while True: pass` must return a timeout error,
     not hang the test."""
     from build123d_mcp.worker import WorkerSession
+
     ws = WorkerSession(exec_timeout=2)
     try:
         result = ws.execute("while True: pass")
@@ -422,17 +432,21 @@ def test_blocked_import_does_not_corrupt_shape(session):
 
 # --- OCP import allowlist ---
 
+
 def test_ocp_safe_module_allowed(session):
     result = execute_code(session, "from OCP.BRepGProp import BRepGProp")
     assert "not allowed" not in result.lower() and "Error" not in result
 
 
 def test_ocp_topology_modules_allowed(session):
-    result = execute_code(session, (
-        "from OCP.TopExp import TopExp_Explorer\n"
-        "from OCP.TopAbs import TopAbs_FACE\n"
-        "from OCP.TopoDS import TopoDS"
-    ))
+    result = execute_code(
+        session,
+        (
+            "from OCP.TopExp import TopExp_Explorer\n"
+            "from OCP.TopAbs import TopAbs_FACE\n"
+            "from OCP.TopoDS import TopoDS"
+        ),
+    )
     assert "not allowed" not in result.lower() and "Error" not in result
 
 
@@ -599,6 +613,7 @@ def test_render_view_save_to_both_writes_two_files(session, tmp_path, monkeypatc
 
 # --- render_view DXF ---
 
+
 def test_render_view_dxf_returns_dxf_bytes(session):
     execute_code(session, "result = Box(20, 10, 5)")
     out = render_view(session, "top", format="dxf")
@@ -672,16 +687,20 @@ def test_render_view_dxf_invalid_format_message_lists_dxf(session):
 
 # --- render_view 2D drafting (Sketch/Compound) ---
 
+
 def _build_2d_drawing(session):
     """Set up a session with a dimensioned 2D drawing as a named object."""
-    execute_code(session, """
+    execute_code(
+        session,
+        """
 plate = Box(40, 20, 5) - Cylinder(3, 5).move(Location((10, 0, 0)))
 visible, _ = plate.project_to_viewport((0, 0, 100), (0, 1, 0), (0, 0, 0))
 draft = Draft(font_size=2.5, decimal_precision=1)
 length = ExtensionLine(border=[(-20, -10, 0), (20, -10, 0)], offset=8, draft=draft, label='40')
 drawing = Compound(children=list(visible) + [length])
 show(drawing, 'top_view')
-""")
+""",
+    )
 
 
 def test_render_view_2d_returns_png(session):
@@ -721,13 +740,16 @@ def test_render_view_2d_multi_object_uses_2d_path(session):
     composed via build123d.drafting) must render through the 2D pipeline,
     not fall back to 3D VTK. The detection is: every shape has no solids
     AND lies flat in Z."""
-    execute_code(session, """
+    execute_code(
+        session,
+        """
 plate_a, _ = (Box(20, 20, 5)).project_to_viewport((0, 0, 100), (0, 1, 0), (0, 0, 0)), None
 visible_a, _ = Box(20, 20, 5).project_to_viewport((0, 0, 100), (0, 1, 0), (0, 0, 0))
 visible_b, _ = Box(15, 15, 3).move(Location((25, 0, 0))).project_to_viewport((0, 0, 100), (0, 1, 0), (0, 0, 0))
 show(Compound(children=list(visible_a)), 'plate_a')
 show(Compound(children=list(visible_b)), 'plate_b')
-""")
+""",
+    )
     out = render_view(session, objects="plate_a,plate_b", format="dxf")
     text = out["dxf"].decode("utf-8", errors="ignore")
     # Multi-object 2D path produces per-object _part layers
@@ -738,12 +760,15 @@ show(Compound(children=list(visible_b)), 'plate_b')
 def test_render_view_2d_multi_object_honours_per_object_colour(session):
     """F3: name:color syntax should propagate through the 2D path so
     visualisations of multi-part 2D drawings render in the requested hues."""
-    execute_code(session, """
+    execute_code(
+        session,
+        """
 visible_a, _ = Box(20, 20, 5).project_to_viewport((0, 0, 100), (0, 1, 0), (0, 0, 0))
 visible_b, _ = Box(15, 15, 3).move(Location((25, 0, 0))).project_to_viewport((0, 0, 100), (0, 1, 0), (0, 0, 0))
 show(Compound(children=list(visible_a)), 'plate_a')
 show(Compound(children=list(visible_b)), 'plate_b')
-""")
+""",
+    )
     out = render_view(session, objects="plate_a:red,plate_b:blue", format="svg")
     text = out["svg"].decode("utf-8", errors="ignore")
     # Red ≈ 255,0,0; blue ≈ 0,0,255 — SVG embeds explicit RGB on each layer
@@ -753,15 +778,19 @@ show(Compound(children=list(visible_b)), 'plate_b')
 
 # --- #92 F4: colors= dict for fine-grained per-layer colour ---
 
+
 def test_render_view_2d_colors_dict_overrides_per_object(session):
     """colors={'plate_a': 'red'} should win over both the default palette
     and any name:color syntax."""
-    execute_code(session, """
+    execute_code(
+        session,
+        """
 visible_a, _ = Box(20, 20, 5).project_to_viewport((0, 0, 100), (0, 1, 0), (0, 0, 0))
 visible_b, _ = Box(15, 15, 3).move(Location((25, 0, 0))).project_to_viewport((0, 0, 100), (0, 1, 0), (0, 0, 0))
 show(Compound(children=list(visible_a)), 'plate_a')
 show(Compound(children=list(visible_b)), 'plate_b')
-""")
+""",
+    )
     out = render_view(
         session,
         objects="plate_a,plate_b",  # no inline colours
@@ -775,10 +804,13 @@ show(Compound(children=list(visible_b)), 'plate_b')
 
 def test_render_view_2d_colors_overrides_inline_namecolor(session):
     """colors dict beats inline name:color when both specify the same object."""
-    execute_code(session, """
+    execute_code(
+        session,
+        """
 visible_a, _ = Box(20, 20, 5).project_to_viewport((0, 0, 100), (0, 1, 0), (0, 0, 0))
 show(Compound(children=list(visible_a)), 'plate_a')
-""")
+""",
+    )
     # Inline says red; colors dict says green — green should win
     out = render_view(
         session,
@@ -803,6 +835,7 @@ def test_render_view_2d_colors_dims_layer(session):
 
 
 # --- #92 F8: explicit mode= parameter + render_mode in result ---
+
 
 def test_render_view_mode_auto_detects_3d(session):
     """mode='auto' (default) routes a 3D solid to the 3D pipeline."""
@@ -841,10 +874,13 @@ def test_render_view_mode_invalid_raises(session):
 def test_render_view_2d_colors_unknown_name_falls_back_to_palette(session):
     """A colors dict that doesn't mention the object should fall back to
     the inline colour or palette — not crash."""
-    execute_code(session, """
+    execute_code(
+        session,
+        """
 visible_a, _ = Box(20, 20, 5).project_to_viewport((0, 0, 100), (0, 1, 0), (0, 0, 0))
 show(Compound(children=list(visible_a)), 'plate_a')
-""")
+""",
+    )
     out = render_view(
         session,
         objects="plate_a:red",
@@ -857,6 +893,7 @@ show(Compound(children=list(visible_a)), 'plate_a')
 
 
 # --- export 2D drafting ---
+
 
 def test_export_2d_to_dxf(session, tmp_path, monkeypatch):
     """A 2D drawing exports cleanly to DXF via the export tool."""
@@ -896,6 +933,7 @@ def test_export_3d_rejects_dxf(session, tmp_path, monkeypatch):
 
 # --- render_view labels ---
 
+
 def test_render_view_label_objects_renders(session):
     execute_code(session, "show(Box(10, 10, 10), 'bracket')")
     execute_code(session, "show(Cylinder(3, 8).move(Location((20, 0, 0))), 'pin')")
@@ -914,7 +952,8 @@ def test_render_view_label_objects_skips_default_name(session):
 def test_render_view_highlights_face(session):
     execute_code(session, "show(Box(10, 10, 10), 'cube')")
     out = render_view(
-        session, "iso",
+        session,
+        "iso",
         highlights=[{"object": "cube", "type": "face", "index": 0, "label": "top"}],
     )
     assert out["png"][:8] == PNG_MAGIC
@@ -923,7 +962,8 @@ def test_render_view_highlights_face(session):
 def test_render_view_highlights_edge_and_vertex(session):
     execute_code(session, "show(Box(10, 10, 10), 'cube')")
     out = render_view(
-        session, "iso",
+        session,
+        "iso",
         highlights=[
             {"object": "cube", "type": "edge", "index": 2, "label": "e2"},
             {"object": "cube", "type": "vertex", "index": 0, "label": "v0"},
@@ -936,7 +976,8 @@ def test_render_view_highlight_unknown_object_raises(session):
     execute_code(session, "show(Box(10, 10, 10), 'cube')")
     with pytest.raises(ValueError, match="unknown object 'ghost'"):
         render_view(
-            session, "iso",
+            session,
+            "iso",
             highlights=[{"object": "ghost", "type": "face", "index": 0, "label": "x"}],
         )
 
@@ -946,7 +987,9 @@ def test_render_view_highlight_object_not_in_render_set_raises(session):
     execute_code(session, "show(Cylinder(3, 5), 'pin')")
     with pytest.raises(ValueError, match="not in the rendered set"):
         render_view(
-            session, "iso", objects="cube",
+            session,
+            "iso",
+            objects="cube",
             highlights=[{"object": "pin", "type": "face", "index": 0, "label": "x"}],
         )
 
@@ -955,7 +998,8 @@ def test_render_view_highlight_index_out_of_range_raises(session):
     execute_code(session, "show(Box(10, 10, 10), 'cube')")
     with pytest.raises(ValueError, match="out of range"):
         render_view(
-            session, "iso",
+            session,
+            "iso",
             highlights=[{"object": "cube", "type": "face", "index": 99, "label": "x"}],
         )
 
@@ -964,7 +1008,8 @@ def test_render_view_highlight_invalid_type_raises(session):
     execute_code(session, "show(Box(10, 10, 10), 'cube')")
     with pytest.raises(ValueError, match="type must be"):
         render_view(
-            session, "iso",
+            session,
+            "iso",
             highlights=[{"object": "cube", "type": "wire", "index": 0, "label": "x"}],
         )
 
@@ -973,7 +1018,8 @@ def test_render_view_highlight_missing_key_raises(session):
     execute_code(session, "show(Box(10, 10, 10), 'cube')")
     with pytest.raises(ValueError, match="missing required key"):
         render_view(
-            session, "iso",
+            session,
+            "iso",
             highlights=[{"object": "cube", "type": "face", "index": 0}],  # no label
         )
 
@@ -987,6 +1033,7 @@ def test_render_view_labels_warn_in_svg(session):
 
 
 # --- measure ---
+
 
 def test_measure_bounding_box(session):
     execute_code(session, "result = Box(10, 20, 30)")
@@ -1019,13 +1066,17 @@ def test_measure_area(session):
 
 def test_measure_clearance(session):
     from build123d_mcp.tools.measure import clearance
-    execute_code(session, "show(Box(10,10,10), 'a')\nshow(Box(10,10,10).move(Location((20,0,0))), 'b')")
+
+    execute_code(
+        session, "show(Box(10,10,10), 'a')\nshow(Box(10,10,10).move(Location((20,0,0))), 'b')"
+    )
     data = json.loads(clearance(session, "a", "b"))
     assert abs(data["clearance"] - 10) < 0.1
 
 
 def test_clearance_unknown_object_raises(session):
     from build123d_mcp.tools.measure import clearance
+
     execute_code(session, "show(Box(10,10,10), 'a')")
     with pytest.raises(ValueError, match="Unknown object"):
         clearance(session, "a", "missing")
@@ -1034,6 +1085,7 @@ def test_clearance_unknown_object_raises(session):
 def test_clearance_apart_status(session):
     """Two boxes with a gap: status=apart, clearance is the gap."""
     from build123d_mcp.tools.measure import clearance
+
     execute_code(session, "show(Box(10,10,10), 'a')")
     execute_code(session, "show(Box(5,5,5).move(Location((20,0,0))), 'b')")
     data = json.loads(clearance(session, "a", "b"))
@@ -1046,6 +1098,7 @@ def test_clearance_apart_status(session):
 def test_clearance_touching_status(session):
     """Two boxes sharing a face: status=touching, clearance=0, no overlap."""
     from build123d_mcp.tools.measure import clearance
+
     execute_code(session, "show(Box(10,10,10), 'a')")
     execute_code(session, "show(Box(10,10,10).move(Location((10,0,0))), 'b')")
     data = json.loads(clearance(session, "a", "b"))
@@ -1059,6 +1112,7 @@ def test_clearance_containing_reports_wall_thickness(session):
     clearance is the smallest gap from cylinder surface to plate exterior
     (= wall thickness in the worst direction)."""
     from build123d_mcp.tools.measure import clearance
+
     execute_code(session, "show(Box(40, 20, 10), 'plate')")
     execute_code(session, "show(Cylinder(3, 5).move(Location((10, 0, 0))), 'pocket')")
     data = json.loads(clearance(session, "pocket", "plate"))
@@ -1075,6 +1129,7 @@ def test_clearance_interpenetrating_flags_wall_pierce(session):
     matters is a_volume_outside_b > 0 — that's the volume of the pocket
     extending beyond the plate's outer surface."""
     from build123d_mcp.tools.measure import clearance
+
     execute_code(session, "show(Box(40, 20, 5), 'plate')")
     execute_code(session, "show(Cylinder(3, 10).move(Location((10, 0, 0))), 'pocket')")
     data = json.loads(clearance(session, "pocket", "plate"))
@@ -1086,6 +1141,7 @@ def test_clearance_interpenetrating_flags_wall_pierce(session):
 
 
 # --- export ---
+
 
 def test_export_step(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -1099,7 +1155,7 @@ def test_export_step(session, tmp_path, monkeypatch):
 def test_export_stl(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     execute_code(session, "result = Box(10, 10, 10)")
-    result = export_file(session, "out", "stl")
+    export_file(session, "out", "stl")
     assert os.path.exists("out.stl")
     assert os.path.getsize("out.stl") > 0
 
@@ -1142,10 +1198,14 @@ def test_export_to_tmp_allowed(session, tmp_path):
     assert str(target) in result
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="/tmp does not exist on Windows; tempfile.gettempdir() coverage in test_export_to_tmp_allowed already runs there")
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="/tmp does not exist on Windows; tempfile.gettempdir() coverage in test_export_to_tmp_allowed already runs there",
+)
 def test_export_to_slash_tmp_allowed(session):
     execute_code(session, "result = Box(10, 10, 10)")
     import tempfile as _tempfile
+
     with _tempfile.NamedTemporaryFile(
         prefix="build123d_mcp_test_", suffix=".step", dir="/tmp", delete=False
     ) as f:
@@ -1202,6 +1262,7 @@ def test_export_symlink_escape_rejected(session, tmp_path):
 
 # --- reset ---
 
+
 def test_reset_clears_shape(session):
     execute_code(session, "result = Box(10, 10, 10)")
     assert session.current_shape is not None
@@ -1217,6 +1278,7 @@ def test_reset_clears_namespace(session):
 
 
 # --- multi-object / show() ---
+
 
 def test_show_registers_object(session):
     execute_code(session, "box = Box(10, 10, 10)")
@@ -1287,6 +1349,7 @@ def test_export_unknown_object_raises(session):
 
 # --- snapshots ---
 
+
 def test_save_and_restore_snapshot(session):
     execute_code(session, "result = Box(10, 10, 10)")
     vol_before = session.current_shape.volume
@@ -1330,6 +1393,7 @@ def test_reset_clears_snapshots(session):
 def test_dispatch_save_snapshot_no_shape_omits_current_shape():
     from build123d_mcp.session import Session
     from build123d_mcp.worker import _dispatch
+
     s = Session()
     msg = _dispatch(s, "save_snapshot", {"name": "empty"}, None)
     assert "current_shape" not in msg
@@ -1339,6 +1403,7 @@ def test_dispatch_save_snapshot_no_shape_omits_current_shape():
 def test_dispatch_restore_snapshot_no_shape_omits_current_shape():
     from build123d_mcp.session import Session
     from build123d_mcp.worker import _dispatch
+
     s = Session()
     _dispatch(s, "save_snapshot", {"name": "empty"}, None)
     msg = _dispatch(s, "restore_snapshot", {"name": "empty"}, None)
@@ -1356,6 +1421,7 @@ def test_namespace_preserved_after_restore(session):
 
 
 # --- show() API: shape first, optional name second (issue #11) ---
+
 
 def test_show_with_explicit_name(session):
     execute_code(session, "box = Box(10, 10, 10)")
@@ -1375,6 +1441,7 @@ def test_show_without_name_defaults_to_shape(session):
 
 # --- render_view per-object color (issue #12) ---
 
+
 def test_render_view_per_object_color(session):
     execute_code(session, "show(Box(10, 10, 10), 'a')\nshow(Cylinder(5, 20), 'b')")
     out = render_view(session, "iso", "a:blue,b:red")
@@ -1389,22 +1456,29 @@ def test_render_view_mixed_color_and_palette(session):
 
 # --- interference check (issue #13) ---
 
+
 def test_interference_overlapping(session):
-    execute_code(session, "show(Box(10, 10, 10), 'a')\nshow(Box(10, 10, 10).move(Location((5, 0, 0))), 'b')")
+    execute_code(
+        session, "show(Box(10, 10, 10), 'a')\nshow(Box(10, 10, 10).move(Location((5, 0, 0))), 'b')"
+    )
     data = json.loads(interference(session, "a", "b"))
     assert data["interferes"] is True
     assert data["volume"] > 0
 
 
 def test_interference_non_overlapping(session):
-    execute_code(session, "show(Box(10, 10, 10), 'a')\nshow(Box(10, 10, 10).move(Location((20, 0, 0))), 'b')")
+    execute_code(
+        session, "show(Box(10, 10, 10), 'a')\nshow(Box(10, 10, 10).move(Location((20, 0, 0))), 'b')"
+    )
     data = json.loads(interference(session, "a", "b"))
     assert data["interferes"] is False
     assert data["volume"] == 0.0
 
 
 def test_interference_returns_bounds(session):
-    execute_code(session, "show(Box(10, 10, 10), 'a')\nshow(Box(10, 10, 10).move(Location((5, 0, 0))), 'b')")
+    execute_code(
+        session, "show(Box(10, 10, 10), 'a')\nshow(Box(10, 10, 10).move(Location((5, 0, 0))), 'b')"
+    )
     data = json.loads(interference(session, "a", "b"))
     assert "bounds" in data
     bounds = data["bounds"]
@@ -1419,6 +1493,7 @@ def test_interference_unknown_object_raises(session):
 
 
 # --- measure topology ---
+
 
 def test_measure_topology_box(session):
     execute_code(session, "result = Box(10, 10, 10)")
@@ -1442,6 +1517,7 @@ def test_measure_topology_named_object(session):
 
 # --- render_view azimuth/elevation (new) ---
 
+
 def test_render_view_azimuth_returns_png(session):
     execute_code(session, "result = Box(10, 10, 10)")
     out = render_view(session, "iso", azimuth=45.0)
@@ -1462,6 +1538,7 @@ def test_render_view_azimuth_and_elevation_returns_png(session):
 
 # --- render_view clip_at (new) ---
 
+
 def test_render_view_clip_at_returns_png(session):
     execute_code(session, "result = Cylinder(5, 20)")
     out = render_view(session, "iso", clip_plane="z", clip_at=5.0)
@@ -1475,6 +1552,7 @@ def test_render_view_clip_at_negative_returns_png(session):
 
 
 # --- render_view save_to (new) ---
+
 
 def test_render_view_save_to_writes_png(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -1513,6 +1591,7 @@ def test_render_view_save_to_tmp_allowed(session, tmp_path):
 
 # --- show() feedback (new) ---
 
+
 def test_show_prints_volume_and_faces(session):
     output = execute_code(session, "show(Box(10, 10, 10), 'cube')")
     assert "cube" in output
@@ -1526,6 +1605,7 @@ def test_show_prints_feedback_without_name(session):
 
 # --- face() helper ---
 
+
 def test_face_top_returns_highest_z(session):
     execute_code(session, "from build123d import *\nb = Box(10, 10, 10)\nt = named_face(b, 'top')")
     # Top face center should be at z = +5
@@ -1534,7 +1614,9 @@ def test_face_top_returns_highest_z(session):
 
 
 def test_face_bottom_returns_lowest_z(session):
-    execute_code(session, "from build123d import *\nb = Box(10, 10, 10)\nt = named_face(b, 'bottom')")
+    execute_code(
+        session, "from build123d import *\nb = Box(10, 10, 10)\nt = named_face(b, 'bottom')"
+    )
     bottom = session.namespace["t"]
     assert abs(bottom.center_location.position.Z + 5) < 0.1
 
@@ -1555,24 +1637,31 @@ def test_face_all_names_work(session):
 
 
 def test_face_unknown_name_raises(session):
-    result = execute_code(session, "from build123d import *\nb = Box(10,10,10)\nnamed_face(b, 'diagonal')")
+    result = execute_code(
+        session, "from build123d import *\nb = Box(10,10,10)\nnamed_face(b, 'diagonal')"
+    )
     assert "Error" in result and "diagonal" in result
 
 
 def test_face_survives_rollback(session):
     # face() should still be available after a failed execute()
     execute_code(session, "raise ValueError('oops')")
-    result = execute_code(session, "from build123d import *\nb = Box(5,5,5)\nt = named_face(b, 'top')")
+    result = execute_code(
+        session, "from build123d import *\nb = Box(5,5,5)\nt = named_face(b, 'top')"
+    )
     assert "Error" not in result
 
 
 def test_face_available_without_import(session):
     # face() is a session built-in — no import needed
-    result = execute_code(session, "from build123d import Box\nb = Box(10,10,10)\nt = named_face(b, 'top')")
+    result = execute_code(
+        session, "from build123d import Box\nb = Box(10,10,10)\nt = named_face(b, 'top')"
+    )
     assert "Error" not in result
 
 
 # --- list_objects (new) ---
+
 
 def test_list_objects_empty(session):
     result = list_objects(session)
@@ -1598,6 +1687,7 @@ def test_list_objects_includes_geometry(session):
 
 
 # --- auto-diagnostics after execute ---
+
 
 def test_execute_auto_diagnostics_on_new_shape(session):
     result = execute_code(session, "result = Box(10, 10, 10)")
@@ -1630,6 +1720,7 @@ def test_execute_auto_diagnostics_not_repeated_when_shape_unchanged(session):
 
 # --- assertion / constraint support ---
 
+
 def test_assert_passing_does_not_error(session):
     result = execute_code(session, "result = Box(10, 10, 10)\nassert result.volume > 500")
     assert "Error" not in result
@@ -1637,7 +1728,9 @@ def test_assert_passing_does_not_error(session):
 
 
 def test_assert_failing_returns_constraint_failed(session):
-    result = execute_code(session, "result = Box(10, 10, 10)\nassert result.volume > 9999, 'volume too small'")
+    result = execute_code(
+        session, "result = Box(10, 10, 10)\nassert result.volume > 9999, 'volume too small'"
+    )
     assert result.startswith("Constraint failed")
     assert "volume too small" in result
 
@@ -1655,6 +1748,7 @@ def test_assert_failure_does_not_update_current_shape(session):
 
 
 # --- diff_snapshot ---
+
 
 def test_diff_snapshot_vs_current(session):
     execute_code(session, "result = Box(10, 10, 10)")
@@ -1717,6 +1811,7 @@ def test_diff_snapshot_unchanged_object_marked(session):
 
 # --- session_state ---
 
+
 def test_session_state_empty(session):
     data = json.loads(session_state(session))
     assert data["current_shape"] is None
@@ -1736,6 +1831,7 @@ def test_session_state_with_shape_and_objects(session):
 
 # --- diff_snapshot JSON mode ---
 
+
 def test_diff_snapshot_json_format(session):
     execute_code(session, "result = Box(10, 10, 10)")
     session.save_snapshot("s1")
@@ -1747,6 +1843,7 @@ def test_diff_snapshot_json_format(session):
 
 
 # --- measure extended fields (center_of_mass, inertia, face_inventory) ---
+
 
 def test_measure_center_of_mass_symmetric_box(session):
     execute_code(session, "result = Box(10, 10, 10)")
@@ -1808,8 +1905,10 @@ def test_measure_face_inventory_cylinder(session):
 
 # --- cross_sections ---
 
+
 def test_cross_sections_box(session):
     from build123d_mcp.tools.cross_sections import cross_sections
+
     execute_code(session, "result = Box(10, 10, 10)")
     data = json.loads(cross_sections(session, axis="Z", num_slices=5))
     assert isinstance(data, list)
@@ -1821,6 +1920,7 @@ def test_cross_sections_box(session):
 
 def test_cross_sections_named_object(session):
     from build123d_mcp.tools.cross_sections import cross_sections
+
     execute_code(session, "show(Box(20, 10, 10), 'wide')")
     data = json.loads(cross_sections(session, "wide", axis="X", num_slices=4))
     assert len(data) == 4
@@ -1830,9 +1930,11 @@ def test_cross_sections_named_object(session):
 
 # --- import_cad_file ---
 
+
 def test_import_step_round_trip(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from build123d_mcp.tools.import_step import import_cad_file
+
     execute_code(session, "result = Box(10, 10, 10)")
     export_file(session, "ref", "step")
     step_path = str(tmp_path / "ref.step")
@@ -1847,6 +1949,7 @@ def test_import_step_round_trip(session, tmp_path, monkeypatch):
 def test_import_step_default_name_from_filename(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from build123d_mcp.tools.import_step import import_cad_file
+
     execute_code(session, "result = Box(5, 5, 5)")
     export_file(session, "mypart", "step")
     step_path = str(tmp_path / "mypart.step")
@@ -1858,6 +1961,7 @@ def test_import_step_default_name_from_filename(session, tmp_path, monkeypatch):
 def test_import_stl_round_trip(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from build123d_mcp.tools.import_step import import_cad_file
+
     execute_code(session, "result = Box(10, 10, 10)")
     export_file(session, "ref", "stl")
     stl_path = str(tmp_path / "ref.stl")
@@ -1871,6 +1975,7 @@ def test_import_stl_round_trip(session, tmp_path, monkeypatch):
 
 def test_import_cad_file_missing_file_raises(session, tmp_path):
     from build123d_mcp.tools.import_step import import_cad_file
+
     # Missing file under an allowed root: passes the input-path policy check
     # and reaches the not-found check (an outside-root path would be rejected
     # earlier with "outside the allowed read roots" — see test_path_safety.py).
@@ -1880,6 +1985,7 @@ def test_import_cad_file_missing_file_raises(session, tmp_path):
 
 def test_import_cad_file_wrong_extension_raises(session, tmp_path):
     from build123d_mcp.tools.import_step import import_cad_file
+
     bad = tmp_path / "file.obj"
     bad.write_text("dummy")
     with pytest.raises(ValueError, match="Expected a .step"):
@@ -1889,6 +1995,7 @@ def test_import_cad_file_wrong_extension_raises(session, tmp_path):
 def test_import_step_becomes_current_shape(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from build123d_mcp.tools.import_step import import_cad_file
+
     execute_code(session, "result = Box(10, 10, 10)")
     export_file(session, "shape", "step")
     import_cad_file(session, str(tmp_path / "shape.step"), "imported")
@@ -1898,9 +2005,11 @@ def test_import_step_becomes_current_shape(session, tmp_path, monkeypatch):
 
 # --- render_view after import ---
 
+
 def test_render_view_after_step_import(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from build123d_mcp.tools.import_step import import_cad_file
+
     execute_code(session, "result = Box(10, 10, 10)")
     export_file(session, str(tmp_path / "ref"), "step")
     session.reset()
@@ -1913,6 +2022,7 @@ def test_render_view_after_step_import(session, tmp_path, monkeypatch):
 def test_render_view_after_stl_import(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from build123d_mcp.tools.import_step import import_cad_file
+
     execute_code(session, "result = Box(10, 10, 10)")
     export_file(session, str(tmp_path / "ref"), "stl")
     session.reset()
@@ -1926,6 +2036,7 @@ def test_render_view_imported_by_name(session, tmp_path, monkeypatch):
     """Rendering a specific imported object by name avoids Z-fighting with other shapes."""
     monkeypatch.chdir(tmp_path)
     from build123d_mcp.tools.import_step import import_cad_file
+
     execute_code(session, "show(Box(10, 10, 10), 'original')")
     export_file(session, str(tmp_path / "ref"), "step")
     import_cad_file(session, str(tmp_path / "ref.step"), "imported")
@@ -1938,6 +2049,7 @@ def test_render_view_stl_import_non_trivial(session, tmp_path, monkeypatch):
     The vtkPolyDataNormals fix ensures consistent face orientation on mesh shells."""
     monkeypatch.chdir(tmp_path)
     from build123d_mcp.tools.import_step import import_cad_file
+
     execute_code(session, "result = Box(20, 20, 20)")
     export_file(session, str(tmp_path / "box"), "stl")
     session.reset()
@@ -1953,6 +2065,7 @@ def test_render_view_stl_import_non_trivial(session, tmp_path, monkeypatch):
 
 # --- health_check ---
 
+
 def test_health_check_returns_json(session):
     data = json.loads(health_check(session))
     assert "ok" in data
@@ -1967,6 +2080,7 @@ def test_health_check_returns_json(session):
 def test_version_returns_package_versions():
     """version_info() reports build123d-mcp and its key deps, keyed by dist name."""
     from build123d_mcp.tools.version import version_info
+
     info = version_info()
     assert isinstance(info, dict)
     for key in ("build123d-mcp", "build123d", "build123d-drafting-helpers"):
@@ -1977,13 +2091,16 @@ def test_version_returns_package_versions():
 def test_version_build123d_mcp_matches_metadata():
     """The reported build123d-mcp version matches importlib metadata."""
     from importlib.metadata import version as _pkg_version
+
     from build123d_mcp.tools.version import version_info
+
     assert version_info()["build123d-mcp"] == _pkg_version("build123d-mcp")
 
 
 def test_version_unknown_package_reports_unknown(monkeypatch):
     """A package that isn't installed reports "unknown" rather than raising."""
     import build123d_mcp.tools.version as v
+
     monkeypatch.setattr(v, "_PACKAGES", ("build123d-mcp", "definitely-not-installed-xyz"))
     info = v.version_info()
     assert info["definitely-not-installed-xyz"] == "unknown"

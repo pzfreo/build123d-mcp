@@ -11,6 +11,7 @@ inspect_drawing(svg_path=...), and lint_drawing(svg_path=...) (plus their
 tests assert ``safe_input_path`` rejects traversal, outside-root, and
 symlink-escape paths, with a happy-path read from a temp root.
 """
+
 import json
 import os
 import sys
@@ -26,9 +27,7 @@ from build123d_mcp.tools.save_drawing_annotations import save_drawing_annotation
 from build123d_mcp.tools.script import script
 
 _OUTSIDE_ROOT_PATH = (
-    r"C:\Windows\System32\drivers\etc\hosts"
-    if sys.platform == "win32"
-    else "/etc/passwd"
+    r"C:\Windows\System32\drivers\etc\hosts" if sys.platform == "win32" else "/etc/passwd"
 )
 _TRAVERSAL = "../../etc/passwd"
 _VALID_SVG = (
@@ -44,6 +43,7 @@ def session():
 
 
 # --- script(save_to=...) ---------------------------------------------------
+
 
 def test_script_save_to_path_traversal_rejected(session):
     session.execute("from build123d import *\nresult = Box(5, 5, 5)")
@@ -66,6 +66,7 @@ def test_script_save_to_tmp_allowed(session, tmp_path):
 
 
 # --- render_drawing(save_to=...) -------------------------------------------
+
 
 def test_render_drawing_save_to_path_traversal_rejected(tmp_path):
     svg = tmp_path / "in.svg"
@@ -91,6 +92,7 @@ def test_render_drawing_save_to_tmp_allowed(tmp_path):
 
 
 # --- save_drawing_annotations(svg_path -> sidecar) -------------------------
+
 
 def test_save_drawing_annotations_path_traversal_rejected(session):
     with pytest.raises(ValueError, match="outside the allowed write roots"):
@@ -129,6 +131,7 @@ def _write_valid_svg(tmp_path) -> str:
 
 # --- import_cad_file(path=...) ---------------------------------------------
 
+
 def test_import_cad_file_path_traversal_rejected(session):
     with pytest.raises(ValueError, match=_READ_REJECT):
         import_cad_file(session, _TRAVERSAL + ".step")
@@ -163,6 +166,7 @@ def test_import_cad_file_tmp_allowed(session, tmp_path):
 
 # --- render_drawing(svg_path=...) ------------------------------------------
 
+
 def test_render_drawing_svg_path_traversal_rejected():
     with pytest.raises(ValueError, match=_READ_REJECT):
         render_drawing(_TRAVERSAL + ".svg")
@@ -181,6 +185,7 @@ def test_render_drawing_svg_path_tmp_allowed(tmp_path):
 
 # --- inspect_drawing(svg_path=...) -----------------------------------------
 
+
 def test_inspect_drawing_svg_path_traversal_rejected(session):
     with pytest.raises(ValueError, match=_READ_REJECT):
         inspect_drawing(session, svg_path=_TRAVERSAL + ".svg")
@@ -197,6 +202,7 @@ def test_inspect_drawing_svg_path_tmp_allowed(session, tmp_path):
 
 
 # --- lint_drawing(svg_path=...) --------------------------------------------
+
 
 def test_lint_drawing_svg_path_traversal_rejected(session):
     with pytest.raises(ValueError, match=_READ_REJECT):

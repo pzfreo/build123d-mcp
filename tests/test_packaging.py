@@ -3,6 +3,7 @@
 These tests guard against changes that would break installation or runtime
 behaviour for end users without surfacing in the in-process tests.
 """
+
 from importlib.metadata import requires
 
 
@@ -19,7 +20,11 @@ def test_build123d_drafting_helpers_is_runtime_dependency():
     deps = requires("build123d-mcp") or []
     # Each entry is a PEP 508 requirement string. Match by leading name segment
     # so version markers and extras don't break this.
-    runtime_deps = {req.split()[0].split(";")[0].split(">")[0].split("<")[0].split("=")[0].split("[")[0].strip() for req in deps if "extra ==" not in req}
+    runtime_deps = {
+        req.split()[0].split(";")[0].split(">")[0].split("<")[0].split("=")[0].split("[")[0].strip()
+        for req in deps
+        if "extra ==" not in req
+    }
     assert "build123d-drafting-helpers" in runtime_deps, (
         f"build123d-drafting-helpers must be in runtime dependencies "
         f"(issue #106). Got: {sorted(runtime_deps)}"

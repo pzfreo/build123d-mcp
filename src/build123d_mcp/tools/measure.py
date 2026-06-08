@@ -5,7 +5,9 @@ import math
 def _resolve_shape(session, object_name: str):
     if object_name:
         if object_name not in session.objects:
-            raise ValueError(f"Unknown object '{object_name}'. Registered: {list(session.objects.keys())}")
+            raise ValueError(
+                f"Unknown object '{object_name}'. Registered: {list(session.objects.keys())}"
+            )
         return session.objects[object_name]
     if session.current_shape is None:
         raise ValueError("No shape in session. Execute code to create geometry first.")
@@ -15,6 +17,7 @@ def _resolve_shape(session, object_name: str):
 def _center_of_mass(shape) -> dict:
     from OCP.BRepGProp import BRepGProp
     from OCP.GProp import GProp_GProps
+
     props = GProp_GProps()
     BRepGProp.VolumeProperties_s(shape.wrapped, props)
     com = props.CentreOfMass()
@@ -23,13 +26,19 @@ def _center_of_mass(shape) -> dict:
 
 _SURFACE_NAMES = None
 
+
 def _get_surface_names():
     global _SURFACE_NAMES
     if _SURFACE_NAMES is None:
         from OCP.GeomAbs import (
-            GeomAbs_BSplineSurface, GeomAbs_Cone, GeomAbs_Cylinder,
-            GeomAbs_Plane, GeomAbs_Sphere, GeomAbs_Torus,
+            GeomAbs_BSplineSurface,
+            GeomAbs_Cone,
+            GeomAbs_Cylinder,
+            GeomAbs_Plane,
+            GeomAbs_Sphere,
+            GeomAbs_Torus,
         )
+
         _SURFACE_NAMES = {
             GeomAbs_Plane: "Plane",
             GeomAbs_Cylinder: "Cylinder",
@@ -44,7 +53,7 @@ def _get_surface_names():
 def _face_inventory(shape) -> list:
     from OCP.BRepAdaptor import BRepAdaptor_Surface
     from OCP.BRepGProp import BRepGProp
-    from OCP.GeomAbs import GeomAbs_Cylinder, GeomAbs_Cone, GeomAbs_Sphere, GeomAbs_Torus
+    from OCP.GeomAbs import GeomAbs_Cone, GeomAbs_Cylinder, GeomAbs_Sphere, GeomAbs_Torus
     from OCP.GProp import GProp_GProps
     from OCP.TopAbs import TopAbs_FACE
     from OCP.TopExp import TopExp_Explorer
@@ -91,6 +100,7 @@ def _face_inventory(shape) -> list:
 def _inertia(shape) -> dict:
     from OCP.BRepGProp import BRepGProp
     from OCP.GProp import GProp_GProps
+
     props = GProp_GProps()
     BRepGProp.VolumeProperties_s(shape.wrapped, props)
     mat = props.MatrixOfInertia()
@@ -108,13 +118,13 @@ def _cross_sections(shape, axis: str = "Z", num_slices: int = 10) -> list:
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Section
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
     from OCP.BRepGProp import BRepGProp
+    from OCP.gp import gp_Dir, gp_Pln, gp_Pnt
     from OCP.GProp import GProp_GProps
     from OCP.ShapeAnalysis import ShapeAnalysis_FreeBounds
     from OCP.TopAbs import TopAbs_EDGE
     from OCP.TopExp import TopExp_Explorer
-    from OCP.TopTools import TopTools_HSequenceOfShape
     from OCP.TopoDS import TopoDS
-    from OCP.gp import gp_Dir, gp_Pln, gp_Pnt
+    from OCP.TopTools import TopTools_HSequenceOfShape
 
     axis = axis.upper()
     bb = shape.bounding_box()
@@ -179,27 +189,33 @@ def measure(session, object_name: str = "") -> str:
     cx = round((bb.min.X + bb.max.X) / 2, 4)
     cy = round((bb.min.Y + bb.max.Y) / 2, 4)
     cz = round((bb.min.Z + bb.max.Z) / 2, 4)
-    return json.dumps({
-        "volume": round(shape.volume, 4),
-        "area": round(shape.area, 4),
-        "topology": {
-            "faces": len(shape.faces()),
-            "edges": len(shape.edges()),
-            "vertices": len(shape.vertices()),
+    return json.dumps(
+        {
+            "volume": round(shape.volume, 4),
+            "area": round(shape.area, 4),
+            "topology": {
+                "faces": len(shape.faces()),
+                "edges": len(shape.edges()),
+                "vertices": len(shape.vertices()),
+            },
+            "bbox": {
+                "xmin": round(bb.min.X, 4),
+                "xmax": round(bb.max.X, 4),
+                "ymin": round(bb.min.Y, 4),
+                "ymax": round(bb.max.Y, 4),
+                "zmin": round(bb.min.Z, 4),
+                "zmax": round(bb.max.Z, 4),
+                "xsize": round(bb.size.X, 4),
+                "ysize": round(bb.size.Y, 4),
+                "zsize": round(bb.size.Z, 4),
+                "center": {"x": cx, "y": cy, "z": cz},
+            },
+            "center_of_mass": _center_of_mass(shape),
+            "inertia": _inertia(shape),
+            "face_inventory": _face_inventory(shape),
         },
-        "bbox": {
-            "xmin": round(bb.min.X, 4), "xmax": round(bb.max.X, 4),
-            "ymin": round(bb.min.Y, 4), "ymax": round(bb.max.Y, 4),
-            "zmin": round(bb.min.Z, 4), "zmax": round(bb.max.Z, 4),
-            "xsize": round(bb.size.X, 4),
-            "ysize": round(bb.size.Y, 4),
-            "zsize": round(bb.size.Z, 4),
-            "center": {"x": cx, "y": cy, "z": cz},
-        },
-        "center_of_mass": _center_of_mass(shape),
-        "inertia": _inertia(shape),
-        "face_inventory": _face_inventory(shape),
-    }, indent=2)
+        indent=2,
+    )
 
 
 def clearance(session, object_a: str, object_b: str) -> str:
@@ -258,11 +274,14 @@ def clearance(session, object_a: str, object_b: str) -> str:
     else:
         status = "apart"
 
-    return json.dumps({
-        "clearance": dist,
-        "status": status,
-        "containment": containment,
-        "intersection_volume": intersection if intersection is not None else 0.0,
-        "a_volume_outside_b": a_outside_b,
-        "b_volume_outside_a": b_outside_a,
-    }, indent=2)
+    return json.dumps(
+        {
+            "clearance": dist,
+            "status": status,
+            "containment": containment,
+            "intersection_volume": intersection if intersection is not None else 0.0,
+            "a_volume_outside_b": a_outside_b,
+            "b_volume_outside_a": b_outside_a,
+        },
+        indent=2,
+    )

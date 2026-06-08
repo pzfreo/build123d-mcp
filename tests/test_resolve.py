@@ -1,5 +1,7 @@
 """Tests for the resolve() tool."""
+
 import json
+
 import pytest
 
 from build123d_mcp.session import Session
@@ -82,9 +84,7 @@ def test_dunder_traversal_rejected(box_session):
 
 def test_subclasses_escape_rejected(box_session):
     """The classic __subclasses__() escape chain is blocked (issue #186)."""
-    result = json.loads(
-        resolve(box_session, "box", ".__class__.__base__.__subclasses__()")
-    )
+    result = json.loads(resolve(box_session, "box", ".__class__.__base__.__subclasses__()"))
     assert "error" in result
     assert "type" not in result
 

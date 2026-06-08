@@ -4,6 +4,7 @@ inspect_drawing(svg_path=...) reads this sidecar when present, restoring
 label text and measured-length metadata that would otherwise be lost because
 build123d renders Text as filled glyph paths (not SVG <text> elements).
 """
+
 import json
 import pathlib
 

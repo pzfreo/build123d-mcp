@@ -53,8 +53,23 @@ dev = [
     "pytest-timeout",
     "mypy",
     "pytest-cov>=7.1.0",
+    "ruff",
 ]
 
 [tool.mypy]
 files = ["src"]
 ignore_missing_imports = true
+
+[tool.ruff]
+# line-length 100 matches the existing code; E501 is not enabled, so this only
+# governs where the formatter reflows code (not comments or strings).
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# Phase 1 (issue #185): objective, auto-fixable rules only. Safety/complexity
+# rules (BLE blind-except, S bandit, C901) are intentionally deferred — the
+# sandbox/worker design uses deliberate broad-excepts and eval/exec/subprocess
+# that would each need per-site noqa judgement, out of scope for an automated
+# baseline.
+select = ["F", "I", "UP", "C4"]

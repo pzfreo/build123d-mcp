@@ -5,14 +5,14 @@ Sections with a label are runnable code blocks executed by
 tests/test_selectors_cookbook.py — they must end with `result = ...` or
 `show(...)` so current_shape is set.
 """
+
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
 class Section:
     text: str
-    label: Optional[str] = None  # None = prose only, not tested
+    label: str | None = None  # None = prose only, not tested
 
 
 SECTIONS: list[Section] = [
@@ -27,7 +27,6 @@ SECTIONS: list[Section] = [
         "in the topology first, then drill down. Find the parent face,\n"
         "then ask the face for its edges. Avoids brittle global queries."
     ),
-
     Section(
         label="drilldown",
         text="""\
@@ -41,7 +40,6 @@ hole_edges = top_face.edges().filter_by(GeomType.CIRCLE)
 print(f"top face area: {top_face.area:.1f}, hole edges: {len(hole_edges)}")
 result = plate""",
     ),
-
     Section(
         label="cardinal_faces",
         text="""\
@@ -56,7 +54,6 @@ right  = plate.faces().sort_by(Axis.X)[-1]   # highest X
 print(f"top={top.area}, bottom={bottom.area}, right={right.area}")
 result = plate""",
     ),
-
     Section(
         label="by_geom_type_edges",
         text="""\
@@ -69,7 +66,6 @@ lines   = plate.edges().filter_by(GeomType.LINE)
 print(f"circles: {len(circles)}, lines: {len(lines)}")
 result = plate""",
     ),
-
     Section(
         label="by_geom_type_faces",
         text="""\
@@ -83,7 +79,6 @@ planes    = part.faces().filter_by(GeomType.PLANE)
 print(f"cylindrical faces (hole walls): {len(cylinders)}, planar: {len(planes)}")
 result = part""",
     ),
-
     Section(
         label="parallel_perpendicular",
         text="""\
@@ -97,7 +92,6 @@ side_x     = part.faces().filter_by(Axis.X)    # 2 faces: +X and -X
 print(f"horizontal: {len(horizontal)}, perpendicular to X: {len(side_x)}")
 result = part""",
     ),
-
     Section(
         label="largest_face",
         text="""\
@@ -110,7 +104,6 @@ longest_edge = part.edges().sort_by(SortBy.LENGTH)[-1]
 print(f"largest face area: {largest_face.area}, longest edge: {longest_edge.length}")
 result = part""",
     ),
-
     Section(
         label="lambda_filter",
         text="""\
@@ -122,7 +115,6 @@ twenty_long = part.edges().filter_by(lambda e: abs(e.length - 20) < 1e-3)
 print(f"edges ~20mm long: {len(twenty_long)}")
 result = part""",
     ),
-
     Section(
         label="circles_by_radius",
         text="""\
@@ -136,7 +128,6 @@ r3 = plate.edges().filter_by(GeomType.CIRCLE).filter_by(lambda e: abs(e.radius -
 print(f"3mm circles: {len(r3)}")
 result = plate""",
     ),
-
     Section(
         label="select_last_in_builder",
         text="""\
@@ -153,7 +144,6 @@ with BuildPart() as p:
     fillet(new.filter_by(GeomType.CIRCLE), radius=0.5)
 result = p.part""",
     ),
-
     Section(
         label="select_modes",
         text="""\
@@ -170,7 +160,6 @@ with BuildPart() as p:
     print(f"ALL: {len(p.edges(Select.ALL))}, LAST: {len(p.edges(Select.LAST))}")
 result = p.part""",
     ),
-
     Section(
         label="chain_filters",
         text="""\
@@ -183,7 +172,6 @@ small_circles = part.edges().filter_by(GeomType.CIRCLE).filter_by(lambda e: e.ra
 print(f"small circles: {len(small_circles)}")
 result = part""",
     ),
-
     Section(
         label="sort_then_slice",
         text="""\
@@ -199,7 +187,6 @@ two_biggest = plate.edges().filter_by(GeomType.CIRCLE).sort_by(SortBy.RADIUS)[-2
 print(f"two biggest circles, radii: {sorted(e.radius for e in two_biggest)}")
 result = plate""",
     ),
-
     Section(
         label="convex_fillets",
         text="""\
@@ -213,7 +200,6 @@ result = p.part
 outer_fillets = result.faces().filter_by(Face.is_circular_convex)
 print(f"outer fillet faces: {len(outer_fillets)}")""",
     ),
-
     Section(
         label="concave_fillets",
         text="""\
@@ -228,7 +214,6 @@ result = p.part
 hole_walls = result.faces().filter_by(Face.is_circular_concave)
 print(f"concave circular faces (hole walls): {len(hole_walls)}")""",
     ),
-
     Section(
         label="inner_wires_count",
         text="""\
@@ -247,7 +232,6 @@ faces_with_4_holes = plate.faces().filter_by(lambda f: len(f.inner_wires()) == 4
 print(f"faces with 4 holes: {len(faces_with_4_holes)}")
 result = plate""",
     ),
-
     Section(
         text="""\
 ## Operator shortcuts — terse but harder to read
@@ -267,7 +251,6 @@ result = plate""",
 #   part.edges() | GeomType.CIRCLE | (lambda e: e.radius < 5)
 #                                        # = chained filter_by""",
     ),
-
     Section(
         text="""\
 ## Common pitfalls
@@ -294,6 +277,7 @@ def _build123d_version_banner() -> str:
     """Reflect the actually-installed build123d version so callers know exactly
     which API surface these examples target."""
     from importlib.metadata import PackageNotFoundError, version
+
     try:
         v = version("build123d")
     except PackageNotFoundError:

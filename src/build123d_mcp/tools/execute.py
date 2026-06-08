@@ -3,7 +3,6 @@ import re
 
 from build123d_mcp.tools.repair_hints import _HINTS
 
-
 _SUGGESTED_FIXES = {
     "boolean_fail": (
         "Check that both operands are valid solids and their intersection is non-empty; "
@@ -97,8 +96,7 @@ def _classify_from_error_string(error_result: str) -> dict:
 def execute_code(session, code: str) -> str:
     result = session.execute(code)
     if result.startswith("Error:") or result.startswith("Constraint failed"):
-        matched = [hint for patterns, hint in _HINTS
-                   if any(re.search(p, result) for p in patterns)]
+        matched = [hint for patterns, hint in _HINTS if any(re.search(p, result) for p in patterns)]
         if matched:
             result += "\n\nHint: " + ("\n      ".join(matched))
 

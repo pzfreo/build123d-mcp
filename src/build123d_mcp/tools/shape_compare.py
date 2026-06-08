@@ -14,17 +14,22 @@ def shape_compare(session, object_a: str, object_b: str) -> str:
     da, db = _shape_diag(sa), _shape_diag(sb)
 
     ca, cb = _center_of_mass(sa), _center_of_mass(sb)
-    offset = round(((cb["x"] - ca["x"])**2 + (cb["y"] - ca["y"])**2 + (cb["z"] - ca["z"])**2) ** 0.5, 4)
+    offset = round(
+        ((cb["x"] - ca["x"]) ** 2 + (cb["y"] - ca["y"]) ** 2 + (cb["z"] - ca["z"]) ** 2) ** 0.5, 4
+    )
 
-    return json.dumps({
-        "a": {"name": object_a, **da, "center": ca},
-        "b": {"name": object_b, **db, "center": cb},
-        "delta": {
-            "volume": round(db["volume"] - da["volume"], 4),
-            "faces": db["faces"] - da["faces"],
-            "edges": db["edges"] - da["edges"],
-            "vertices": db["vertices"] - da["vertices"],
-            "bbox": [round(db["bbox"][i] - da["bbox"][i], 4) for i in range(3)],
-            "center_offset": offset,
+    return json.dumps(
+        {
+            "a": {"name": object_a, **da, "center": ca},
+            "b": {"name": object_b, **db, "center": cb},
+            "delta": {
+                "volume": round(db["volume"] - da["volume"], 4),
+                "faces": db["faces"] - da["faces"],
+                "edges": db["edges"] - da["edges"],
+                "vertices": db["vertices"] - da["vertices"],
+                "bbox": [round(db["bbox"][i] - da["bbox"][i], 4) for i in range(3)],
+                "center_offset": offset,
+            },
         },
-    }, indent=2)
+        indent=2,
+    )

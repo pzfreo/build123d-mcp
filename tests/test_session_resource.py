@@ -4,6 +4,7 @@ The resource dispatches through the production session proxy, so it is
 exercised against a real WorkerSession — the object server.py uses in
 production — rather than an in-process Session (issue #179).
 """
+
 import json
 
 import pytest
@@ -15,6 +16,7 @@ from build123d_mcp.worker import WorkerSession
 def patched_server(monkeypatch):
     """Return the server module with _session set to a real WorkerSession."""
     import build123d_mcp.server as srv
+
     s = WorkerSession(exec_timeout=30)
     monkeypatch.setattr(srv, "_session", s, raising=False)
     try:

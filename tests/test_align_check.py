@@ -1,4 +1,5 @@
 import json
+
 import pytest
 
 from build123d_mcp.session import Session
@@ -16,9 +17,7 @@ def session():
 def two_boxes_stacked(session):
     """Two boxes: box_a at Z=0..10, box_b at Z=10..20 (flush in Z)."""
     session.execute("box_a = Box(10, 10, 10); show(box_a, 'box_a')")
-    session.execute(
-        "box_b = Box(10, 10, 10).move(Location((0, 0, 10))); show(box_b, 'box_b')"
-    )
+    session.execute("box_b = Box(10, 10, 10).move(Location((0, 0, 10))); show(box_b, 'box_b')")
     return session
 
 

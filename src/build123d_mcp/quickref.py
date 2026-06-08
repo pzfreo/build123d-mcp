@@ -6,14 +6,14 @@ Prose-only sections (no label) are reference documentation that cannot be run.
 build_quickref_text() assembles all sections into the MCP resource text.
 RUNNABLE_EXAMPLES is the list used by tests/test_quickref.py.
 """
+
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
 class Section:
     text: str
-    label: Optional[str] = None  # None = prose only, not tested
+    label: str | None = None  # None = prose only, not tested
 
 
 SECTIONS: list[Section] = [
@@ -21,7 +21,6 @@ SECTIONS: list[Section] = [
         "BUILD123D QUICK REFERENCE — all measurements in mm\n"
         "===================================================="
     ),
-
     Section(
         label="pattern1",
         text="""\
@@ -33,7 +32,6 @@ result = Box(20, 10, 5)
 result = result - Cylinder(3, 6).move(Location((0, 0, 0)))
 show(result, "part")""",
     ),
-
     Section(
         label="pattern2",
         text="""\
@@ -47,7 +45,6 @@ with BuildPart() as p:
 result = p.part
 show(result, "part")""",
     ),
-
     Section(
         text="""\
 ## Primitives
@@ -57,7 +54,6 @@ Sphere(radius)
 Cone(bottom_radius, top_radius, height)
 Torus(major_radius, minor_radius)""",
     ),
-
     Section(
         text="""\
 ## Boolean operators (direct algebra)
@@ -65,7 +61,6 @@ a + b    # union
 a - b    # cut b from a
 a & b    # intersection""",
     ),
-
     Section(
         text="""\
 ## Boolean modes (inside BuildPart)
@@ -74,7 +69,6 @@ mode=Mode.SUBTRACT   # cut from existing solid
 mode=Mode.INTERSECT  # keep overlap only
 mode=Mode.REPLACE    # replace current solid entirely""",
     ),
-
     Section(
         label="align",
         text="""\
@@ -84,7 +78,6 @@ from build123d import *
 corner = Box(10, 5, 3, align=(Align.MIN, Align.MIN, Align.MIN))        # corner at origin
 result = Box(10, 5, 3, align=(Align.CENTER, Align.CENTER, Align.MIN))  # centred XY, bottom at Z=0""",
     ),
-
     Section(
         label="translate",
         text="""\
@@ -94,7 +87,6 @@ shape = Box(10, 5, 3)
 result = shape.move(Location((5, 0, 0)))
 rotated = shape.move(Location((5, 0, 0), (0, 0, 45)))""",
     ),
-
     Section(
         label="extrude",
         text="""\
@@ -108,7 +100,6 @@ with BuildPart() as p:
     extrude(amount=15)
 result = p.part""",
     ),
-
     Section(
         label="revolve",
         text="""\
@@ -121,7 +112,6 @@ with BuildPart() as p:
     revolve(axis=Axis.Z)                 # full 360°
 result = p.part""",
     ),
-
     Section(
         label="selectors",
         text="""\
@@ -134,7 +124,6 @@ top_edges   = result.edges().sort_by(Axis.Z)[-4:]       # 4 edges at highest Z (
 z_edges     = result.edges().filter_by(Axis.Z)          # edges parallel to Z
 flat_faces  = result.faces().filter_by(GeomType.PLANE)  # planar faces only""",
     ),
-
     Section(
         label="fillet_chamfer",
         text="""\
@@ -151,7 +140,6 @@ with BuildPart() as p:
     chamfer(p.part.edges().sort_by(Axis.Z)[-4:], length=0.5)
 result = p.part""",
     ),
-
     Section(
         label="joints_rigid",
         text="""\
@@ -172,7 +160,6 @@ plate.joints["mount"].connect_to(pin.joints["base"])
 show(plate, "plate")
 show(pin, "pin")""",
     ),
-
     Section(
         text="""\
 ## Joint types
@@ -186,7 +173,6 @@ BallJoint(label, to_part, joint_location, angular_range) # 3 rotations, 0 transl
 #   plate.joints["hinge"].connect_to(arm.joints["pivot"], angle=45)
 #   rail.joints["slot"].connect_to(carriage.joints["slide"], position=10)""",
     ),
-
     Section(
         label="grid_locations",
         text="""\
@@ -202,7 +188,6 @@ with BuildPart() as p:
 result = p.part
 show(result, "plate_with_grid_holes")""",
     ),
-
     Section(
         label="polar_locations",
         text="""\
@@ -217,7 +202,6 @@ with BuildPart() as p:
 result = p.part
 show(result, "flange")""",
     ),
-
     Section(
         label="manual_locations",
         text="""\
@@ -232,7 +216,6 @@ with BuildPart() as p:
 result = p.part
 show(result, "plate_with_3_holes")""",
     ),
-
     Section(
         label="position_tangent_at",
         text="""\
@@ -248,7 +231,6 @@ with BuildLine() as l:
 result = l.line
 show(result, "chained_path")""",
     ),
-
     Section(
         label="op_sweep",
         text="""\
@@ -262,7 +244,6 @@ with BuildSketch() as profile:
 result = sweep(profile.sketch, path=path.line)
 show(result, "tube")""",
     ),
-
     Section(
         label="op_loft",
         text="""\
@@ -279,7 +260,6 @@ with BuildPart() as p:
 result = p.part
 show(result, "transition")""",
     ),
-
     Section(
         label="op_mirror",
         text="""\
@@ -291,7 +271,6 @@ half = Box(10, 5, 3).move(Location((5, 0, 0)))   # off-centre half
 result = half + mirror(half, about=Plane.YZ)
 show(result, "symmetric")""",
     ),
-
     Section(
         label="op_offset",
         text="""\
@@ -305,7 +284,6 @@ with BuildSketch() as s:
 result = thicken(s.sketch, amount=1)   # turn into a 3D shell-base
 show(result, "offset_plate")""",
     ),
-
     Section(
         label="op_thicken",
         text="""\
@@ -316,7 +294,6 @@ sketch = Rectangle(20, 10)
 result = thicken(sketch, amount=3)
 show(result, "thickened_plate")""",
     ),
-
     Section(
         label="mode_private",
         text="""\
@@ -332,7 +309,6 @@ with BuildPart() as p:
 result = p.part
 show(result, "part_unchanged_by_private")""",
     ),
-
     Section(
         text="""\
 ## MCP server conventions
@@ -340,7 +316,6 @@ show(result, "part_unchanged_by_private")""",
 - show(shape, "name")      registers object, prints vol + face count as immediate confirmation
 - named_face(shape, "top") returns the highest-Z face; also: bottom/front/back/left/right""",
     ),
-
     Section(
         text="""\
 ## Common gotchas
@@ -359,6 +334,7 @@ def _build123d_version_banner() -> str:
     which API surface these examples target. The version may differ from the
     pyproject.toml pin if the user manually overrode it."""
     from importlib.metadata import PackageNotFoundError, version
+
     try:
         v = version("build123d")
     except PackageNotFoundError:

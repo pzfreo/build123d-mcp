@@ -1,7 +1,9 @@
 """Tests for the script() tool."""
+
 import json
 import os
 import tempfile
+
 import pytest
 
 from build123d_mcp.session import Session
@@ -69,7 +71,7 @@ def test_save_to_writes_file(session):
         assert "script_path" in result
         assert result["blocks"] == 2
         assert os.path.exists(path)
-        with open(path, "r") as f:
+        with open(path) as f:
             content = f.read()
         assert "Box(5, 5, 5)" in content
     finally:

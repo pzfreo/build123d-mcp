@@ -55,14 +55,20 @@ def _ensure_display() -> None:
         except Exception:
             pass
 
+
 _PALETTE = [
-    "lightblue", "lightcoral", "lightgreen",
-    "lightyellow", "plum", "peachpuff", "lightcyan",
+    "lightblue",
+    "lightcoral",
+    "lightgreen",
+    "lightyellow",
+    "plum",
+    "peachpuff",
+    "lightcyan",
 ]
 
 _QUALITY = {
     "standard": {"linear_deflection": 0.001, "angular_deflection": 0.1},
-    "high":     {"linear_deflection": 0.0005, "angular_deflection": 0.02},
+    "high": {"linear_deflection": 0.0005, "angular_deflection": 0.02},
 }
 
 _VALID_FORMATS = ("png", "svg", "dxf", "both")
@@ -94,10 +100,13 @@ def _resolve_shapes(session, objects: str):
 
 def _color_to_rgb(name: str) -> tuple[float, float, float]:
     from matplotlib.colors import to_rgb
+
     return to_rgb(name)
 
 
-def _camera_direction(direction: str) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+def _camera_direction(
+    direction: str,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
     """Return (position_unit_vector, view_up) for the named view direction."""
     if direction == "top":
         return (0.0, 0.0, 1.0), (0.0, 1.0, 0.0)
@@ -128,7 +137,9 @@ def _resolve_object_labels(shapes) -> list[tuple[tuple[float, float, float], str
     return out
 
 
-def _resolve_highlights(session, shapes, highlights) -> list[tuple[tuple[float, float, float], str]]:
+def _resolve_highlights(
+    session, shapes, highlights
+) -> list[tuple[tuple[float, float, float], str]]:
     """Validate and resolve highlight specs to [(position, label)].
 
     Each highlight must be a dict with keys: object, type, index, label.
@@ -160,7 +171,9 @@ def _resolve_highlights(session, shapes, highlights) -> list[tuple[tuple[float, 
                 f"Add it to objects= or omit the highlight."
             )
         if ent_type not in ("face", "edge", "vertex"):
-            raise ValueError(f"highlight type must be 'face', 'edge', or 'vertex', got '{ent_type}'")
+            raise ValueError(
+                f"highlight type must be 'face', 'edge', or 'vertex', got '{ent_type}'"
+            )
         if not isinstance(index, int):
             raise ValueError(f"highlight index must be int, got {type(index).__name__}: {index!r}")
 
@@ -195,6 +208,7 @@ def _add_label_actors(renderer, labels) -> None:
     if not labels:
         return
     import vtk
+
     for position, text in labels:
         actor = vtk.vtkBillboardTextActor3D()
         actor.SetPosition(*position)
@@ -210,8 +224,11 @@ def _add_label_actors(renderer, labels) -> None:
         renderer.AddActor(actor)
 
 
-def _do_render_png(shapes, tess, direction, clip_plane, clip_at, azimuth, elevation, labels=None) -> tuple[bytes, list[str]]:
+def _do_render_png(
+    shapes, tess, direction, clip_plane, clip_at, azimuth, elevation, labels=None
+) -> tuple[bytes, list[str]]:
     import tempfile
+
     import vtk
 
     _ensure_display()
@@ -240,9 +257,7 @@ def _do_render_png(shapes, tess, direction, clip_plane, clip_at, azimuth, elevat
 
     for i, (name, shape, obj_color) in enumerate(shapes):
         try:
-            verts, tris = shape.tessellate(
-                tess["linear_deflection"], tess["angular_deflection"]
-            )
+            verts, tris = shape.tessellate(tess["linear_deflection"], tess["angular_deflection"])
         except Exception as exc:
             failed.append(f"{name}: {exc}")
             continue
@@ -264,7 +279,9 @@ def _do_render_png(shapes, tess, direction, clip_plane, clip_at, azimuth, elevat
 
         if clip_plane:
             if clip_at is not None:
-                origin = {"x": (clip_at, 0, 0), "y": (0, clip_at, 0), "z": (0, 0, clip_at)}[clip_plane]
+                origin = {"x": (clip_at, 0, 0), "y": (0, clip_at, 0), "z": (0, 0, clip_at)}[
+                    clip_plane
+                ]
             else:
                 bounds = poly.GetBounds()  # xmin, xmax, ymin, ymax, zmin, zmax
                 cx = (bounds[0] + bounds[1]) / 2
@@ -312,7 +329,11 @@ def _do_render_png(shapes, tess, direction, clip_plane, clip_at, azimuth, elevat
         actor_count += 1
 
     if actor_count == 0:
-        msg = "All shapes failed to tessellate: " + "; ".join(failed) if failed else "No geometry to render"
+        msg = (
+            "All shapes failed to tessellate: " + "; ".join(failed)
+            if failed
+            else "No geometry to render"
+        )
         raise RuntimeError(msg)
 
     if label_renderer is not None:
@@ -358,15 +379,16 @@ def _viewport_origin_for(direction: str, shapes, azimuth: float, elevation: floa
     side they rotate around the cardinal axis-aligned baseline.
     """
     from build123d import Vector
+
     # Aggregate bounding centre across all shapes for look_at
     centres = [shape.center() for _name, shape, _c in shapes]
     centre = sum(centres, Vector(0, 0, 0)) * (1.0 / len(centres))
 
     # Direction vector matches the VTK camera baseline
     dx, dy, dz = {
-        "top":   (0.0, 0.0, 1.0),
+        "top": (0.0, 0.0, 1.0),
         "front": (0.0, -1.0, 0.0),
-        "side":  (1.0, 0.0, 0.0),
+        "side": (1.0, 0.0, 0.0),
     }.get(direction, (1.0, 1.0, 1.0))
     up = (0.0, 1.0, 0.0) if direction == "top" else (0.0, 0.0, 1.0)
 
@@ -411,6 +433,7 @@ def _do_render_svg(shapes, direction, clip_plane, clip_at, azimuth, elevation) -
     only the keep-side.
     """
     import tempfile
+
     from build123d import ExportSVG, Plane, Vector
 
     # Optionally clip each shape to the keep-side of the requested plane
@@ -418,7 +441,9 @@ def _do_render_svg(shapes, direction, clip_plane, clip_at, azimuth, elevation) -
     if clip_plane:
         for name, shape, color in shapes:
             if clip_at is not None:
-                origin = {"x": (clip_at, 0, 0), "y": (0, clip_at, 0), "z": (0, 0, clip_at)}[clip_plane]
+                origin = {"x": (clip_at, 0, 0), "y": (0, clip_at, 0), "z": (0, 0, clip_at)}[
+                    clip_plane
+                ]
             else:
                 c = shape.center()
                 origin = {"x": (c.X, 0, 0), "y": (0, c.Y, 0), "z": (0, 0, c.Z)}[clip_plane]
@@ -441,12 +466,15 @@ def _do_render_svg(shapes, direction, clip_plane, clip_at, azimuth, elevation) -
     for i, (name, shape, obj_color) in enumerate(clipped_shapes):
         try:
             visible, hidden = shape.project_to_viewport(
-                viewport_origin=origin, viewport_up=up, look_at=look_at,
+                viewport_origin=origin,
+                viewport_up=up,
+                look_at=look_at,
             )
         except Exception:
             continue
 
         from build123d import Color
+
         rgb = _color_to_rgb(obj_color if obj_color else _PALETTE[i % len(_PALETTE)])
         line_color = Color(*rgb)
 
@@ -478,13 +506,16 @@ def _do_render_dxf(shapes, direction, clip_plane, clip_at, azimuth, elevation) -
     <name>_hidden (dashed). Clip-plane handling mirrors the SVG path.
     """
     import tempfile
+
     from build123d import ExportDXF, LineType, Plane, Vector
 
     clipped_shapes = []
     if clip_plane:
         for name, shape, color in shapes:
             if clip_at is not None:
-                origin = {"x": (clip_at, 0, 0), "y": (0, clip_at, 0), "z": (0, 0, clip_at)}[clip_plane]
+                origin = {"x": (clip_at, 0, 0), "y": (0, clip_at, 0), "z": (0, 0, clip_at)}[
+                    clip_plane
+                ]
             else:
                 c = shape.center()
                 origin = {"x": (c.X, 0, 0), "y": (0, c.Y, 0), "z": (0, 0, c.Z)}[clip_plane]
@@ -505,7 +536,9 @@ def _do_render_dxf(shapes, direction, clip_plane, clip_at, azimuth, elevation) -
     for i, (name, shape, _obj_color) in enumerate(clipped_shapes):
         try:
             visible, hidden = shape.project_to_viewport(
-                viewport_origin=origin, viewport_up=up, look_at=look_at,
+                viewport_origin=origin,
+                viewport_up=up,
+                look_at=look_at,
             )
         except Exception:
             continue
@@ -568,9 +601,7 @@ def _resolve_2d_colors(shapes, colors: dict | None):
 
     default_dim = Color(0, 0.2, 0.7)
     dim_color = _to_color(colors["_dims"], default_dim) if "_dims" in colors else default_dim
-    label_color = (
-        _to_color(colors["_labels"], dim_color) if "_labels" in colors else dim_color
-    )
+    label_color = _to_color(colors["_labels"], dim_color) if "_labels" in colors else dim_color
 
     def part_color_for(name: str | None, supplied: str | None, index: int) -> "Color":
         if name and colors.get(name):
@@ -611,8 +642,9 @@ def _do_render_png_2d(shapes, label_objects: bool = False, colors: dict | None =
     import os as _os
     import re as _re
     import tempfile as _tempfile
+
     import resvg_py
-    from build123d import Color, Compound, ExportSVG, Text
+    from build123d import ExportSVG, Text
 
     part_color_for, dim_color, label_color = _resolve_2d_colors(shapes, colors)
 
@@ -640,7 +672,10 @@ def _do_render_png_2d(shapes, label_objects: bool = False, colors: dict | None =
         # Per-object part colour, shared blue for dimensions/annotations
         exporter.add_layer("part", line_color=single_part_color, line_weight=0.5)
         exporter.add_layer(
-            "dims", line_color=dim_color, fill_color=dim_color, line_weight=0.05,
+            "dims",
+            line_color=dim_color,
+            fill_color=dim_color,
+            line_weight=0.05,
         )
         # Walk children: edges → part layer; Sketch faces → dims layer
         for child in getattr(shape, "children", None) or [shape]:
@@ -666,7 +701,10 @@ def _do_render_png_2d(shapes, label_objects: bool = False, colors: dict | None =
             dims_layer = f"{base}_dims"
             exporter.add_layer(part_layer, line_color=obj_part_color, line_weight=0.5)
             exporter.add_layer(
-                dims_layer, line_color=dim_color, fill_color=dim_color, line_weight=0.05,
+                dims_layer,
+                line_color=dim_color,
+                fill_color=dim_color,
+                line_weight=0.05,
             )
             for child in getattr(shape, "children", None) or [shape]:
                 try:
@@ -682,7 +720,10 @@ def _do_render_png_2d(shapes, label_objects: bool = False, colors: dict | None =
 
     if label_shapes:
         exporter.add_layer(
-            "_labels", line_color=label_color, fill_color=label_color, line_weight=0.05,
+            "_labels",
+            line_color=label_color,
+            fill_color=label_color,
+            line_weight=0.05,
         )
         for txt in label_shapes:
             try:
@@ -698,10 +739,15 @@ def _do_render_png_2d(shapes, label_objects: bool = False, colors: dict | None =
         # resvg requires unitless or pixel sizes; build123d emits mm. Strip
         # the unit suffix from the top-level width/height attributes.
         svg = _re.sub(
-            r'(width|height)="([\d.]+)(mm|cm|in)"', r'\1="\2"', svg, count=2,
+            r'(width|height)="([\d.]+)(mm|cm|in)"',
+            r'\1="\2"',
+            svg,
+            count=2,
         )
         png_data = resvg_py.svg_to_bytes(
-            svg_string=svg, width=1200, background="#ffffff",
+            svg_string=svg,
+            width=1200,
+            background="#ffffff",
         )
         return bytes(png_data)
 
@@ -788,15 +834,19 @@ def render_view(
         if format in ("png", "both"):
             try:
                 result["png"] = _do_render_png_2d(
-                    shapes, label_objects=label_objects, colors=colors,
+                    shapes,
+                    label_objects=label_objects,
+                    colors=colors,
                 )
             except Exception as exc:
                 result["png_error"] = f"{type(exc).__name__}: {exc}"
         if format in ("svg", "both"):
             # 2D Sketches → SVG via ExportSVG with per-object colour and
             # part/dims layer split (mirrors the PNG path).
-            from build123d import ExportSVG
             import tempfile as _tempfile
+
+            from build123d import ExportSVG
+
             part_color_for, dim_col, _label_col = _resolve_2d_colors(shapes, colors)
             with _tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
                 svg_exporter = ExportSVG(margin=5)
@@ -806,7 +856,9 @@ def render_view(
                     part_layer = f"{base}_part"
                     dims_layer = f"{base}_dims"
                     svg_exporter.add_layer(part_layer, line_color=part_col, line_weight=0.4)
-                    svg_exporter.add_layer(dims_layer, line_color=dim_col, fill_color=dim_col, line_weight=0.05)
+                    svg_exporter.add_layer(
+                        dims_layer, line_color=dim_col, fill_color=dim_col, line_weight=0.05
+                    )
                     for child in getattr(shape, "children", None) or [shape]:
                         try:
                             target = dims_layer if len(child.faces()) > 0 else part_layer
@@ -824,8 +876,10 @@ def render_view(
             # 2D Sketches → DXF via ExportDXF. DXF colours use the small ACI
             # palette, so per-object hues are layer-only here — most DXF
             # viewers let users colour by layer in their own preferences.
-            from build123d import ExportDXF
             import tempfile as _tempfile
+
+            from build123d import ExportDXF
+
             with _tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
                 dxf_exporter = ExportDXF()
                 for i, (name, shape, _obj_color) in enumerate(shapes):
@@ -849,6 +903,7 @@ def render_view(
                     result["dxf"] = f.read()
         if save_to:
             from build123d_mcp.tools._paths import safe_output_path
+
             base, ext = os.path.splitext(save_to)
             if ext.lower() in (".png", ".svg", ".dxf"):
                 save_to = base
@@ -879,7 +934,13 @@ def render_view(
     if format in ("png", "both"):
         try:
             png_bytes, png_failed = _do_render_png(
-                shapes, tess, direction, clip_plane, clip_at, azimuth, elevation,
+                shapes,
+                tess,
+                direction,
+                clip_plane,
+                clip_at,
+                azimuth,
+                elevation,
                 labels=labels,
             )
             result["png"] = png_bytes
@@ -891,7 +952,12 @@ def render_view(
             if format == "png":
                 # Auto-fallback: produce SVG so the AI still gets a visual.
                 result["svg"] = _do_render_svg(
-                    shapes, direction, clip_plane, clip_at, azimuth, elevation,
+                    shapes,
+                    direction,
+                    clip_plane,
+                    clip_at,
+                    azimuth,
+                    elevation,
                 )
                 result["format"] = "svg"
                 result["fallback"] = (
@@ -905,16 +971,27 @@ def render_view(
 
     if format in ("svg", "both") and "svg" not in result:
         result["svg"] = _do_render_svg(
-            shapes, direction, clip_plane, clip_at, azimuth, elevation,
+            shapes,
+            direction,
+            clip_plane,
+            clip_at,
+            azimuth,
+            elevation,
         )
 
     if format == "dxf":
         result["dxf"] = _do_render_dxf(
-            shapes, direction, clip_plane, clip_at, azimuth, elevation,
+            shapes,
+            direction,
+            clip_plane,
+            clip_at,
+            azimuth,
+            elevation,
         )
 
     if save_to:
         from build123d_mcp.tools._paths import safe_output_path
+
         # Strip a known extension so format='both' produces consistent <base>.png and <base>.svg
         base, ext = os.path.splitext(save_to)
         if ext.lower() in (".png", ".svg", ".dxf"):

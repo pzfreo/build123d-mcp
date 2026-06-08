@@ -5,25 +5,30 @@ often called before any execute() so the OCC kernel has not been loaded yet.
 Importing build123d_drafting here would trigger the OCC cold-start and breach
 the 10-second SHORT_TIMEOUT even though none of the math needs OCC.
 """
+
 import json
 import math
 
 
 def _dot3(a, b):
-    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
 
 def _sub3(a, b):
-    return (a[0]-b[0], a[1]-b[1], a[2]-b[2])
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
 
 def _scale3(s, v):
-    return (s*v[0], s*v[1], s*v[2])
+    return (s * v[0], s * v[1], s * v[2])
+
 
 def _cross3(a, b):
-    return (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
 
 def _norm3(v):
     mag = math.sqrt(_dot3(v, v))
-    return (v[0]/mag, v[1]/mag, v[2]/mag) if mag > 1e-10 else (0.0, 0.0, 0.0)
+    return (v[0] / mag, v[1] / mag, v[2] / mag) if mag > 1e-10 else (0.0, 0.0, 0.0)
 
 
 def _helper_expr(param: str, view_var: str, offset: float, sign: float) -> str:
@@ -109,7 +114,7 @@ def view_axes(
 
     # Ready-to-paste helper snippet — one function per active (non-depth) axis.
     _param = {"world_X": "x", "world_Y": "y", "world_Z": "z"}
-    _view  = {"page_X": "VIEW_X", "page_Y": "VIEW_Y"}
+    _view = {"page_X": "VIEW_X", "page_Y": "VIEW_Y"}
     lines = ["# Coordinate helpers (replace VIEW_X/VIEW_Y/SCALE with your values):"]
     for world_name in ("world_X", "world_Y", "world_Z"):
         page_axis, sign = axis_map[world_name]

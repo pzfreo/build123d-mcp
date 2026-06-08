@@ -7,7 +7,8 @@ build123d worker subprocess is down (the stale-install case it diagnoses).
 
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError, version as _dist_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _dist_version
 
 # distribution names (as on PyPI); these double as the display labels
 _PACKAGES = ("build123d-mcp", "build123d", "build123d-drafting-helpers")

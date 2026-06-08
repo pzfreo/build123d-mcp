@@ -9,8 +9,12 @@ def health_check(_session) -> str:
     # PNG render (VTK + display)
     try:
         from build123d import Box
+
         from build123d_mcp.tools.render import _QUALITY, _do_render_png
-        img_bytes, _warnings = _do_render_png([("test", Box(1, 1, 1), None)], _QUALITY["standard"], "iso", "", None, 0.0, 0.0)
+
+        img_bytes, _warnings = _do_render_png(
+            [("test", Box(1, 1, 1), None)], _QUALITY["standard"], "iso", "", None, 0.0, 0.0
+        )
         results["render_png"] = {"ok": True, "bytes": len(img_bytes)}
     except Exception as e:
         results["render_png"] = {"ok": False, "error": str(e)}
@@ -18,7 +22,9 @@ def health_check(_session) -> str:
     # SVG render (build123d HLR projection)
     try:
         from build123d import Box
+
         from build123d_mcp.tools.render import _do_render_svg
+
         svg = _do_render_svg([("test", Box(1, 1, 1), None)], "iso", "", None, 0.0, 0.0)
         results["render_svg"] = {"ok": True, "bytes": len(svg)}
     except Exception as e:
@@ -27,6 +33,7 @@ def health_check(_session) -> str:
     # STEP export
     try:
         from build123d import Box, export_step
+
         fd, path = tempfile.mkstemp(suffix=".step")
         os.close(fd)
         export_step(Box(1, 1, 1), path)
@@ -38,6 +45,7 @@ def health_check(_session) -> str:
     # STL export
     try:
         from build123d import Box, Mesher
+
         fd, path = tempfile.mkstemp(suffix=".stl")
         os.close(fd)
         m = Mesher()

@@ -42,9 +42,11 @@ _HINTS: list[tuple[list[str], str]] = [
         "Avoid `shape.edges()` (all edges) on complex shapes — pick specific ones.",
     ),
     (
-        [r"NameError.*\b(Box|Cylinder|Sphere|Cone|Torus|Extrude|BuildPart|"
-         r"BuildSketch|Align|Axis|Location|Plane|Vector|Color|Compound|Shell|"
-         r"Fillet|Chamfer|extrude|loft|sweep)\b"],
+        [
+            r"NameError.*\b(Box|Cylinder|Sphere|Cone|Torus|Extrude|BuildPart|"
+            r"BuildSketch|Align|Axis|Location|Plane|Vector|Color|Compound|Shell|"
+            r"Fillet|Chamfer|extrude|loft|sweep)\b"
+        ],
         "build123d name not in scope. Add `from build123d import *` at the top of "
         "the execute() call. If it was imported in a previous call, re-run that import "
         "or include it in this snippet.",

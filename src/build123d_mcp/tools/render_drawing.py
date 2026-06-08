@@ -7,6 +7,7 @@ then inspect the rendered PNG inline.
 
 resvg-py is already a runtime dep (used by render_view's 2D path).
 """
+
 import os
 import re
 
@@ -41,7 +42,7 @@ def render_drawing(svg_path: str, width: int = 0, save_to: str = "") -> dict:
         return {"error": "resvg-py is not installed in the server runtime."}
 
     try:
-        with open(svg_path, "r", encoding="utf-8") as f:
+        with open(svg_path, encoding="utf-8") as f:
             svg = f.read()
     except (OSError, UnicodeDecodeError) as e:
         return {"error": f"Could not read {svg_path}: {e}"}
@@ -50,9 +51,13 @@ def render_drawing(svg_path: str, width: int = 0, save_to: str = "") -> dict:
     out_width = width if width > 0 else 1200
 
     try:
-        png = bytes(resvg_py.svg_to_bytes(
-            svg_string=svg, width=out_width, background="#ffffff",
-        ))
+        png = bytes(
+            resvg_py.svg_to_bytes(
+                svg_string=svg,
+                width=out_width,
+                background="#ffffff",
+            )
+        )
     except Exception as e:
         return {"error": f"resvg failed: {type(e).__name__}: {e}"}
 
@@ -61,6 +66,7 @@ def render_drawing(svg_path: str, width: int = 0, save_to: str = "") -> dict:
         # Route through the central path policy (rejects traversal / writes
         # outside the allowed roots) before opening, like render_view(save_to=...).
         from build123d_mcp.tools._paths import safe_output_path
+
         abs_path = safe_output_path(save_to)
         try:
             with open(abs_path, "wb") as f:

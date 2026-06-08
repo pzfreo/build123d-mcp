@@ -23,9 +23,9 @@ _GAP = 12.0
 # Camera/up conventions per named view.
 _CAMERAS: dict[str, dict[str, Any]] = {
     "front": {"camera": (0, -100, 0), "up": (0, 0, 1)},
-    "plan":  {"camera": (0,    0, 100), "up": (0, 1, 0)},
-    "side":  {"camera": (100,  0,  0), "up": (0, 0, 1)},
-    "iso":   {"camera": (80,  80, 80), "up": (0, 0, 1)},
+    "plan": {"camera": (0, 0, 100), "up": (0, 1, 0)},
+    "side": {"camera": (100, 0, 0), "up": (0, 0, 1)},
+    "iso": {"camera": (80, 80, 80), "up": (0, 0, 1)},
 }
 
 # Page size catalogue for fit suggestions.
@@ -58,7 +58,9 @@ def _page_half_extents(
 
 
 def _layout(
-    x_size: float, y_size: float, z_size: float,
+    x_size: float,
+    y_size: float,
+    z_size: float,
     scale: float,
     views: list[str],
     margin: float,
@@ -109,13 +111,15 @@ def _layout(
 def _check_fits(
     pos: dict[str, tuple[float, float]],
     hw: dict[str, tuple[float, float]],
-    page_w: float, page_h: float,
+    page_w: float,
+    page_h: float,
     margin: float,
-    title_block_w: float, title_block_h: float,
+    title_block_w: float,
+    title_block_h: float,
 ) -> list[str]:
     warnings: list[str] = []
     tb_left = page_w - margin - title_block_w
-    tb_top  = margin + title_block_h
+    tb_top = margin + title_block_h
 
     for vname, (vx, vy) in pos.items():
         vhw, vhh = hw[vname]
@@ -125,11 +129,17 @@ def _check_fits(
         if left < margin:
             warnings.append(f"'{vname}' left edge ({left:.1f}) is inside left margin ({margin})")
         if right > page_w - margin:
-            warnings.append(f"'{vname}' right edge ({right:.1f}) exceeds right margin ({page_w - margin:.1f})")
+            warnings.append(
+                f"'{vname}' right edge ({right:.1f}) exceeds right margin ({page_w - margin:.1f})"
+            )
         if bottom < margin:
-            warnings.append(f"'{vname}' bottom edge ({bottom:.1f}) is inside bottom margin ({margin})")
+            warnings.append(
+                f"'{vname}' bottom edge ({bottom:.1f}) is inside bottom margin ({margin})"
+            )
         if top > page_h - margin:
-            warnings.append(f"'{vname}' top edge ({top:.1f}) exceeds top margin ({page_h - margin:.1f})")
+            warnings.append(
+                f"'{vname}' top edge ({top:.1f}) exceeds top margin ({page_h - margin:.1f})"
+            )
 
         # Overlap with title block (bottom-right rectangle)
         if right > tb_left and bottom < tb_top:
@@ -194,8 +204,7 @@ def suggest_view_layout(
         return json.dumps({"error": f"Could not measure '{object_name}': {exc}"})
 
     hw = {v: _page_half_extents(v, x_size, y_size, z_size, scale) for v in views}
-    pos = _layout(x_size, y_size, z_size, scale, views,
-                  margin, title_block_w, title_block_h)
+    pos = _layout(x_size, y_size, z_size, scale, views, margin, title_block_w, title_block_h)
     warnings = _check_fits(pos, hw, page_w, page_h, margin, title_block_w, title_block_h)
 
     # If the layout doesn't fit, suggest an alternative.
@@ -206,13 +215,19 @@ def suggest_view_layout(
             for pw, ph, pname in _PAGE_SIZES:
                 if pw < page_w and ph < page_h:
                     continue  # don't suggest smaller pages
-                try_pos = _layout(x_size, y_size, z_size, try_scale, views,
-                                  margin, title_block_w, title_block_h)
-                try_hw = {v: _page_half_extents(v, x_size, y_size, z_size, try_scale)
-                          for v in views}
+                try_pos = _layout(
+                    x_size, y_size, z_size, try_scale, views, margin, title_block_w, title_block_h
+                )
+                try_hw = {
+                    v: _page_half_extents(v, x_size, y_size, z_size, try_scale) for v in views
+                }
                 if not _check_fits(try_pos, try_hw, pw, ph, margin, title_block_w, title_block_h):
-                    suggestion = {"page_w": pw, "page_h": ph, "scale": round(try_scale, 4),
-                                  "page_size": pname}
+                    suggestion = {
+                        "page_w": pw,
+                        "page_h": ph,
+                        "scale": round(try_scale, 4),
+                        "page_size": pname,
+                    }
                     break
             if suggestion:
                 break
@@ -243,7 +258,9 @@ def suggest_view_layout(
         "page_h": page_h,
         "scale": scale,
         "part_size": {
-            "x": round(x_size, 3), "y": round(y_size, 3), "z": round(z_size, 3),
+            "x": round(x_size, 3),
+            "y": round(y_size, 3),
+            "z": round(z_size, 3),
             "centroid": [round(cx, 3), round(cy, 3), round(cz, 3)],
         },
         "warnings": warnings,

@@ -33,6 +33,7 @@ def worker_main(
     """
     if allow_all_imports or extra_allowed_imports:
         import build123d_mcp.security as _sec
+
         if allow_all_imports:
             _sec.ALLOW_ALL_IMPORTS = True
         if extra_allowed_imports:
@@ -44,6 +45,7 @@ def worker_main(
     library_index = None
     if library_path:
         from build123d_mcp.tools.library import _LibraryIndex
+
         library_index = _LibraryIndex(library_path)
 
     conn.send({"ready": True})
@@ -70,33 +72,43 @@ def _dispatch(session: Any, op: str, args: dict, library_index: Any) -> Any:
 
     if op == "render_view":
         from build123d_mcp.tools.render import render_view
+
         return render_view(session, **args)
 
     if op == "export_file":
         from build123d_mcp.tools.export import export_file
+
         return export_file(session, **args)
 
     if op == "interference":
         from build123d_mcp.tools.interference import interference
+
         return interference(session, **args)
 
     if op == "measure":
         from build123d_mcp.tools.measure import measure
+
         return measure(session, **args)
 
     if op == "clearance":
         from build123d_mcp.tools.measure import clearance
+
         return clearance(session, **args)
 
     if op == "cross_sections":
         from build123d_mcp.tools.cross_sections import cross_sections
+
         return cross_sections(session, **args)
 
     if op == "save_snapshot":
         name = args["name"]
         session.save_snapshot(name)
-        saved = (["current_shape"] if session.current_shape is not None else []) + list(session.snapshots[name]["objects"].keys())
-        return f"Snapshot '{name}' saved. Geometry captured: {', '.join(saved) if saved else 'none'}."
+        saved = (["current_shape"] if session.current_shape is not None else []) + list(
+            session.snapshots[name]["objects"].keys()
+        )
+        return (
+            f"Snapshot '{name}' saved. Geometry captured: {', '.join(saved) if saved else 'none'}."
+        )
 
     if op == "restore_snapshot":
         name = args["name"]
@@ -104,7 +116,9 @@ def _dispatch(session: Any, op: str, args: dict, library_index: Any) -> Any:
             session.restore_snapshot(name)
         except KeyError as e:
             return f"Error: {e}"
-        restored = (["current_shape"] if session.current_shape is not None else []) + list(session.objects.keys())
+        restored = (["current_shape"] if session.current_shape is not None else []) + list(
+            session.objects.keys()
+        )
         return f"Snapshot '{name}' restored. Active geometry: {', '.join(restored) if restored else 'none'}."
 
     if op == "reset":
@@ -115,44 +129,56 @@ def _dispatch(session: Any, op: str, args: dict, library_index: Any) -> Any:
         if library_index is None:
             return "No part library configured."
         from build123d_mcp.tools.library import search_library
+
         return search_library(library_index, args.get("query", ""))
 
     if op == "load_part":
         if library_index is None:
             return "No part library configured."
         from build123d_mcp.tools.library import load_part
+
         return load_part(session, library_index, args["name"], args.get("params", ""))
 
     if op == "diff_snapshot":
         from build123d_mcp.tools.diff import diff_snapshot
-        return diff_snapshot(session, args["snapshot_a"], args.get("snapshot_b", ""), args.get("format", "text"))
+
+        return diff_snapshot(
+            session, args["snapshot_a"], args.get("snapshot_b", ""), args.get("format", "text")
+        )
 
     if op == "session_state":
         from build123d_mcp.tools.session_state import session_state
+
         return session_state(session)
 
     if op == "health_check":
         from build123d_mcp.tools.health_check import health_check
+
         return health_check(session)
 
     if op == "last_error":
         from build123d_mcp.tools.last_error import last_error
+
         return last_error(session)
 
     if op == "shape_compare":
         from build123d_mcp.tools.shape_compare import shape_compare
+
         return shape_compare(session, args["object_a"], args["object_b"])
 
     if op == "import_cad_file":
         from build123d_mcp.tools.import_step import import_cad_file
+
         return import_cad_file(session, args["path"], args.get("name", ""))
 
     if op == "inspect_drawing":
         from build123d_mcp.tools.inspect_drawing import inspect_drawing
+
         return inspect_drawing(session, args.get("objects", ""), args.get("svg_path", ""))
 
     if op == "view_axes":
         from build123d_mcp.tools.view_axes import view_axes
+
         return view_axes(
             tuple(args["viewport_origin"]),
             tuple(args.get("viewport_up", (0.0, 1.0, 0.0))),
@@ -161,12 +187,17 @@ def _dispatch(session: Any, op: str, args: dict, library_index: Any) -> Any:
 
     if op == "lint_drawing":
         from build123d_mcp.tools.lint_drawing import lint_drawing
-        return lint_drawing(session, args.get("svg_path", ""),
-                            args.get("drawing_scale", 1.0),
-                            args.get("view_shape_names"))
+
+        return lint_drawing(
+            session,
+            args.get("svg_path", ""),
+            args.get("drawing_scale", 1.0),
+            args.get("view_shape_names"),
+        )
 
     if op == "render_drawing":
         from build123d_mcp.tools.render_drawing import render_drawing
+
         return render_drawing(
             args["svg_path"],
             args.get("width", 0),
@@ -175,28 +206,43 @@ def _dispatch(session: Any, op: str, args: dict, library_index: Any) -> Any:
 
     if op == "save_drawing_annotations":
         from build123d_mcp.tools.save_drawing_annotations import save_drawing_annotations
+
         return save_drawing_annotations(session, args["svg_path"])
 
     if op == "align_check":
         from build123d_mcp.tools.align_check import align_check
-        return align_check(session, args["object_a"], args["object_b"],
-                           axis=args.get("axis", "Z"), mode=args.get("mode", "flush"))
+
+        return align_check(
+            session,
+            args["object_a"],
+            args["object_b"],
+            axis=args.get("axis", "Z"),
+            mode=args.get("mode", "flush"),
+        )
 
     if op == "resolve":
         from build123d_mcp.tools.resolve import resolve
+
         return resolve(session, args["object_name"], args["selector"], label=args.get("label", ""))
 
     if op == "suggest_view_layout":
         from build123d_mcp.tools.suggest_view_layout import suggest_view_layout
+
         return suggest_view_layout(
-            session, args["object_name"], args.get("page_w", 297.0),
-            args.get("page_h", 210.0), args.get("scale", 1.0), args.get("views"),
-            args.get("title_block_w", 150.0), args.get("title_block_h", 30.0),
+            session,
+            args["object_name"],
+            args.get("page_w", 297.0),
+            args.get("page_h", 210.0),
+            args.get("scale", 1.0),
+            args.get("views"),
+            args.get("title_block_w", 150.0),
+            args.get("title_block_h", 30.0),
             args.get("margin", 10.0),
         )
 
     if op == "script":
         from build123d_mcp.tools.script import script
+
         return script(session, save_to=args.get("save_to", ""))
 
     raise ValueError(f"Unknown operation: '{op}'")
@@ -270,6 +316,7 @@ class WorkerSession:
             self._kill_worker()
             self._start_worker()
             from build123d_mcp.security import ExecutionTimeout
+
             if op == "execute":
                 raise ExecutionTimeout(
                     f"Code exceeded the {timeout}s execution time limit. "
@@ -298,6 +345,7 @@ class WorkerSession:
 
     def execute(self, code: str) -> str:
         from build123d_mcp.security import ExecutionTimeout
+
         try:
             return self._call("execute", {"code": code}, self._exec_timeout)
         except (RuntimeError, ExecutionTimeout) as e:
@@ -357,7 +405,9 @@ class WorkerSession:
         return self._call("measure", {"object_name": object_name}, self._SHORT_TIMEOUT)
 
     def clearance(self, object_a: str, object_b: str) -> str:
-        return self._call("clearance", {"object_a": object_a, "object_b": object_b}, self._SHORT_TIMEOUT)
+        return self._call(
+            "clearance", {"object_a": object_a, "object_b": object_b}, self._SHORT_TIMEOUT
+        )
 
     def cross_sections(self, object_name: str = "", axis: str = "Z", num_slices: int = 10) -> str:
         return self._call(
@@ -379,7 +429,11 @@ class WorkerSession:
         return self._call("reset", {}, self._SHORT_TIMEOUT)
 
     def diff_snapshot(self, snapshot_a: str, snapshot_b: str = "", format: str = "text") -> str:
-        return self._call("diff_snapshot", {"snapshot_a": snapshot_a, "snapshot_b": snapshot_b, "format": format}, self._SHORT_TIMEOUT)
+        return self._call(
+            "diff_snapshot",
+            {"snapshot_a": snapshot_a, "snapshot_b": snapshot_b, "format": format},
+            self._SHORT_TIMEOUT,
+        )
 
     def session_state(self) -> str:
         return self._call("session_state", {}, self._SHORT_TIMEOUT)
@@ -391,7 +445,9 @@ class WorkerSession:
         return self._call("last_error", {}, self._SHORT_TIMEOUT)
 
     def shape_compare(self, object_a: str, object_b: str) -> str:
-        return self._call("shape_compare", {"object_a": object_a, "object_b": object_b}, self._SHORT_TIMEOUT)
+        return self._call(
+            "shape_compare", {"object_a": object_a, "object_b": object_b}, self._SHORT_TIMEOUT
+        )
 
     def import_cad_file(self, path: str, name: str = "") -> str:
         return self._call("import_cad_file", {"path": path, "name": name}, self._EXPORT_TIMEOUT)
@@ -416,13 +472,18 @@ class WorkerSession:
         )
 
     def lint_drawing(
-        self, svg_path: str = "", drawing_scale: float = 1.0,
+        self,
+        svg_path: str = "",
+        drawing_scale: float = 1.0,
         view_shape_names: list[str] | None = None,
     ) -> str:
         return self._call(
             "lint_drawing",
-            {"svg_path": svg_path, "drawing_scale": drawing_scale,
-             "view_shape_names": view_shape_names},
+            {
+                "svg_path": svg_path,
+                "drawing_scale": drawing_scale,
+                "view_shape_names": view_shape_names,
+            },
             self._SHORT_TIMEOUT,
         )
 
@@ -440,7 +501,9 @@ class WorkerSession:
             self._SHORT_TIMEOUT,
         )
 
-    def align_check(self, object_a: str, object_b: str, axis: str = "Z", mode: str = "flush") -> str:
+    def align_check(
+        self, object_a: str, object_b: str, axis: str = "Z", mode: str = "flush"
+    ) -> str:
         return self._call(
             "align_check",
             {"object_a": object_a, "object_b": object_b, "axis": axis, "mode": mode},
@@ -467,9 +530,16 @@ class WorkerSession:
     ) -> str:
         return self._call(
             "suggest_view_layout",
-            {"object_name": object_name, "page_w": page_w, "page_h": page_h,
-             "scale": scale, "views": views, "title_block_w": title_block_w,
-             "title_block_h": title_block_h, "margin": margin},
+            {
+                "object_name": object_name,
+                "page_w": page_w,
+                "page_h": page_h,
+                "scale": scale,
+                "views": views,
+                "title_block_w": title_block_w,
+                "title_block_h": title_block_h,
+                "margin": margin,
+            },
             self._SHORT_TIMEOUT,
         )
 

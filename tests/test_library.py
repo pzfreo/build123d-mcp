@@ -1,6 +1,4 @@
 import json
-import os
-import time
 
 import pytest
 
@@ -77,6 +75,7 @@ def session():
 
 # --- scanning ---
 
+
 def test_scan_finds_root_parts(index):
     index.ensure_fresh()
     assert "box" in index._index
@@ -116,6 +115,7 @@ def test_scan_part_without_part_info(index):
 
 # --- mtime invalidation ---
 
+
 def test_mtime_triggers_rescan(tmp_path):
     (tmp_path / "box.py").write_text(PART_BOX)
     idx = _LibraryIndex(str(tmp_path))
@@ -139,6 +139,7 @@ def test_no_rescan_when_nothing_changed(tmp_path):
 
 
 # --- search ---
+
 
 def test_search_empty_returns_all(index):
     results = index.search("")
@@ -196,8 +197,9 @@ def test_search_library_returns_json(index):
 
 # --- load_part ---
 
+
 def test_load_part_default_params(session, index):
-    result = load_part(session, index, "box")
+    load_part(session, index, "box")
     assert "box" in session.objects
     assert abs(session.objects["box"].volume - 500.0) < 1.0  # 10*10*5
 
@@ -221,7 +223,7 @@ def test_load_part_returns_feedback(session, index):
 
 
 def test_load_part_bare_no_params(session, index):
-    result = load_part(session, index, "hardware/bare")
+    load_part(session, index, "hardware/bare")
     assert "hardware/bare" in session.objects
     assert abs(session.objects["hardware/bare"].volume - 8.0) < 0.1  # 2*2*2
 

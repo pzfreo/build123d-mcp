@@ -1,4 +1,5 @@
 """inspect_drawing — structured bbox/annotation report for a 2D drawing session."""
+
 import json
 import os
 import re
@@ -60,26 +61,39 @@ def _inspect_svg(svg_path: str) -> str:
 
     layers: list[dict] = []
     text_entries: list[dict] = []
-    counts = {"path": 0, "line": 0, "polyline": 0, "polygon": 0, "rect": 0, "circle": 0, "g": 0, "text": 0}
+    counts = {
+        "path": 0,
+        "line": 0,
+        "polyline": 0,
+        "polygon": 0,
+        "rect": 0,
+        "circle": 0,
+        "g": 0,
+        "text": 0,
+    }
 
     for elem in root.iter():
         tag = elem.tag.replace(_SVG_NS, "")
         if tag in counts:
             counts[tag] += 1
         if tag == "g":
-            layers.append({
-                "id": elem.get("id"),
-                "transform": elem.get("transform"),
-                "fill": elem.get("fill"),
-            })
+            layers.append(
+                {
+                    "id": elem.get("id"),
+                    "transform": elem.get("transform"),
+                    "fill": elem.get("fill"),
+                }
+            )
         elif tag == "text":
-            text_entries.append({
-                "id": elem.get("id"),
-                "x": _strip_unit(elem.get("x")),
-                "y": _strip_unit(elem.get("y")),
-                "text": "".join(elem.itertext()).strip(),
-                "fill": elem.get("fill"),
-            })
+            text_entries.append(
+                {
+                    "id": elem.get("id"),
+                    "x": _strip_unit(elem.get("x")),
+                    "y": _strip_unit(elem.get("y")),
+                    "text": "".join(elem.itertext()).strip(),
+                    "fill": elem.get("fill"),
+                }
+            )
 
     # Sidecar: read <svg_path>.dims.json written by save_drawing_annotations().
     # build123d renders Text as filled glyph paths so <text> elements are absent;
@@ -93,19 +107,23 @@ def _inspect_svg(svg_path: str) -> str:
         except Exception:
             pass
 
-    return json.dumps({
-        "mode": "svg",
-        "path": svg_path,
-        "page": page,
-        "layers": layers,
-        "text": text_entries,
-        "counts": counts,
-        "annotations": annotations,
-        "annotations_note": (
-            "annotations loaded from sidecar" if annotations
-            else "no sidecar found — call save_drawing_annotations(svg_path) after building"
-        ),
-    }, indent=2)
+    return json.dumps(
+        {
+            "mode": "svg",
+            "path": svg_path,
+            "page": page,
+            "layers": layers,
+            "text": text_entries,
+            "counts": counts,
+            "annotations": annotations,
+            "annotations_note": (
+                "annotations loaded from sidecar"
+                if annotations
+                else "no sidecar found — call save_drawing_annotations(svg_path) after building"
+            ),
+        },
+        indent=2,
+    )
 
 
 def inspect_drawing(session, objects: str = "", svg_path: str = "") -> str:
@@ -199,6 +217,7 @@ def _lint(objects: dict, annotations: dict) -> list[str]:
         measured = ann.get("measured_length")
         if label and measured and measured > 1e-6:
             import re
+
             nums = re.findall(r"\d+\.?\d*", label.split("±")[0].split("+")[0].lstrip("ø⌀Rr"))
             if nums:
                 try:
@@ -207,15 +226,13 @@ def _lint(objects: dict, annotations: dict) -> list[str]:
                     if ratio > 0.005:
                         warnings.append(
                             f"'{name}': label '{label}' value {label_val:.3f} differs from "
-                            f"measured length {measured:.3f} by {ratio*100:.1f}% — possible axis swap"
+                            f"measured length {measured:.3f} by {ratio * 100:.1f}% — possible axis swap"
                         )
                 except ValueError:
                     pass
 
         bb = entry.get("bbox")
-        tip = ann.get("tip")
         elbow = ann.get("elbow")
-        text_bb = None
         # For leaders, check elbow vs text bbox (approximated from overall bbox)
         if elbow and bb:
             ex, ey = elbow

@@ -20,11 +20,14 @@ def _resolve_shape(session, object_name: str):
         if not session.objects:
             raise ValueError("No named objects in session. Use show() to register shapes first.")
         from build123d import Compound
+
         children = [_labelled_copy(s, name) for name, s in session.objects.items()]
         return Compound(label="assembly", children=children)
     if object_name:
         if object_name not in session.objects:
-            raise ValueError(f"Unknown object '{object_name}'. Registered: {list(session.objects.keys())}")
+            raise ValueError(
+                f"Unknown object '{object_name}'. Registered: {list(session.objects.keys())}"
+            )
         return _labelled_copy(session.objects[object_name], object_name)
     if session.current_shape is None:
         raise ValueError("No shape in session. Execute code to create geometry first.")
@@ -67,6 +70,7 @@ def _is_2d(shape) -> bool:
 def _write_dxf(shape, abs_path: str) -> None:
     """Write a 2D shape (Sketch, Compound of edges/sketches) to DXF."""
     from build123d import ExportDXF
+
     label = getattr(shape, "label", "") or "drawing"
     exporter = ExportDXF()
     exporter.add_layer(label)
@@ -77,6 +81,7 @@ def _write_dxf(shape, abs_path: str) -> None:
 def _write_svg(shape, abs_path: str) -> None:
     """Write a 2D shape (Sketch, Compound of edges/sketches) to SVG."""
     from build123d import ExportSVG
+
     label = getattr(shape, "label", "") or "drawing"
     exporter = ExportSVG(margin=5)
     exporter.add_layer(label, line_weight=0.4)
@@ -87,6 +92,7 @@ def _write_svg(shape, abs_path: str) -> None:
 def _write_one(shape, abs_path: str, fmt: str) -> None:
     if fmt == "step":
         from build123d import export_step
+
         export_step(shape, abs_path)
     elif fmt == "stl":
         _stl_write(shape, abs_path)
@@ -121,7 +127,7 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
         if bad_3d:
             raise ValueError(
                 f"Cannot export 3D shape as {bad_3d}. Use 'step' or 'stl' for 3D solids; "
-                f"use render_view(format=\"dxf\") for the projected 2D outline."
+                f'use render_view(format="dxf") for the projected 2D outline.'
             )
 
     exported = []

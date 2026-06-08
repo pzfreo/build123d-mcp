@@ -2,13 +2,12 @@
 
 If bd_warehouse is not installed the resource returns a short explanation.
 """
+
 from __future__ import annotations
 
 import importlib
 import inspect
-import pkgutil
 import re
-from typing import Optional
 
 # Standard build123d parameters — not useful to show in the catalogue.
 _SKIP_PARAMS = frozenset({"self", "rotation", "align", "mode", "hand", "simple"})
@@ -61,7 +60,7 @@ def _sizes_for_type(cls, type_value: str) -> list[str]:
         return []
 
 
-def _format_class(cls) -> Optional[str]:
+def _format_class(cls) -> str | None:
     """Return a formatted entry for one class, or None to skip."""
     sig = inspect.signature(cls.__init__) if hasattr(cls, "__init__") else None
     lines = [f"{cls.__name__}{_sig_summary(cls)}"]
@@ -95,7 +94,7 @@ def _format_class(cls) -> Optional[str]:
 
 def build_bd_warehouse_text() -> str:
     try:
-        import bd_warehouse  # noqa: PLC0415
+        import bd_warehouse  # noqa: F401, PLC0415  # imported only to probe availability
     except ImportError:
         return (
             "bd_warehouse is not installed.\n"

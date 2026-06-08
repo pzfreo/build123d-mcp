@@ -66,4 +66,5 @@ def _load_step(resolved: str):
 
 def _load_stl(resolved: str):
     from build123d import import_stl
+
     return import_stl(resolved)

@@ -16,20 +16,30 @@ def resolve(session, object_name: str, selector: str, label: str = "") -> str:
         and (for Face) normal.
     """
     if not object_name or object_name not in session.objects:
-        return json.dumps({
-            "error": f"Unknown object '{object_name}'.",
-            "registered": list(session.objects.keys()),
-        })
+        return json.dumps(
+            {
+                "error": f"Unknown object '{object_name}'.",
+                "registered": list(session.objects.keys()),
+            }
+        )
 
     obj = session.objects[object_name]
 
     # Build a namespace with build123d imports plus the shape as `obj`
     try:
-        from build123d import (  # noqa: F401
-            Axis, Edge, Face, Shape, Compound, Solid, Vector, Vertex,
-            ShapeList,
-        )
         import build123d as _bd
+        from build123d import (  # noqa: F401
+            Axis,
+            Compound,
+            Edge,
+            Face,
+            Shape,
+            ShapeList,
+            Solid,
+            Vector,
+            Vertex,
+        )
+
         namespace = {k: getattr(_bd, k) for k in dir(_bd) if not k.startswith("_")}
     except ImportError as exc:
         return json.dumps({"error": f"build123d import failed: {exc}"})
@@ -43,19 +53,23 @@ def resolve(session, object_name: str, selector: str, label: str = "") -> str:
     try:
         check_ast(expression)
     except ValueError as exc:
-        return json.dumps({
-            "error": f"Selector rejected: {exc}",
-            "selector": selector,
-        })
+        return json.dumps(
+            {
+                "error": f"Selector rejected: {exc}",
+                "selector": selector,
+            }
+        )
 
     namespace["__builtins__"] = make_restricted_builtins()
     try:
         result = eval(expression, namespace)  # noqa: S307
     except Exception as exc:
-        return json.dumps({
-            "error": f"Selector evaluation failed: {exc}",
-            "selector": selector,
-        })
+        return json.dumps(
+            {
+                "error": f"Selector evaluation failed: {exc}",
+                "selector": selector,
+            }
+        )
 
     # Build descriptor
     type_name = type(result).__name__
@@ -68,10 +82,11 @@ def resolve(session, object_name: str, selector: str, label: str = "") -> str:
     }
 
     try:
-        from build123d import Face as _Face, Edge as _Edge
+        from build123d import Edge as _Edge
+        from build123d import Face as _Face
+
         if isinstance(result, _Face):
             descriptor["area"] = round(result.area, 6)
-            bb = result.bounding_box()
             cen = result.center()
             descriptor["center"] = [round(cen.X, 6), round(cen.Y, 6), round(cen.Z, 6)]
             try:

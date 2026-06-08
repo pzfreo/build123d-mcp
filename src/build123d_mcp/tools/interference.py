@@ -13,11 +13,18 @@ def _compute_interference(shape_a: Any, shape_b: Any) -> tuple:
         return (False, 0.0, None)
 
     bb = inter.bounding_box()
-    return (True, vol, {
-        "xmin": bb.min.X, "xmax": bb.max.X,
-        "ymin": bb.min.Y, "ymax": bb.max.Y,
-        "zmin": bb.min.Z, "zmax": bb.max.Z,
-    })
+    return (
+        True,
+        vol,
+        {
+            "xmin": bb.min.X,
+            "xmax": bb.max.X,
+            "ymin": bb.min.Y,
+            "ymax": bb.max.Y,
+            "zmin": bb.min.Z,
+            "zmax": bb.max.Z,
+        },
+    )
 
 
 def interference(session, object_a: str, object_b: str) -> str:
@@ -33,8 +40,11 @@ def interference(session, object_a: str, object_b: str) -> str:
     if not interferes:
         return json.dumps({"interferes": False, "volume": 0.0}, indent=2)
 
-    return json.dumps({
-        "interferes": True,
-        "volume": volume,
-        "bounds": bounds,
-    }, indent=2)
+    return json.dumps(
+        {
+            "interferes": True,
+            "volume": volume,
+            "bounds": bounds,
+        },
+        indent=2,
+    )

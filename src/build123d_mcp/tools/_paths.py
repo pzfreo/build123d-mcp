@@ -42,8 +42,7 @@ def _safe_path(filename: str, kind: str) -> str:
         if resolved == root or resolved.startswith(root + os.sep):
             return resolved
     raise ValueError(
-        f"Path '{filename}' resolves to '{resolved}', "
-        f"which is outside the allowed {kind} roots."
+        f"Path '{filename}' resolves to '{resolved}', which is outside the allowed {kind} roots."
     )
 
 
