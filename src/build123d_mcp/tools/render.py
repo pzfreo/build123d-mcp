@@ -435,7 +435,10 @@ def _vtk_render_subprocess(
 
     try:
         if parent_conn.poll(timeout):
-            kind, data = parent_conn.recv()
+            try:
+                kind, data = parent_conn.recv()
+            except (EOFError, OSError) as exc:
+                raise RuntimeError(f"VTK render subprocess died unexpectedly: {exc}") from exc
             if kind == "error":
                 raise RuntimeError(data)
             return data
