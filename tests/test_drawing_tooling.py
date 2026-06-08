@@ -2,6 +2,7 @@
 view_axes, lint_drawing, render_drawing, inspect_drawing(svg_path=...).
 """
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -364,8 +365,10 @@ class TestRenderDrawing:
         src.write_text(svg)
         out_path = tmp_path / "out.png"
         result = render_drawing(str(src), width=200, save_to=str(out_path))
-        assert result.get("png_path") == str(out_path)
         assert out_path.exists()
+        # png_path is the policy-resolved realpath (may differ from str(out_path)
+        # under a symlinked TMPDIR, e.g. macOS /var -> /private/var).
+        assert os.path.samefile(result["png_path"], out_path)
         assert out_path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
