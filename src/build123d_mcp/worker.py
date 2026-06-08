@@ -177,6 +177,28 @@ def _dispatch(session: Any, op: str, args: dict, library_index: Any) -> Any:
         from build123d_mcp.tools.save_drawing_annotations import save_drawing_annotations
         return save_drawing_annotations(session, args["svg_path"])
 
+    if op == "align_check":
+        from build123d_mcp.tools.align_check import align_check
+        return align_check(session, args["object_a"], args["object_b"],
+                           axis=args.get("axis", "Z"), mode=args.get("mode", "flush"))
+
+    if op == "resolve":
+        from build123d_mcp.tools.resolve import resolve
+        return resolve(session, args["object_name"], args["selector"], label=args.get("label", ""))
+
+    if op == "suggest_view_layout":
+        from build123d_mcp.tools.suggest_view_layout import suggest_view_layout
+        return suggest_view_layout(
+            session, args["object_name"], args.get("page_w", 297.0),
+            args.get("page_h", 210.0), args.get("scale", 1.0), args.get("views"),
+            args.get("title_block_w", 150.0), args.get("title_block_h", 30.0),
+            args.get("margin", 10.0),
+        )
+
+    if op == "script":
+        from build123d_mcp.tools.script import script
+        return script(session, save_to=args.get("save_to", ""))
+
     raise ValueError(f"Unknown operation: '{op}'")
 
 
@@ -417,6 +439,42 @@ class WorkerSession:
             {"svg_path": svg_path},
             self._SHORT_TIMEOUT,
         )
+
+    def align_check(self, object_a: str, object_b: str, axis: str = "Z", mode: str = "flush") -> str:
+        return self._call(
+            "align_check",
+            {"object_a": object_a, "object_b": object_b, "axis": axis, "mode": mode},
+            self._SHORT_TIMEOUT,
+        )
+
+    def resolve(self, object_name: str, selector: str, label: str = "") -> str:
+        return self._call(
+            "resolve",
+            {"object_name": object_name, "selector": selector, "label": label},
+            self._SHORT_TIMEOUT,
+        )
+
+    def suggest_view_layout(
+        self,
+        object_name: str,
+        page_w: float = 297.0,
+        page_h: float = 210.0,
+        scale: float = 1.0,
+        views: list[str] | None = None,
+        title_block_w: float = 150.0,
+        title_block_h: float = 30.0,
+        margin: float = 10.0,
+    ) -> str:
+        return self._call(
+            "suggest_view_layout",
+            {"object_name": object_name, "page_w": page_w, "page_h": page_h,
+             "scale": scale, "views": views, "title_block_w": title_block_w,
+             "title_block_h": title_block_h, "margin": margin},
+            self._SHORT_TIMEOUT,
+        )
+
+    def script(self, save_to: str = "") -> str:
+        return self._call("script", {"save_to": save_to}, self._SHORT_TIMEOUT)
 
     def search_library(self, query: str = "") -> str:
         return self._call("search_library", {"query": query}, self._SHORT_TIMEOUT)

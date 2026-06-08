@@ -338,22 +338,19 @@ def shape_compare(object_a: str, object_b: str) -> str:
 @mcp.tool()
 def align_check(object_a: str, object_b: str, axis: str = "Z", mode: str = "flush") -> str:
     """Check alignment between two named objects along an axis. axis: X, Y, or Z. mode: flush (signed distance between bbox extremes — positive=A extends further), center (offset between bbox centroids), clearance (gap between nearest faces — positive=apart, negative=overlap). Returns JSON: {delta, axis, mode, object_a, object_b, interpretation}."""
-    from build123d_mcp.tools.align_check import align_check as _align_check
-    return _align_check(_session, object_a, object_b, axis=axis, mode=mode)
+    return _session.align_check(object_a, object_b, axis=axis, mode=mode)
 
 
 @mcp.tool()
 def resolve(object_name: str, selector: str, label: str = "") -> str:
     """Evaluate a selector expression against a named object and return a geometry descriptor. selector is a Python expression suffix applied to the object, e.g. '.faces().filter_by(Axis.Z).last()'. If label is given, the descriptor is stored in session.geometry_refs[label] and appears in session_state(). Returns JSON: {label, ref, object, selector, type, area/length, center, normal (for Face)}. The ref field uses @cad[object#label] format."""
-    from build123d_mcp.tools.resolve import resolve as _resolve
-    return _resolve(_session, object_name, selector, label=label)
+    return _session.resolve(object_name, selector, label=label)
 
 
 @mcp.tool()
 def script(save_to: str = "") -> str:
     """Return a single Python script assembled from all successfully executed code blocks in this session. Prepends 'from build123d import *' if not already present. If save_to is given, writes the script to that path and returns {script_path, blocks}; otherwise returns {script, blocks}. Useful for exporting a reproducible script after an interactive session."""
-    from build123d_mcp.tools.script import script as _script
-    return _script(_session, save_to=save_to)
+    return _session.script(save_to=save_to)
 
 
 @mcp.tool()
@@ -544,8 +541,7 @@ def build123d_presentation_cookbook() -> str:
               description="Live session state: current shape diagnostics, named objects, snapshots, and user-defined variables.")
 def build123d_session_state() -> str:
     """Live session state as JSON."""
-    from build123d_mcp.tools.session_state import session_state
-    return session_state(_session)
+    return _session.session_state()
 
 
 @mcp.resource("build123d://bd_warehouse", mime_type="text/plain",
@@ -593,9 +589,8 @@ def suggest_view_layout(
     Iso position is approximate (75% of 3-D diagonal as half-extent) — verify
     with render_view() and adjust manually if the iso overlaps a neighbour.
     """
-    from build123d_mcp.tools.suggest_view_layout import suggest_view_layout as _fn
-    return _fn(_session, object_name, page_w, page_h, scale, views,
-               title_block_w, title_block_h, margin)
+    return _session.suggest_view_layout(object_name, page_w, page_h, scale, views,
+                                        title_block_w, title_block_h, margin)
 
 
 @mcp.resource("build123d://skill/drawing", mime_type="text/plain",
