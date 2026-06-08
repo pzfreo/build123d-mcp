@@ -46,7 +46,7 @@ def test_resolve_routes_to_worker(ws):
 def test_resolve_label_persists_in_worker_session_state(ws):
     ws.resolve("a", ".faces().sort_by(Axis.Z)[-1]", label="top")
     state = json.loads(ws.session_state())
-    assert "top" in state.get("geometry_refs", {})
+    assert "top" in state["geometry_refs"]
 
 
 def test_suggest_view_layout_routes_to_worker(ws):
@@ -57,6 +57,7 @@ def test_suggest_view_layout_routes_to_worker(ws):
 
 def test_script_routes_to_worker(ws):
     result = json.loads(ws.script())
-    # execute_history lives in the worker; the parent proxy would report 0 blocks.
-    assert result["blocks"] >= 1
+    # The fixture runs exactly one execute() call; execute_history lives in the
+    # worker, so the parent proxy would report 0 blocks (the #179 bug).
+    assert result["blocks"] == 1
     assert "Box(1, 1, 1)" in result["script"]
