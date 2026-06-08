@@ -68,6 +68,15 @@ def test_render_drawing_rejects_extreme_width(tmp_path, monkeypatch):
         render_drawing(svg, width=101)
 
 
+def test_render_drawing_width_check_uses_effective_width(tmp_path, monkeypatch):
+    # width<=0 resolves to the 1200px default; the guard must check that
+    # effective width, not the raw 0, or a sub-1200 cap is silently exceeded.
+    monkeypatch.setenv("BUILD123D_MAX_RASTER_WIDTH", "500")
+    svg = _write(tmp_path, "drawing.svg", _VALID_SVG)
+    with pytest.raises(ValueError, match="raster width"):
+        render_drawing(svg, width=0)
+
+
 def test_render_drawing_allows_normal_width(tmp_path):
     # A sane width still rasterises (guards against an over-tight limit).
     result = render_drawing(_write(tmp_path, "drawing.svg", _VALID_SVG), width=200)
