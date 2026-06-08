@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.3.39 — 2026-06-08
+
+### Security
+
+- **Hardening pass over the execution sandbox and file I/O (audit issues #179–#189).**
+  - `resolve()` routes its selector through the `execute()` sandbox (AST allowlist +
+    restricted builtins), closing an `eval` escape. (#186)
+  - The dunder-attribute block stays active under `--allow-all-imports`. (#187)
+  - State-dependent tools (`align_check`, `resolve`, `script`, `session_state`,
+    `suggest_view_layout`) route through the worker so they see real session state,
+    with a production-boundary coverage guard. (#179, #182)
+  - File writes and reads — including `.dims.json` sidecars — are constrained to the
+    allowed roots. (#180, #188)
+  - Oversized SVG/CAD inputs and extreme raster widths are rejected before the
+    expensive work; SVG parsing is hardened against XML entity-expansion
+    ("billion laughs") via `defusedxml`. (#189)
+
+### Changed
+
+- **Adopted Ruff** for formatting and linting (`F`/`I`/`UP`/`C4`), enforced in CI;
+  the codebase was reformatted to match. (#185)
+- `server.json` registry version is kept in sync with the package version. (#181)
+
+### Packaging
+
+- Added per-version Python trove classifiers (3.10–3.12). (#178)
+- Use the canonical Apache-2.0 LICENSE text for reliable license detection. (#177)
+
 ## v0.3.38 — 2026-06-07
 
 ### Changed
