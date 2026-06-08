@@ -54,10 +54,14 @@ def render_drawing(svg_path: str, width: int = 0, save_to: str = "") -> dict:
 
     result: dict = {"png": png, "size_bytes": len(png), "width": out_width}
     if save_to:
+        # Route through the central path policy (rejects traversal / writes
+        # outside the allowed roots) before opening, like render_view(save_to=...).
+        from build123d_mcp.tools._paths import safe_output_path
+        abs_path = safe_output_path(save_to)
         try:
-            with open(save_to, "wb") as f:
+            with open(abs_path, "wb") as f:
                 f.write(png)
-            result["png_path"] = save_to
+            result["png_path"] = abs_path
         except OSError as e:
-            result["error"] = f"Could not write {save_to}: {e}"
+            result["error"] = f"Could not write {abs_path}: {e}"
     return result

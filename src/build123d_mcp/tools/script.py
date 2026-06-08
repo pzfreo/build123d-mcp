@@ -1,5 +1,7 @@
 import json
 
+from build123d_mcp.tools._paths import safe_output_path
+
 
 def script(session, save_to: str = "") -> str:
     """Join all successfully executed code blocks into a single script.
@@ -23,11 +25,14 @@ def script(session, save_to: str = "") -> str:
         joined = "\n\n".join(blocks)
 
     if save_to:
+        # Route through the central path policy (rejects traversal / writes
+        # outside the allowed roots) before opening, like export()/render_view().
+        abs_path = safe_output_path(save_to)
         try:
-            with open(save_to, "w", encoding="utf-8") as f:
+            with open(abs_path, "w", encoding="utf-8") as f:
                 f.write(joined)
         except OSError as exc:
-            return json.dumps({"error": f"Failed to write script: {exc}", "path": save_to})
-        return json.dumps({"script_path": save_to, "blocks": n}, indent=2)
+            return json.dumps({"error": f"Failed to write script: {exc}", "path": abs_path})
+        return json.dumps({"script_path": abs_path, "blocks": n}, indent=2)
 
     return json.dumps({"script": joined, "blocks": n}, indent=2)
