@@ -23,6 +23,11 @@
   the codebase was reformatted to match. (#185)
 - `server.json` registry version is kept in sync with the package version. (#181)
 
+### Fixed
+
+- **macOS:** `render_view` isolates VTK rendering in a subprocess to avoid a
+  window-server freeze. (#198)
+
 ### Packaging
 
 - Added per-version Python trove classifiers (3.10–3.12). (#178)
