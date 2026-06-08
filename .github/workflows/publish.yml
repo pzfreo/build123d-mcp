@@ -74,17 +74,7 @@ jobs:
       - name: Sync server.json version with the release tag
         run: |
           tag=${{ github.event.release.tag_name }}
-          version=${tag#v}
-          python3 - <<EOF
-          import json
-          with open("server.json") as f:
-              d = json.load(f)
-          d["version"] = "$version"
-          for p in d.get("packages", []):
-              p["version"] = "$version"
-          with open("server.json", "w") as f:
-              json.dump(d, f, indent=2)
-          EOF
+          python3 scripts/sync_server_json.py "${tag#v}"
       - name: Install mcp-publisher
         run: |
           # Resolve the latest release tag via the API rather than the
@@ -125,18 +115,7 @@ jobs:
         run: |
           new_base=$(grep '^version = ' pyproject.toml \
             | sed 's/version = "\(.*\)"/\1/' | sed 's/\.dev[0-9]*$//')
-          python3 - "$new_base" <<'EOF'
-          import json, sys
-          base = sys.argv[1]
-          with open("server.json") as f:
-              data = json.load(f)
-          data["version"] = base
-          for package in data.get("packages", []):
-              package["version"] = base
-          with open("server.json", "w") as f:
-              json.dump(data, f, indent=2)
-              f.write("\n")
-          EOF
+          python3 scripts/sync_server_json.py "$new_base"
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
