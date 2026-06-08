@@ -1,6 +1,6 @@
-"""Shared output-path validation for file-writing tools.
+"""Shared path validation for file-reading and file-writing tools.
 
-Allowed write roots:
+Allowed roots (identical for reads and writes):
   - the current working directory (the MCP server's `cwd`)
   - `tempfile.gettempdir()` (`$TMPDIR` on macOS, `/tmp` on most Linux)
   - `/tmp` itself when present (covers Linux installs where `gettempdir()`
@@ -28,9 +28,10 @@ def _allowed_roots() -> list[str]:
     return roots
 
 
-def safe_output_path(filename: str) -> str:
-    """Resolve `filename` and reject paths outside the allowed write roots.
+def _safe_path(filename: str, kind: str) -> str:
+    """Resolve `filename` and reject paths outside the allowed roots.
 
+    `kind` is the word used in the error message ("read" or "write").
     Returns the resolved absolute path on success. Raises ``ValueError``
     if the resolved path is not under one of the allowed roots — this
     covers absolute paths to sensitive locations, `..` traversal, and
@@ -42,5 +43,23 @@ def safe_output_path(filename: str) -> str:
             return resolved
     raise ValueError(
         f"Path '{filename}' resolves to '{resolved}', "
-        f"which is outside the allowed write roots."
+        f"which is outside the allowed {kind} roots."
     )
+
+
+def safe_output_path(filename: str) -> str:
+    """Resolve `filename` and reject paths outside the allowed write roots.
+
+    See ``_safe_path``; used by file-writing tools (export, render_view,
+    script, render_drawing, save_drawing_annotations).
+    """
+    return _safe_path(filename, "write")
+
+
+def safe_input_path(filename: str) -> str:
+    """Resolve `filename` and reject paths outside the allowed read roots.
+
+    See ``_safe_path``; used by file-reading tools (import_cad_file,
+    render_drawing, inspect_drawing, lint_drawing) and their sidecar reads.
+    """
+    return _safe_path(filename, "read")

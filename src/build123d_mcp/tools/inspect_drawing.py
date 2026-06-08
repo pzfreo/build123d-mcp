@@ -4,6 +4,8 @@ import os
 import re
 import xml.etree.ElementTree as ET
 
+from build123d_mcp.tools._paths import safe_input_path
+
 
 def _bbox_dict(shape) -> dict | None:
     try:
@@ -31,6 +33,10 @@ def _inspect_svg(svg_path: str) -> str:
     written by any code path (CI artifacts, third-party exports, prior
     runs) can be inspected.
     """
+    # Reject reads outside the allowed roots before touching the filesystem;
+    # the .dims.json sidecar below derives from this resolved path so it stays
+    # within the same validated directory.
+    svg_path = safe_input_path(svg_path)
     if not os.path.isfile(svg_path):
         return json.dumps({"error": f"SVG file not found: {svg_path}"})
     try:

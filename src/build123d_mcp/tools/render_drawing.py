@@ -10,6 +10,8 @@ resvg-py is already a runtime dep (used by render_view's 2D path).
 import os
 import re
 
+from build123d_mcp.tools._paths import safe_input_path
+
 # Build123d emits SVG with physical units (mm/cm/in) on width/height attributes.
 # resvg-py needs unitless pixel-equivalent values; this regex strips the unit.
 _UNIT_RE = re.compile(r'(width|height)="([\d.]+)(mm|cm|in)"')
@@ -28,6 +30,8 @@ def render_drawing(svg_path: str, width: int = 0, save_to: str = "") -> dict:
     Returns dict with at least {png: bytes} and {png_path: str} if save_to.
     On error returns {error: str} so the caller can surface it.
     """
+    # Reject reads outside the allowed roots before touching the filesystem.
+    svg_path = safe_input_path(svg_path)
     if not os.path.isfile(svg_path):
         return {"error": f"SVG file not found: {svg_path}"}
 

@@ -1,13 +1,17 @@
 import json
 import os
 
+from build123d_mcp.tools._paths import safe_input_path
+
 _STEP_EXTS = frozenset({".step", ".stp"})
 _STL_EXTS = frozenset({".stl"})
 _ALLOWED_EXTS = _STEP_EXTS | _STL_EXTS
 
 
 def import_cad_file(session, path: str, name: str = "") -> str:
-    resolved = os.path.realpath(path)
+    # Reject reads outside the allowed roots (traversal / symlink escape)
+    # before touching the filesystem, mirroring safe_output_path on writes.
+    resolved = safe_input_path(path)
     if not os.path.isfile(resolved):
         raise ValueError(f"File not found: '{path}'")
     ext = os.path.splitext(resolved)[1].lower()

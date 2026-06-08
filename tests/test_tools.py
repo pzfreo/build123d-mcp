@@ -1869,10 +1869,13 @@ def test_import_stl_round_trip(session, tmp_path, monkeypatch):
     assert "ref_stl" in session.objects
 
 
-def test_import_cad_file_missing_file_raises(session):
+def test_import_cad_file_missing_file_raises(session, tmp_path):
     from build123d_mcp.tools.import_step import import_cad_file
+    # Missing file under an allowed root: passes the input-path policy check
+    # and reaches the not-found check (an outside-root path would be rejected
+    # earlier with "outside the allowed read roots" — see test_path_safety.py).
     with pytest.raises(ValueError, match="File not found"):
-        import_cad_file(session, "/nonexistent/path/to/file.step")
+        import_cad_file(session, str(tmp_path / "missing.step"))
 
 
 def test_import_cad_file_wrong_extension_raises(session, tmp_path):

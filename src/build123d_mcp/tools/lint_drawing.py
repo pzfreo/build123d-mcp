@@ -28,6 +28,8 @@ from build123d_drafting import (
     lint_drawing as _helper_lint,
 )
 
+from build123d_mcp.tools._paths import safe_input_path
+
 # Checks that apply to a single annotation — run per-item so the violation can
 # carry the session object name (the helpers' issues only know the label text).
 _PER_ITEM_CODES = {"label_vs_measured", "dim_inside_part", "leader_line_through_text"}
@@ -197,6 +199,10 @@ def _lint_svg(svg_path: str, drawing_scale: float = 1.0) -> list[dict]:
       geometry here, so the helper's per-item check is run on shape-less
       duck-typed stand-ins).
     """
+    # Reject reads outside the allowed roots before touching the filesystem;
+    # the .dims.json sidecar below derives from this resolved path so it stays
+    # within the same validated directory.
+    svg_path = safe_input_path(svg_path)
     violations: list[dict] = []
     try:
         tree = ET.parse(svg_path)
