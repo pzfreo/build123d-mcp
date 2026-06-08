@@ -333,20 +333,15 @@ def check_ast(code: str) -> None:
     except SyntaxError:
         return
 
-    if ALLOW_ALL_IMPORTS:
-        # Still block dangerous calls even in unrestricted mode.
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name) and node.func.id in _BLOCKED_CALL_NAMES:
-                    raise ValueError(f"Call to '{node.func.id}' is not allowed.")
-        return
-
+    # ALLOW_ALL_IMPORTS relaxes only the import allowlist; the blocked-call and
+    # dunder-attribute layers still apply (as documented in the README) (issue #187).
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                _check_module(alias.name)
+            if not ALLOW_ALL_IMPORTS:
+                for alias in node.names:
+                    _check_module(alias.name)
         elif isinstance(node, ast.ImportFrom):
-            if node.module:
+            if not ALLOW_ALL_IMPORTS and node.module:
                 _check_module(node.module)
         elif isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id in _BLOCKED_CALL_NAMES:
