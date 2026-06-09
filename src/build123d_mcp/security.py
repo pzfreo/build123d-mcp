@@ -66,8 +66,11 @@ IMPORT_ALLOWLIST = frozenset(
         "io",
         "warnings",
         "contextlib",
-        # Introspection — signature(), getdoc(), getmembers() are read-only and help with
-        # API discovery without requiring docs. Cannot execute code.
+        # Introspection — signature(), getdoc(), getmembers() are read-only and help
+        # with API discovery without requiring docs. Note: getmembers() returns dunder
+        # attributes by string key, sidestepping the AST dunder block, so introspection
+        # chains through it can still escape the sandbox — accepted as a known limit
+        # (see module docstring) in exchange for API discovery.
         "inspect",
     }
 )

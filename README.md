@@ -122,6 +122,8 @@ Filesystem I/O modules (`os`, `pathlib`, `shutil`), networking (`socket`, `urlli
 
 This is not a perfect sandbox — memory exhaustion isn't bounded, and Python introspection chains via build123d internals could in principle escape — but it raises the bar significantly against realistic prompt-injection payloads.
 
+**The part library is trusted input.** Files under `--library` run with the same restricted builtins as user code, but the AST check inspects only each file's own top-level imports — it is a guard against accidents, not sandbox-equivalent isolation. Point `--library` only at directories you control, never at untrusted downloads.
+
 ### Extending or relaxing the sandbox
 
 Two CLI flags let you adjust the import policy without giving up the rest of the layers:

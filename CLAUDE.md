@@ -60,7 +60,7 @@ Three layers, all must pass before user code runs:
 2. **Restricted builtins** — exec namespace gets a filtered `__builtins__` dict; `open`, `eval`, `exec`, `compile` removed; `__import__` wrapped to enforce the same allowlist at runtime.
 3. **Exec timeout** — default 120 s wall-clock, configurable via `--exec-timeout` CLI flag or `BUILD123D_EXEC_TIMEOUT` env var. After timeout, the thread continues in background and the namespace may be dirty; callers should `reset()` or `restore_snapshot()`.
 
-Known limits: memory exhaustion is not bounded; Python introspection chains can escape the sandbox.
+Known limits: memory exhaustion is not bounded; Python introspection chains can escape the sandbox; part-library files (`--library`) are trusted input — the AST check on them is non-transitive.
 
 ## Gotchas
 
