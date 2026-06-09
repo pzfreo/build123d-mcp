@@ -274,6 +274,11 @@ class WorkerSession:
         self._proc: Any = None
         self._start_worker()
 
+    @property
+    def has_library(self) -> bool:
+        """Whether a part library was configured (drives search_library/load_part)."""
+        return bool(self._library_path)
+
     def _start_worker(self) -> None:
         ctx = multiprocessing.get_context("spawn")
         parent_conn, child_conn = ctx.Pipe()

@@ -69,28 +69,8 @@ MCP client configuration example:
     }
   }
 
-Available tools:
-  execute           Run build123d Python code; errors include automatic fix hints
-  render_view       Render model as PNG (direction, azimuth, elevation, clip_plane, clip_at, save_to)
-  measure           Full geometric summary: volume, area, topology, bbox, center_of_mass, inertia, face_inventory
-  clearance         Minimum distance between two named shapes
-  cross_sections    Cross-sectional areas along X/Y/Z axis at evenly-spaced planes
-  export            Export model to STEP or STL
-  interference      Check intersection volume between two named shapes
-  session_state     Full session JSON: current_shape, all named objects, snapshot names, variables
-  health_check      Verify VTK/SVG/STEP/STL dependencies work end-to-end
-  search_library    Search the part library by keyword (requires --library)
-  load_part         Load a named part with optional parameter overrides (requires --library)
-  save_snapshot     Save a named geometric checkpoint
-  restore_snapshot  Restore geometry from a named checkpoint
-  diff_snapshot     Compare two snapshots; format="json" for structured output
-  last_error        Details of the last failed execute() (type, message, line, excerpt)
-  shape_compare     Compare two named shapes by geometry metrics
-  import_cad_file   Import a STEP or STL file as a named object for comparison
-  repair_hints      Get additional fix suggestions for a given execute() error message
-  version           Return the server version string
-  workflow_hints    Return guidance on using these tools effectively
-  reset             Clear the session (namespace, shapes, snapshots)
+Tools: discovered by the MCP client over the protocol (the authoritative list).
+  Call the workflow_hints tool for guidance on which to use.
 
 Part library file format (Python, any .py file under --library path):
   PART_INFO = {
@@ -160,8 +140,7 @@ Part library file format (Python, any .py file under --library path):
             allow_all_imports=args.allow_all_imports,
             extra_allowed_imports=extra_imports,
             exec_timeout=args.exec_timeout,
-        ),
-        bool(args.library),
+        )
     )
 
     server.mcp.run()

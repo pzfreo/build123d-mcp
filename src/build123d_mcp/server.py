@@ -9,18 +9,17 @@ from build123d_mcp.worker import WorkerSession
 
 mcp = FastMCP("build123d-mcp")
 _session: WorkerSession
-_has_library = False
 
 
-def configure(session: WorkerSession, has_library: bool) -> None:
-    """Set the module-level session singleton and library flag.
+def configure(session: WorkerSession) -> None:
+    """Set the module-level session singleton.
 
     Called by ``cli.main()`` at startup; kept here so the tool closures resolve
-    ``_session`` / ``_has_library`` at this module's scope.
+    ``_session`` at this module's scope. Whether a part library is configured is
+    read from ``session.has_library`` rather than tracked separately.
     """
-    global _session, _has_library
+    global _session
     _session = session
-    _has_library = has_library
 
 
 @mcp.tool()
@@ -325,7 +324,7 @@ def save_drawing_annotations(svg_path: str) -> str:
 @mcp.tool()
 def search_library(query: str = "") -> str:
     """Search the part library. query: keywords matched against name, description, tags, category (empty returns all). Returns name, category, description, tags, and full parameter specs including types, defaults, and descriptions."""
-    if not _has_library:
+    if not _session.has_library:
         return "No part library configured. Start the server with --library PATH or set BUILD123D_PART_LIBRARY."
     return _session.search_library(query)
 
@@ -333,7 +332,7 @@ def search_library(query: str = "") -> str:
 @mcp.tool()
 def load_part(name: str, params: str = "") -> str:
     """Load a named part from the library into the session. name: part name from search_library. params: optional JSON object of parameter overrides e.g. '{\"od\": 8.0, \"length\": 20.0}' — unspecified params use their defaults. The part is registered as a named object and becomes current_shape."""
-    if not _has_library:
+    if not _session.has_library:
         return "No part library configured. Start the server with --library PATH or set BUILD123D_PART_LIBRARY."
     return _session.load_part(name, params)
 
