@@ -272,6 +272,12 @@ class WorkerSession:
     _RENDER_TIMEOUT = 120
     _EXPORT_TIMEOUT = 60
     _INTERFERENCE_TIMEOUT = 30
+    # Geometry-heavy queries (boolean ops, per-face walks, BREP analysis, part
+    # construction) can legitimately exceed 10s on complex parts, and a timeout
+    # here kills the worker and destroys all session state — so the budget errs
+    # generous (issue #214). _SHORT_TIMEOUT is only for ops that read session
+    # bookkeeping without touching geometry kernels.
+    _GEOMETRY_TIMEOUT = 60
     _SHORT_TIMEOUT = 10
 
     def __init__(
@@ -328,7 +334,10 @@ class WorkerSession:
     def _call(self, op: str, args: dict, timeout: int) -> Any:
         if not self._proc.is_alive():
             self._start_worker()
-            raise RuntimeError("Worker crashed; session restarted. Re-run your setup code.")
+            raise RuntimeError(
+                "Worker crashed; session restarted. All session state (variables, "
+                "shapes, named objects, snapshots) has been lost — re-run your setup code."
+            )
 
         self._conn.send({"op": op, "args": args})
 
@@ -349,13 +358,21 @@ class WorkerSession:
                     f"The timeout limit can be raised with the --exec-timeout flag or "
                     f"BUILD123D_EXEC_TIMEOUT env var."
                 )
-            raise RuntimeError(f"Operation '{op}' timed out after {timeout}s.")
+            raise RuntimeError(
+                f"Operation '{op}' timed out after {timeout}s. The worker was killed "
+                f"and restarted — all session state (variables, shapes, named objects, "
+                f"snapshots) has been lost. Re-run your setup code."
+            )
 
         try:
             response = self._conn.recv()
         except EOFError:
             self._start_worker()
-            raise RuntimeError("Worker process crashed unexpectedly; session restarted.")
+            raise RuntimeError(
+                "Worker process crashed unexpectedly; session restarted. All session "
+                "state (variables, shapes, named objects, snapshots) has been lost — "
+                "re-run your setup code."
+            )
 
         if response["ok"]:
             return response["result"]
@@ -422,22 +439,22 @@ class WorkerSession:
         )
 
     def measure(self, object_name: str = "") -> str:
-        return self._call("measure", {"object_name": object_name}, self._SHORT_TIMEOUT)
+        return self._call("measure", {"object_name": object_name}, self._GEOMETRY_TIMEOUT)
 
     def clearance(self, object_a: str, object_b: str) -> str:
         return self._call(
-            "clearance", {"object_a": object_a, "object_b": object_b}, self._SHORT_TIMEOUT
+            "clearance", {"object_a": object_a, "object_b": object_b}, self._GEOMETRY_TIMEOUT
         )
 
     def cross_sections(self, object_name: str = "", axis: str = "Z", num_slices: int = 10) -> str:
         return self._call(
             "cross_sections",
             {"object_name": object_name, "axis": axis, "num_slices": num_slices},
-            self._SHORT_TIMEOUT,
+            self._GEOMETRY_TIMEOUT,
         )
 
     def save_snapshot(self, name: str) -> str:
-        return self._call("save_snapshot", {"name": name}, self._SHORT_TIMEOUT)
+        return self._call("save_snapshot", {"name": name}, self._GEOMETRY_TIMEOUT)
 
     def restore_snapshot(self, name: str) -> str:
         return self._call("restore_snapshot", {"name": name}, self._SHORT_TIMEOUT)
@@ -452,7 +469,7 @@ class WorkerSession:
         return self._call(
             "diff_snapshot",
             {"snapshot_a": snapshot_a, "snapshot_b": snapshot_b, "format": format},
-            self._SHORT_TIMEOUT,
+            self._GEOMETRY_TIMEOUT,
         )
 
     def session_state(self) -> str:
@@ -478,7 +495,7 @@ class WorkerSession:
                 "min_perimeters": min_perimeters,
                 "build_volume": build_volume,
             },
-            self._SHORT_TIMEOUT,
+            self._GEOMETRY_TIMEOUT,
         )
 
     def health_check(self) -> str:
@@ -489,7 +506,7 @@ class WorkerSession:
 
     def shape_compare(self, object_a: str, object_b: str) -> str:
         return self._call(
-            "shape_compare", {"object_a": object_a, "object_b": object_b}, self._SHORT_TIMEOUT
+            "shape_compare", {"object_a": object_a, "object_b": object_b}, self._GEOMETRY_TIMEOUT
         )
 
     def import_cad_file(self, path: str, name: str = "") -> str:
@@ -550,14 +567,14 @@ class WorkerSession:
         return self._call(
             "align_check",
             {"object_a": object_a, "object_b": object_b, "axis": axis, "mode": mode},
-            self._SHORT_TIMEOUT,
+            self._GEOMETRY_TIMEOUT,
         )
 
     def resolve(self, object_name: str, selector: str, label: str = "") -> str:
         return self._call(
             "resolve",
             {"object_name": object_name, "selector": selector, "label": label},
-            self._SHORT_TIMEOUT,
+            self._GEOMETRY_TIMEOUT,
         )
 
     def suggest_view_layout(
@@ -583,7 +600,7 @@ class WorkerSession:
                 "title_block_h": title_block_h,
                 "margin": margin,
             },
-            self._SHORT_TIMEOUT,
+            self._GEOMETRY_TIMEOUT,
         )
 
     def script(self, save_to: str = "") -> str:
@@ -593,4 +610,4 @@ class WorkerSession:
         return self._call("search_library", {"query": query}, self._SHORT_TIMEOUT)
 
     def load_part(self, name: str, params: str = "") -> str:
-        return self._call("load_part", {"name": name, "params": params}, self._SHORT_TIMEOUT)
+        return self._call("load_part", {"name": name, "params": params}, self._GEOMETRY_TIMEOUT)

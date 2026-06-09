@@ -423,7 +423,7 @@ def _do_render_png(
 
 
 def _vtk_render_subprocess(
-    shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels, timeout=120
+    shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels, timeout=100
 ) -> bytes:
     """Run VTK rendering in an isolated subprocess on macOS.
 
@@ -432,6 +432,11 @@ def _vtk_render_subprocess(
     foreground process. Isolating the render in a child process prevents the
     freeze from locking the MCP server itself, and the timeout+kill ensures
     the server always recovers even if VTK hangs permanently.
+
+    The default timeout must stay below WorkerSession._RENDER_TIMEOUT (120s):
+    if both expire together, the parent wins the race and SIGKILLs the whole
+    worker — destroying session state — instead of this guard returning a
+    clean error with the session intact (issue #216).
     """
     import multiprocessing
 
