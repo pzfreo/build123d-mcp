@@ -162,8 +162,8 @@ def inspect_drawing(objects: str = "", svg_path: str = "") -> str:
 @mcp.tool()
 def view_axes(
     viewport_origin: list[float],
-    viewport_up: list[float] = [0.0, 1.0, 0.0],
-    look_at: list[float] = [0.0, 0.0, 0.0],
+    viewport_up: list[float] | None = None,
+    look_at: list[float] | None = None,
 ) -> str:
     """Return the world→page axis mapping for a project_to_viewport call,
     computed analytically (no projection performed). Use this BEFORE rendering
@@ -180,7 +180,11 @@ def view_axes(
         viewport_up: up vector. Defaults to (0,1,0).
         look_at: target point. Defaults to origin.
     """
-    return _session.view_axes(tuple(viewport_origin), tuple(viewport_up), tuple(look_at))
+    return _session.view_axes(
+        tuple(viewport_origin),
+        tuple(viewport_up) if viewport_up is not None else (0.0, 1.0, 0.0),
+        tuple(look_at) if look_at is not None else (0.0, 0.0, 0.0),
+    )
 
 
 @mcp.tool()

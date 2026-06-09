@@ -1,9 +1,8 @@
 import json
 import types
 
+from build123d_mcp.session import _INJECTED
 from build123d_mcp.tools.diff import _collect
-
-_SKIP = {"__builtins__", "show"}
 
 
 def _is_imported_symbol(val) -> bool:
@@ -44,7 +43,7 @@ def _namespace_summary(namespace: dict) -> dict:
 
     result = {}
     for name, val in namespace.items():
-        if name.startswith("_") or name in _SKIP:
+        if name.startswith("_") or name in _INJECTED:
             continue
         if _is_imported_symbol(val):
             continue

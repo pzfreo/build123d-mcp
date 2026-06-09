@@ -41,33 +41,6 @@ _SUGGESTED_FIXES = {
 }
 
 
-def _classify_error(exc: Exception, code: str) -> dict:
-    """Classify an exception into a failure_class with a suggested fix."""
-    from build123d_mcp.security import ExecutionTimeout
-
-    msg = str(exc)
-    msg_lower = msg.lower()
-
-    if "Can't get geom adaptor" in msg:
-        cls = "boolean_fail"
-    elif isinstance(exc, (SyntaxError, IndentationError)):
-        cls = "syntax_error"
-    elif isinstance(exc, AttributeError) and "ShapeList" in msg:
-        cls = "shapelist_attr"
-    elif "ShapeList" in msg or ("index" in msg_lower and "faces" in str(exc)):
-        cls = "selector_empty"
-    elif "fillet" in msg_lower or "non-manifold" in msg_lower:
-        cls = "fillet_fail"
-    elif isinstance(exc, ExecutionTimeout):
-        cls = "timeout"
-    elif "not allowed" in msg:
-        cls = "import_blocked"
-    else:
-        cls = "unknown"
-
-    return {"failure_class": cls, "suggested_fix": _SUGGESTED_FIXES[cls]}
-
-
 def _classify_from_error_string(error_result: str) -> dict:
     """Classify an error string (as returned by session.execute) into a failure_class."""
     msg = error_result

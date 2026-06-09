@@ -1845,6 +1845,17 @@ def test_session_state_with_shape_and_objects(session):
     assert "v1" in data["snapshots"]
 
 
+def test_session_state_variables_exclude_injected_helpers(session):
+    # The injected helpers (show, annotate, named_face, ...) live in the user
+    # namespace but are session plumbing, not user variables (issue #219).
+    from build123d_mcp.session import _INJECTED
+
+    execute_code(session, "x = 5")
+    variables = json.loads(session_state(session))["variables"]
+    assert "x" in variables
+    assert not (_INJECTED & set(variables))
+
+
 # --- diff_snapshot JSON mode ---
 
 
