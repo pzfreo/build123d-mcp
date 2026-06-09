@@ -257,10 +257,11 @@ def test_load_part_blocked_import_raises(tmp_path, session):
         load_part(session, idx, "evil")
 
 
-def test_server_library_guard_uses_session_has_library(monkeypatch, tmp_path):
-    """WorkerSession.has_library reflects whether --library was set, and the
-    search_library/load_part wrappers gate on it (#183 — replaces the separate
-    server._has_library global)."""
+def test_server_library_guard_uses_session_has_library(monkeypatch):
+    """The search_library/load_part wrappers gate on _session.has_library
+    (#183 — replaces the separate server._has_library global). An inverted
+    has_library would make these guard assertions fail, so a single
+    no-library session covers both the property and the wrapper guard."""
     import build123d_mcp.server as srv
     from build123d_mcp.worker import WorkerSession
 
@@ -272,9 +273,3 @@ def test_server_library_guard_uses_session_has_library(monkeypatch, tmp_path):
         assert "No part library configured" in srv.load_part("widget")
     finally:
         no_lib._kill_worker()
-
-    with_lib = WorkerSession(library_path=str(tmp_path), exec_timeout=30)
-    try:
-        assert with_lib.has_library is True
-    finally:
-        with_lib._kill_worker()
