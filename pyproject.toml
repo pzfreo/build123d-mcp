@@ -43,7 +43,7 @@ Repository = "https://github.com/pzfreo/build123d-mcp"
 Issues = "https://github.com/pzfreo/build123d-mcp/issues"
 
 [project.scripts]
-build123d-mcp = "build123d_mcp.server:main"
+build123d-mcp = "build123d_mcp.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/build123d_mcp"]
