@@ -248,6 +248,18 @@ def _dispatch(session: Any, op: str, args: dict, library_index: Any) -> Any:
 
         return script(session, save_to=args.get("save_to", ""))
 
+    if op == "analyze_printability":
+        from build123d_mcp.tools.analyze_printability import analyze_printability
+
+        return analyze_printability(
+            session,
+            object_name=args.get("object_name", ""),
+            support_angle=args.get("support_angle", 45.0),
+            nozzle=args.get("nozzle", 0.4),
+            min_perimeters=args.get("min_perimeters", 2),
+            build_volume=args.get("build_volume", ""),
+        )
+
     raise ValueError(f"Unknown operation: '{op}'")
 
 
@@ -448,6 +460,26 @@ class WorkerSession:
 
     def objects_types(self) -> dict:
         return self._call("objects_types", {}, self._SHORT_TIMEOUT)
+
+    def analyze_printability(
+        self,
+        object_name: str = "",
+        support_angle: float = 45.0,
+        nozzle: float = 0.4,
+        min_perimeters: int = 2,
+        build_volume: str = "",
+    ) -> str:
+        return self._call(
+            "analyze_printability",
+            {
+                "object_name": object_name,
+                "support_angle": support_angle,
+                "nozzle": nozzle,
+                "min_perimeters": min_perimeters,
+                "build_volume": build_volume,
+            },
+            self._SHORT_TIMEOUT,
+        )
 
     def health_check(self) -> str:
         return self._call("health_check", {}, self._RENDER_TIMEOUT)

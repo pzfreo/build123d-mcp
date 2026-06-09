@@ -157,6 +157,11 @@ def _objects_types(ws, tmp_path):
     assert "a" in r and "b" in r
 
 
+def _analyze_printability(ws, tmp_path):
+    r = ws.analyze_printability(object_name="a")
+    assert "finding" in r
+
+
 def _diff_snapshot(ws, tmp_path):
     # The 'snap' snapshot captured the seeded objects; on an empty worker the
     # missing snapshot yields a non-JSON "Error:" string and json.loads raises.
@@ -219,6 +224,7 @@ SESSION_STATEFUL_TOOLS = {
     "script": _script,
     "session_state": _session_state,
     "objects_types": _objects_types,
+    "analyze_printability": _analyze_printability,
     "diff_snapshot": _diff_snapshot,
     "save_snapshot": _save_snapshot,
     "restore_snapshot": _restore_snapshot,

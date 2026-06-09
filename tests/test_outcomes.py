@@ -635,6 +635,7 @@ def test_mcp_lists_all_tools():
         "script",
         "install_skill",
         "suggest_view_layout",
+        "analyze_printability",
     }
 
 

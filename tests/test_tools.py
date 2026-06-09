@@ -2121,3 +2121,77 @@ def test_version_unknown_package_reports_unknown(monkeypatch):
     info = v.version_info()
     assert info["definitely-not-installed-xyz"] == "unknown"
     assert info["build123d-mcp"] != "unknown"
+
+
+# ---------------------------------------------------------------------------
+# analyze_printability
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_printability_clean_box(session):
+    from build123d_mcp.tools.analyze_printability import analyze_printability
+
+    session.execute("from build123d import *\nshow(Box(10, 10, 5), 'box')")
+    result = analyze_printability(session, object_name="box")
+    assert "finding" in result
+    data = json.loads(result.split("\n\n", 1)[1])
+    assert "findings" in data
+
+
+def test_analyze_printability_uses_current_shape(session):
+    from build123d_mcp.tools.analyze_printability import analyze_printability
+
+    session.execute("from build123d import *\nresult = Box(10, 10, 5)")
+    result = analyze_printability(session)
+    assert "finding" in result
+
+
+def test_analyze_printability_detects_overhang(session):
+    from build123d_mcp.tools.analyze_printability import analyze_printability
+
+    # T-shape: thin post with a wide slab on top. The underside of the slab
+    # is a horizontal downward face not touching the build plate — a clear overhang.
+    session.execute(
+        "from build123d import *\n"
+        "post = Box(4, 4, 20)\n"
+        "slab = Box(20, 20, 4).move(Location((0, 0, 22)))\n"
+        "show(post + slab, 'tshape')\n"
+    )
+    result = analyze_printability(session, object_name="tshape", support_angle=45.0)
+    assert "finding" in result
+    data = json.loads(result.split("\n\n", 1)[1])
+    assert any(f["kind"] == "overhang" for f in data["findings"])
+
+
+def test_analyze_printability_unknown_object(session):
+    from build123d_mcp.tools.analyze_printability import analyze_printability
+
+    session.execute("from build123d import *\nshow(Box(1, 1, 1), 'a')")
+    result = analyze_printability(session, object_name="nonexistent")
+    data = json.loads(result)
+    assert "error" in data
+
+
+def test_analyze_printability_no_shape(session):
+    from build123d_mcp.tools.analyze_printability import analyze_printability
+
+    result = analyze_printability(session)
+    data = json.loads(result)
+    assert "error" in data
+
+
+def test_analyze_printability_build_volume(session):
+    from build123d_mcp.tools.analyze_printability import analyze_printability
+
+    session.execute("from build123d import *\nshow(Box(10, 10, 5), 'box')")
+    result = analyze_printability(session, object_name="box", build_volume="256 256 256")
+    assert "finding" in result
+
+
+def test_analyze_printability_bad_build_volume(session):
+    from build123d_mcp.tools.analyze_printability import analyze_printability
+
+    session.execute("from build123d import *\nshow(Box(1, 1, 1), 'a')")
+    result = analyze_printability(session, object_name="a", build_volume="not valid")
+    data = json.loads(result)
+    assert "error" in data

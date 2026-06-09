@@ -76,6 +76,37 @@ def clearance(object_a: str, object_b: str) -> str:
 
 
 @mcp.tool()
+def analyze_printability(
+    object_name: str = "",
+    support_angle: float = 45.0,
+    nozzle: float = 0.4,
+    min_perimeters: int = 2,
+    build_volume: str = "",
+) -> str:
+    """Analyse a build123d shape for FDM printability using augura (BREP-exact analysis).
+
+    Checks: overhangs, manifold/watertight, tip-over risk, brim/raft need,
+    minimum vertical feature (→ max layer height), and thin walls. Optionally
+    checks bed-fit against a declared build volume.
+
+    Returns a plain-text summary followed by a JSON report with per-finding
+    detail (kind, severity, message, area/location where applicable).
+
+    object_name: named object from show() (default: current shape).
+    support_angle: faces shallower than this many degrees from horizontal need
+        support (default 45).
+    nozzle: nozzle diameter in mm for wall-thickness check (default 0.4).
+    min_perimeters: walls thinner than min_perimeters × nozzle are flagged
+        (default 2).
+    build_volume: optional build envelope as 'X Y Z' in mm, e.g. '256 256 256';
+        omit to skip the bed-fit check.
+    """
+    return _session.analyze_printability(
+        object_name, support_angle, nozzle, min_perimeters, build_volume
+    )
+
+
+@mcp.tool()
 def cross_sections(object_name: str = "", axis: str = "Z", num_slices: int = 10) -> str:
     """Compute cross-sectional areas at evenly spaced planes along an axis. Returns a list of {position, area} pairs. axis: X, Y, or Z (default Z). num_slices: number of planes (default 10, minimum 2). Useful for detecting internal voids, wall-thickness variation, or verifying that a shape's cross-section profile matches a reference. object_name: named object from show() (default: current shape)."""
     return _session.cross_sections(object_name, axis, num_slices)
