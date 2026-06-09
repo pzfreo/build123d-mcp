@@ -102,5 +102,13 @@ def execute_code(session, code: str) -> str:
 
         classification = _classify_from_error_string(result)
         result += "\n\n" + json.dumps(classification)
+        return result
+
+    obj_types = session.objects_types()
+    if obj_types:
+        parts = ", ".join(f"{name} ({desc})" for name, desc in obj_types.items())
+    else:
+        parts = "(none)"
+    result = result.rstrip("\n") + f"\n\nSession objects: {parts}"
 
     return result

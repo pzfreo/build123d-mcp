@@ -152,6 +152,11 @@ def _session_state(ws, tmp_path):
     assert "a" in r["objects"] and "b" in r["objects"]
 
 
+def _objects_types(ws, tmp_path):
+    r = ws.objects_types()
+    assert "a" in r and "b" in r
+
+
 def _diff_snapshot(ws, tmp_path):
     # The 'snap' snapshot captured the seeded objects; on an empty worker the
     # missing snapshot yields a non-JSON "Error:" string and json.loads raises.
@@ -213,6 +218,7 @@ SESSION_STATEFUL_TOOLS = {
     "suggest_view_layout": _suggest_view_layout,
     "script": _script,
     "session_state": _session_state,
+    "objects_types": _objects_types,
     "diff_snapshot": _diff_snapshot,
     "save_snapshot": _save_snapshot,
     "restore_snapshot": _restore_snapshot,

@@ -151,6 +151,9 @@ def _dispatch(session: Any, op: str, args: dict, library_index: Any) -> Any:
 
         return session_state(session)
 
+    if op == "objects_types":
+        return session.objects_types()
+
     if op == "health_check":
         from build123d_mcp.tools.health_check import health_check
 
@@ -442,6 +445,9 @@ class WorkerSession:
 
     def session_state(self) -> str:
         return self._call("session_state", {}, self._SHORT_TIMEOUT)
+
+    def objects_types(self) -> dict:
+        return self._call("objects_types", {}, self._SHORT_TIMEOUT)
 
     def health_check(self) -> str:
         return self._call("health_check", {}, self._RENDER_TIMEOUT)

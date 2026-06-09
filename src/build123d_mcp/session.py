@@ -449,6 +449,17 @@ class Session:
 
         return output
 
+    def objects_types(self) -> dict:
+        """Return {name: description} for each named object in the session."""
+        result = {}
+        for name, shape in self.objects.items():
+            try:
+                nf = len(shape.faces())
+                result[name] = f"{type(shape).__name__}, {nf} faces" if nf > 0 else type(shape).__name__
+            except Exception:
+                result[name] = type(shape).__name__
+        return result
+
     def _rollback_namespace(self, values_before: dict[str, Any]) -> None:
         # Delete keys that didn't exist before; restore values for keys that were overwritten.
         current = {k for k in self.namespace if k not in _INJECTED}

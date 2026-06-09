@@ -114,6 +114,22 @@ def test_execute_var_summary_absent_on_error(session):
     assert "# vars:" not in result
 
 
+def test_execute_session_objects_appended_on_success(session):
+    result = execute_code(session, "from build123d import *\nshow(Box(1, 1, 1), 'cube')")
+    assert "Session objects:" in result
+    assert "cube" in result
+
+
+def test_execute_session_objects_none_on_empty(session):
+    result = execute_code(session, "x = 42")
+    assert "Session objects: (none)" in result
+
+
+def test_execute_session_objects_absent_on_error(session):
+    result = execute_code(session, "bad syntax !!!")
+    assert "Session objects:" not in result
+
+
 def test_execute_var_summary_tuple_of_scalars_included(session):
     result = execute_code(session, "pt = (1.0, 2.0, 3.0)")
     assert "pt=(1.0, 2.0, 3.0)" in result
