@@ -455,7 +455,9 @@ class Session:
         for name, shape in self.objects.items():
             try:
                 nf = len(shape.faces())
-                result[name] = f"{type(shape).__name__}, {nf} faces" if nf > 0 else type(shape).__name__
+                result[name] = (
+                    f"{type(shape).__name__}, {nf} faces" if nf > 0 else type(shape).__name__
+                )
             except Exception:
                 result[name] = type(shape).__name__
         return result
