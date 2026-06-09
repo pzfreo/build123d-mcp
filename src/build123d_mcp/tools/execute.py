@@ -104,11 +104,11 @@ def execute_code(session, code: str) -> str:
         result += "\n\n" + json.dumps(classification)
         return result
 
-    obj_types = session.objects_types()
-    if obj_types:
-        parts = ", ".join(f"{name} ({desc})" for name, desc in obj_types.items())
-    else:
-        parts = "(none)"
-    result = result.rstrip("\n") + f"\n\nSession objects: {parts}"
+    try:
+        obj_types = session.objects_types()
+        parts = ", ".join(f"{name} ({desc})" for name, desc in obj_types.items()) or "(none)"
+        result = result.rstrip("\n") + f"\n\nSession objects: {parts}"
+    except Exception:
+        pass  # don't mask a successful execute if the objects summary fails
 
     return result
