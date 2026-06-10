@@ -49,8 +49,8 @@ HOLE_DIA, HOLE_INSET = 6.6, 8.0      # 4x Ø6.6 THRU, 8 from each edge
 FILLET_R = 3.0                        # vertical corners only
 ```
 
-[ASK: A dimension I need is missing or two views disagree — which value should I use?]
-if the drawing leaves a critical dimension ambiguous. Do not guess silently.
+If the drawing leaves a critical dimension ambiguous — a value missing, or two
+views disagreeing — ask the user which value to use. Do not guess silently.
 
 ## Step 2 — Build incrementally
 
@@ -76,7 +76,7 @@ if the drawing leaves a critical dimension ambiguous. Do not guess silently.
   shows as ONE cylinder entry with `"count": 4`, so sum the counts, don't
   count entries.
 - Render only after `measure()` agrees with the spec:
-  `render_view(save_to="/tmp/part.png")` [SEND: /tmp/part.png].
+  `render_view(save_to="/tmp/part.png")`, then show /tmp/part.png to the user.
   Use `clip_plane`/`clip_at` to reveal internal features.
 - Assemblies: `clearance("a", "b")` for fit (apart / touching / containing /
   interpenetrating, with volumes), `align_check()` for flush/concentric checks,
