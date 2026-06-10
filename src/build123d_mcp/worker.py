@@ -442,8 +442,12 @@ class WorkerSession:
             self._INTERFERENCE_TIMEOUT,
         )
 
-    def measure(self, object_name: str = "") -> str:
-        return self._call("measure", {"object_name": object_name}, self._GEOMETRY_TIMEOUT)
+    def measure(self, object_name: str = "", density: float = 0.0, material: str = "") -> str:
+        return self._call(
+            "measure",
+            {"object_name": object_name, "density": density, "material": material},
+            self._GEOMETRY_TIMEOUT,
+        )
 
     def clearance(self, object_a: str, object_b: str) -> str:
         return self._call(

@@ -1945,13 +1945,72 @@ def test_measure_inertia_differs_for_different_shapes(session):
 
 
 def test_measure_face_inventory_box(session):
+    """Six identical 100 mm² planes collapse to one entry with count=6 (#238)."""
     execute_code(session, "result = Box(10, 10, 10)")
     data = json.loads(measure(session))
     fi = data["face_inventory"]
     assert isinstance(fi, list)
-    assert len(fi) == 6
-    assert all(f["type"] == "Plane" for f in fi)
-    assert all(abs(f["area"] - 100) < 1 for f in fi)
+    assert len(fi) == 1
+    assert fi[0]["type"] == "Plane"
+    assert abs(fi[0]["area"] - 100) < 1
+    assert fi[0]["count"] == 6
+
+
+def test_condense_inventory_folds_non_analytic_slivers():
+    """Thread-fade sliver BSplines fold into one summary line; analytic faces
+    are kept verbatim however small; identical entries aggregate (#238)."""
+    from build123d_mcp.tools.measure import _condense_inventory
+
+    faces = (
+        [{"type": "BSpline", "area": 0.001} for _ in range(23)]
+        + [{"type": "BSpline", "area": 22.17} for _ in range(6)]
+        + [{"type": "Cylinder", "area": 50.0, "diameter": 6.6, "axis": (0, 0, 1)}]
+        + [{"type": "Plane", "area": 0.001}]
+    )
+    out = _condense_inventory(faces)
+    big_bsplines = [f for f in out if f["type"] == "BSpline"]
+    assert len(big_bsplines) == 1 and big_bsplines[0]["count"] == 6
+    assert [f for f in out if f["type"] == "Cylinder"]
+    assert [f for f in out if f["type"] == "Plane"]  # analytic sliver survives
+    folded = [f for f in out if f["type"] == "slivers_folded"]
+    assert len(folded) == 1 and folded[0]["count"] == 23
+    assert folded[0]["total_area"] == pytest.approx(0.023)
+
+
+def test_measure_density_reports_mass(session):
+    """volume mm³ × g/cm³ / 1000 = grams (#237)."""
+    execute_code(session, "result = Box(10, 10, 10)")
+    data = json.loads(measure(session, density=7.85))
+    assert data["density_g_cm3"] == 7.85
+    assert data["mass_g"] == pytest.approx(7.85, rel=1e-3)
+    assert data["inertia_units"] == "g·mm²"
+
+
+def test_measure_material_preset(session):
+    execute_code(session, "result = Box(10, 10, 10)")
+    data = json.loads(measure(session, material="brass"))
+    assert data["mass_g"] == pytest.approx(8.5, rel=1e-3)
+
+
+def test_measure_density_scales_inertia(session):
+    """With density the volume inertia (mm⁵) becomes mass inertia (g·mm²)."""
+    execute_code(session, "result = Box(10, 10, 10)")
+    plain = json.loads(measure(session))
+    dense = json.loads(measure(session, density=2.0))
+    assert plain["inertia_units"].startswith("mm⁵")
+    assert dense["inertia"]["Ixx"] == pytest.approx(plain["inertia"]["Ixx"] * 2.0 / 1000, rel=1e-3)
+
+
+def test_measure_density_and_material_conflict(session):
+    execute_code(session, "result = Box(10, 10, 10)")
+    with pytest.raises(ValueError, match="not both"):
+        measure(session, density=1.0, material="steel")
+
+
+def test_measure_unknown_material_raises(session):
+    execute_code(session, "result = Box(10, 10, 10)")
+    with pytest.raises(ValueError, match="Unknown material"):
+        measure(session, material="unobtainium")
 
 
 def test_measure_face_inventory_cylinder(session):

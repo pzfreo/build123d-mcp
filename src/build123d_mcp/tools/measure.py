@@ -1,6 +1,38 @@
 import json
 import math
 
+# Standard densities in g/cm³ for the measure(material=...) presets.
+_DENSITIES = {
+    "steel": 7.85,
+    "stainless": 8.00,
+    "aluminum": 2.70,
+    "6061": 2.70,
+    "brass": 8.50,
+    "copper": 8.96,
+    "titanium": 4.43,
+    "abs": 1.04,
+    "pla": 1.24,
+    "petg": 1.27,
+    "nylon": 1.15,
+}
+
+
+def _resolve_density(density: float, material: str) -> float:
+    """Return the effective density in g/cm³, or 0.0 when none was requested."""
+    if material:
+        if density:
+            raise ValueError("Pass either density or material, not both.")
+        key = material.strip().lower()
+        if key not in _DENSITIES:
+            raise ValueError(
+                f"Unknown material '{material}'. Presets: {', '.join(sorted(_DENSITIES))}. "
+                "Or pass density in g/cm³ directly."
+            )
+        return _DENSITIES[key]
+    if density < 0:
+        raise ValueError("density must be positive (g/cm³).")
+    return density
+
 
 def _resolve_shape(session, object_name: str):
     if object_name:
@@ -93,8 +125,52 @@ def _face_inventory(shape) -> list:
         faces.append(info)
         explorer.Next()
 
-    faces.sort(key=lambda f: (f["type"], -f["area"]))
-    return faces
+    return _condense_inventory(faces)
+
+
+# Analytic surface types stay in the inventory verbatim — their parameters
+# (diameters, axes, angles) are what lets a drawing be verified numerically.
+_ANALYTIC_TYPES = frozenset({"Plane", "Cylinder", "Cone", "Sphere", "Torus"})
+
+
+def _condense_inventory(faces: list) -> list:
+    """Cut inventory noise for LLM consumers (#238): fold non-analytic sliver
+    faces (thread fades etc.) into one summary entry and collapse identical
+    entries into a single record with a count."""
+    total_area = sum(f["area"] for f in faces)
+    # Relative threshold so big parts shed their sliver noise, with an absolute
+    # floor so genuinely small parts keep their genuinely small faces.
+    sliver_threshold = max(0.01, total_area * 1e-4)
+
+    kept: list = []
+    slivers: list = []
+    for f in faces:
+        if f["type"] not in _ANALYTIC_TYPES and f["area"] < sliver_threshold:
+            slivers.append(f)
+        else:
+            kept.append(f)
+
+    # Collapse bit-identical entries (after rounding) into one with a count.
+    grouped: dict = {}
+    for f in kept:
+        key = tuple(sorted(f.items()))
+        if key in grouped:
+            grouped[key]["count"] = grouped[key].get("count", 1) + 1
+        else:
+            grouped[key] = f
+    result = list(grouped.values())
+    result.sort(key=lambda f: (f["type"], -f["area"]))
+
+    if slivers:
+        result.append(
+            {
+                "type": "slivers_folded",
+                "count": len(slivers),
+                "total_area": round(sum(f["area"] for f in slivers), 4),
+                "note": f"non-analytic faces < {round(sliver_threshold, 4)} mm² each",
+            }
+        )
+    return result
 
 
 def _inertia(shape) -> dict:
@@ -183,16 +259,30 @@ def _cross_sections(shape, axis: str = "Z", num_slices: int = 10) -> list:
     return results
 
 
-def measure(session, object_name: str = "") -> str:
+def measure(session, object_name: str = "", density: float = 0.0, material: str = "") -> str:
+    rho = _resolve_density(density, material)
     shape = _resolve_shape(session, object_name)
     bb = shape.bounding_box()
     cx = round((bb.min.X + bb.max.X) / 2, 4)
     cy = round((bb.min.Y + bb.max.Y) / 2, 4)
     cz = round((bb.min.Z + bb.max.Z) / 2, 4)
+
+    inertia = _inertia(shape)
+    mass_fields = {}
+    if rho:
+        # volume mm³ × g/cm³ → g (1 cm³ = 1000 mm³); OCCT's volume inertia
+        # (mm³·mm² = mm⁵) × g/mm³ → true mass moment of inertia in g·mm².
+        mass_fields = {
+            "density_g_cm3": rho,
+            "mass_g": round(shape.volume * rho / 1000, 4),
+        }
+        inertia = {k: round(v * rho / 1000, 4) for k, v in inertia.items()}
+
     return json.dumps(
         {
             "volume": round(shape.volume, 4),
             "area": round(shape.area, 4),
+            **mass_fields,
             "topology": {
                 "faces": len(shape.faces()),
                 "edges": len(shape.edges()),
@@ -211,7 +301,8 @@ def measure(session, object_name: str = "") -> str:
                 "center": {"x": cx, "y": cy, "z": cz},
             },
             "center_of_mass": _center_of_mass(shape),
-            "inertia": _inertia(shape),
+            "inertia": inertia,
+            "inertia_units": "g·mm²" if rho else "mm⁵ (volume inertia; pass density/material)",
             "face_inventory": _face_inventory(shape),
         },
         indent=2,
