@@ -110,7 +110,11 @@ The ceiling can be raised with `--exec-timeout N` or `BUILD123D_EXEC_TIMEOUT=N`
 
 1. Final `measure()` against the spec: envelope, volume sanity, hole inventory.
 2. `export("part.step", "step", object_name="part")` — STEP for CAD interchange,
-   STL for printing.
+   STL for printing. If the project slices with
+   [estampo](https://github.com/estampo/estampo) (`estampo.toml` present),
+   add/update the `[[parts]]` entry for the exported file and run `estampo run`
+   instead of stopping at export — apply `analyze_printability` findings as
+   slicer overrides (see estampo's skill).
 3. Unless the user opts out, save a clean regeneration script to
    `scripts/<part>.py`: the parameter block, the build steps, and the export
    call. Follow the project's existing script layout, and pick a non-colliding
