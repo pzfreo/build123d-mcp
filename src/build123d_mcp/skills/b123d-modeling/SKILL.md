@@ -72,7 +72,9 @@ if the drawing leaves a critical dimension ambiguous. Do not guess silently.
 - Check the bounding box against the drawing envelope, and the face-type
   inventory against the features: each plain drilled hole contributes one
   cylinder face whose diameter must match the callout (Ø6.6 hole → 6.6 mm
-  cylinder in the inventory).
+  cylinder in the inventory). Identical faces are aggregated — `4× Ø6.6 THRU`
+  shows as ONE cylinder entry with `"count": 4`, so sum the counts, don't
+  count entries.
 - Render only after `measure()` agrees with the spec:
   `render_view(save_to="/tmp/part.png")` [SEND: /tmp/part.png].
   Use `clip_plane`/`clip_at` to reveal internal features.

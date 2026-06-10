@@ -130,15 +130,18 @@ Each named object is rendered in a distinct colour. Call this after each signifi
 ### `measure`
 Return a complete geometric summary of a shape in a single call.
 
-**Input:** `object_name` (string, default `""`) — named object from `show()`; empty = `current_shape`
+**Input:**
+- `object_name` (string, default `""`) — named object from `show()`; empty = `current_shape`
+- `density` (float, default `0`) — material density in g/cm³; adds `density_g_cm3` + `mass_g` and scales `inertia` to true mass moments (g·mm²)
+- `material` (string, default `""`) — density preset: `steel`, `stainless`, `aluminum`/`6061`, `brass`, `copper`, `titanium`, `abs`, `pla`, `petg`, `nylon`; mutually exclusive with `density`
 
 **Returns:** JSON with:
-- `volume` (mm³), `area` (mm²)
+- `volume` (mm³), `area` (mm²); plus `density_g_cm3` and `mass_g` when a density was given
 - `topology` — `faces`, `edges`, `vertices`; fastest way to confirm a boolean succeeded (a failed cut leaves counts unchanged)
 - `bounding_box` — per-axis min/max, size, and `center`
 - `center_of_mass` — volumetric centroid
-- `inertia` — 6-component tensor: `Ixx/Iyy/Izz/Ixy/Ixz/Iyz`
-- `face_inventory` — every face classified as `Plane/Cylinder/Cone/Sphere/Torus/BSpline` with area and type-specific params (e.g. cylinder diameter and axis)
+- `inertia` — 6-component tensor: `Ixx/Iyy/Izz/Ixy/Ixz/Iyz`; `inertia_units` states `g·mm²` (density given) or `mm⁵` (volume inertia)
+- `face_inventory` — faces classified as `Plane/Cylinder/Cone/Sphere/Torus/BSpline` with area and type-specific params (e.g. cylinder diameter and axis). Identical faces collapse into one entry with a `count` (4 identical drilled holes → one Cylinder entry, `count: 4`), and non-analytic sliver faces (thread fades) fold into a single `slivers_folded` summary entry
 
 Prefer `measure()` over `render_view()` for verifying geometry — numbers are unambiguous.
 

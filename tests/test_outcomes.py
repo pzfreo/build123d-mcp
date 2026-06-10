@@ -385,6 +385,7 @@ def test_measure_returns_all_fields(session):
     assert "area" in data and data["area"] > 0
     assert "center_of_mass" in data
     assert "inertia" in data
+    assert "inertia_units" in data
     assert "face_inventory" in data
 
 
