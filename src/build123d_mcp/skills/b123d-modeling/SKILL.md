@@ -113,8 +113,21 @@ The ceiling can be raised with `--exec-timeout N` or `BUILD123D_EXEC_TIMEOUT=N`
    STL for printing. If the project slices with
    [estampo](https://github.com/estampo/estampo) (`estampo.toml` present),
    add/update the `[[parts]]` entry for the exported file and run `estampo run`
-   instead of stopping at export — apply `analyze_printability` findings as
-   slicer overrides (see estampo's skill).
+   instead of stopping at export. To seed the entry's overrides, generate an
+   estampo.toml fragment from the printability report with your shell tool:
+
+   ```bash
+   python -c "
+   import augura
+   from build123d import import_step
+   report = augura.analyze(import_step('part.step'))
+   print(augura.to_estampo_toml(report))
+   "
+   ```
+
+   The fragment sets `enable_support`, `brim_type`, and advisory
+   `[slicer.overrides]` comments — review and merge it into the `[[parts]]`
+   entry rather than pasting blindly (see estampo's skill).
 3. Unless the user opts out, save a clean regeneration script to
    `scripts/<part>.py`: the parameter block, the build steps, and the export
    call. Follow the project's existing script layout, and pick a non-colliding

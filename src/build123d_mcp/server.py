@@ -102,6 +102,8 @@ def analyze_printability(
     nozzle: float = 0.4,
     min_perimeters: int = 2,
     build_volume: str = "",
+    bed_tol: float = 0.001,
+    min_feature: float = 0.5,
 ) -> str:
     """Analyse a build123d shape for FDM printability using augura (BREP-exact analysis).
 
@@ -120,9 +122,18 @@ def analyze_printability(
         (default 2).
     build_volume: optional build envelope as 'X Y Z' in mm, e.g. '256 256 256';
         omit to skip the bed-fit check.
+    bed_tol: Z tolerance in mm for identifying bed-contact faces (default 0.001);
+        raise it for parts whose bottom faces sit slightly off Z=0.
+    min_feature: minimum vertical feature size in mm to flag (default 0.5).
     """
     return _session.analyze_printability(
-        object_name, support_angle, nozzle, min_perimeters, build_volume
+        object_name,
+        support_angle,
+        nozzle,
+        min_perimeters,
+        build_volume,
+        bed_tol,
+        min_feature,
     )
 
 

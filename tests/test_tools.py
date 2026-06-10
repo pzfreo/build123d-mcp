@@ -2199,6 +2199,34 @@ def test_analyze_printability_build_volume(session):
     assert "finding" in result
 
 
+def test_analyze_printability_min_feature_threshold(session):
+    from build123d_mcp.tools.analyze_printability import analyze_printability
+
+    # Box with a 0.3 mm-tall boss on top: flagged at the default
+    # min_feature=0.5, not flagged when the threshold is lowered below it.
+    session.execute(
+        "from build123d import *\n"
+        "base = Box(10, 10, 5)\n"
+        "boss = Box(4, 4, 0.3).move(Location((0, 0, 2.65)))\n"
+        "show(base + boss, 'bossed')\n"
+    )
+    flagged = analyze_printability(session, object_name="bossed")
+    data = json.loads(flagged.split("\n\n", 1)[1])
+    assert any(f["kind"] == "min_feature" for f in data["findings"])
+
+    clean = analyze_printability(session, object_name="bossed", min_feature=0.2)
+    data = json.loads(clean.split("\n\n", 1)[1])
+    assert not any(f["kind"] == "min_feature" for f in data["findings"])
+
+
+def test_analyze_printability_bed_tol_param(session):
+    from build123d_mcp.tools.analyze_printability import analyze_printability
+
+    session.execute("from build123d import *\nshow(Box(10, 10, 5), 'box')")
+    result = analyze_printability(session, object_name="box", bed_tol=0.01)
+    assert "finding" in result
+
+
 def test_analyze_printability_bad_build_volume(session):
     from build123d_mcp.tools.analyze_printability import analyze_printability
 

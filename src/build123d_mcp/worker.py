@@ -260,6 +260,8 @@ def _dispatch(session: Any, op: str, args: dict, library_index: Any) -> Any:
             nozzle=args.get("nozzle", 0.4),
             min_perimeters=args.get("min_perimeters", 2),
             build_volume=args.get("build_volume", ""),
+            bed_tol=args.get("bed_tol", 0.001),
+            min_feature=args.get("min_feature", 0.5),
         )
 
     raise ValueError(f"Unknown operation: '{op}'")
@@ -487,6 +489,8 @@ class WorkerSession:
         nozzle: float = 0.4,
         min_perimeters: int = 2,
         build_volume: str = "",
+        bed_tol: float = 0.001,
+        min_feature: float = 0.5,
     ) -> str:
         return self._call(
             "analyze_printability",
@@ -496,6 +500,8 @@ class WorkerSession:
                 "nozzle": nozzle,
                 "min_perimeters": min_perimeters,
                 "build_volume": build_volume,
+                "bed_tol": bed_tol,
+                "min_feature": min_feature,
             },
             self._GEOMETRY_TIMEOUT,
         )
