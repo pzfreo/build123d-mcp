@@ -621,4 +621,7 @@ class WorkerSession:
         return self._call("search_library", {"query": query}, self._SHORT_TIMEOUT)
 
     def load_part(self, name: str, params: str = "") -> str:
-        return self._call("load_part", {"name": name, "params": params}, self._GEOMETRY_TIMEOUT)
+        # Library part scripts can build heavy geometry (threads, gears) just
+        # like a STEP import, so honour the exec-timeout knob here too (#229).
+        timeout = max(self._GEOMETRY_TIMEOUT, self._exec_timeout)
+        return self._call("load_part", {"name": name, "params": params}, timeout)

@@ -269,6 +269,10 @@ mcp__build123d-mcp__suggest_view_layout(
 )
 ```
 
+If the part is not in the session (e.g. the import failed or timed out), pass
+`extents=[x_size, y_size, z_size]` (+ optional `centroid=[x, y, z]`) instead of
+`object_name` — the layout only needs the bounding box, not live geometry.
+
 Check `result["warnings"]` — if any view overlaps the title block or another view, the
 tool says so and may suggest a smaller scale or larger page. Address warnings before
 continuing. Then extract the positions:

@@ -46,7 +46,6 @@ def test_geometry_heavy_ops_use_geometry_timeout():
     ws.diff_snapshot("s")
     ws.resolve("a", ".faces()")
     ws.suggest_view_layout("a")
-    ws.load_part("p")
 
     assert all(t == WorkerSession._GEOMETRY_TIMEOUT for _op, t in record), record
     assert WorkerSession._GEOMETRY_TIMEOUT > WorkerSession._SHORT_TIMEOUT
@@ -68,6 +67,21 @@ def test_import_cad_file_keeps_export_floor():
     ws = _proxy_session(record, exec_timeout=10)
     ws.import_cad_file("part.step")
     assert record == [("import_cad_file", WorkerSession._EXPORT_TIMEOUT)]
+
+
+def test_load_part_honours_exec_timeout():
+    # Library part scripts can build heavy geometry just like a STEP import.
+    record = []
+    ws = _proxy_session(record, exec_timeout=300)
+    ws.load_part("worm_gear")
+    assert record == [("load_part", 300)]
+
+
+def test_load_part_keeps_geometry_floor():
+    record = []
+    ws = _proxy_session(record, exec_timeout=10)
+    ws.load_part("worm_gear")
+    assert record == [("load_part", WorkerSession._GEOMETRY_TIMEOUT)]
 
 
 def test_bookkeeping_ops_keep_short_timeout():
