@@ -323,9 +323,20 @@ class WorkerSession:
         self._conn = parent_conn
 
         if not self._conn.poll(_WORKER_READY_TIMEOUT):
+            exitcode = self._proc.exitcode  # read before kill: None means still running
             self._proc.kill()
             self._proc.join(5)
-            raise RuntimeError("Worker process failed to start within timeout.")
+            detail = (
+                f"the worker exited with code {exitcode} before signalling ready"
+                if exitcode is not None
+                else f"the worker did not signal ready within {_WORKER_READY_TIMEOUT}s"
+            )
+            raise RuntimeError(
+                f"Worker process failed to start: {detail}. If your MCP host blocks "
+                "subprocess creation (seen with sandboxed hosts on Windows, issue #143), "
+                "relaunch the server with --in-process or BUILD123D_IN_PROCESS=1 — a "
+                "degraded mode without crash containment or operation timeouts."
+            )
         self._conn.recv()  # consume the ready signal
 
     def _kill_worker(self) -> None:
@@ -635,3 +646,61 @@ class WorkerSession:
         # like a STEP import, so honour the exec-timeout knob here too (#229).
         timeout = max(self._GEOMETRY_TIMEOUT, self._exec_timeout)
         return self._call("load_part", {"name": name, "params": params}, timeout)
+
+
+class InProcessSession(WorkerSession):
+    """WorkerSession-compatible session that skips the worker subprocess.
+
+    Fallback for MCP hosts that block subprocess creation, where the spawn'd
+    worker never signals ready (#143: Codex desktop on Windows). The Session
+    and all OCC/VTK work live in the server process, so this mode is degraded
+    by design:
+
+    - no crash containment — an OCCT segfault kills the whole MCP server;
+    - no operation timeouts — a runaway execute() blocks the server (the
+      in-Session SIGALRM guard still applies on Unix main threads, but not
+      on Windows, which is exactly where this mode is needed);
+    - OCC/TBB threads share the process with the MCP event loop.
+
+    Enabled via --in-process / BUILD123D_IN_PROCESS=1.
+    """
+
+    def _start_worker(self) -> None:
+        # Mirror worker_main(): security overrides, Session, optional library.
+        if self._allow_all_imports or self._extra_allowed_imports:
+            import build123d_mcp.security as _sec
+
+            if self._allow_all_imports:
+                _sec.ALLOW_ALL_IMPORTS = True
+            if self._extra_allowed_imports:
+                _sec.EXTRA_ALLOWED_IMPORTS.update(self._extra_allowed_imports)
+
+        from build123d_mcp.session import Session
+
+        self._session = Session(exec_timeout=self._exec_timeout)
+        self._library_index = None
+        if self._library_path:
+            from build123d_mcp.tools.library import _LibraryIndex
+
+            self._library_index = _LibraryIndex(self._library_path)
+
+    def _kill_worker(self) -> None:
+        pass
+
+    def reset(self) -> str:
+        # The base method short-circuits via self._proc.is_alive(); there is
+        # no process here, so always dispatch the real reset.
+        return self._call("reset", {}, self._SHORT_TIMEOUT)
+
+    def _call(self, op: str, args: dict, timeout: int) -> Any:
+        # Same error contract as the worker path: tool exceptions surface as
+        # RuntimeError("TypeName: message"). ExecutionTimeout is re-raised
+        # as itself so execute()'s except clause formats it identically.
+        from build123d_mcp.security import ExecutionTimeout
+
+        try:
+            return _dispatch(self._session, op, args, self._library_index)
+        except ExecutionTimeout:
+            raise
+        except Exception as exc:
+            raise RuntimeError(f"{type(exc).__name__}: {exc}") from exc

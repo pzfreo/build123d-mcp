@@ -50,7 +50,7 @@ def main():
     from importlib.metadata import version
 
     from build123d_mcp import server
-    from build123d_mcp.worker import WorkerSession
+    from build123d_mcp.worker import InProcessSession, WorkerSession
 
     if len(sys.argv) > 1 and sys.argv[1] == "install-skill":
         _cmd_install_skill(sys.argv[2:])
@@ -125,6 +125,16 @@ Part library file format (Python, any .py file under --library path):
         help="Execution time limit in seconds for user code (default: 120). "
         "Overrides BUILD123D_EXEC_TIMEOUT env var.",
     )
+    parser.add_argument(
+        "--in-process",
+        action="store_true",
+        default=os.environ.get("BUILD123D_IN_PROCESS", "").lower() in ("1", "true", "yes"),
+        help="Run the CAD session in the server process instead of a worker "
+        "subprocess. Degraded mode for MCP hosts that block subprocess creation "
+        "(seen with sandboxed hosts on Windows): no crash containment, no "
+        "operation timeouts. Use only if the server reports 'Worker process "
+        "failed to start'. Overrides BUILD123D_IN_PROCESS env var.",
+    )
     args = parser.parse_args()
 
     if args.library and not os.path.isdir(args.library):
@@ -140,8 +150,9 @@ Part library file format (Python, any .py file under --library path):
         if extra_imports:
             _sec.EXTRA_ALLOWED_IMPORTS.update(extra_imports)
 
+    session_cls = InProcessSession if args.in_process else WorkerSession
     server.configure(
-        WorkerSession(
+        session_cls(
             library_path=args.library,
             allow_all_imports=args.allow_all_imports,
             extra_allowed_imports=extra_imports,
