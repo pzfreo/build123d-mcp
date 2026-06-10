@@ -47,7 +47,7 @@ tools/interference.py — Boolean intersection check between two named shapes
 ## Session model
 
 - **Namespace persists** across `execute()` calls — imports and variables accumulate.
-- **`current_shape`** is auto-detected after each execute: prefers a variable named `result`, then any new `BuildPart` or `Shape`.
+- **`current_shape`** is auto-detected after each execute: an explicit `show()`/`annotate()` in the call wins, then a variable named `result`, then any new `BuildPart` or `Shape`.
 - **`objects` dict** holds named shapes registered via `show(shape, name=None)`. Name defaults to `"shape"` if omitted.
 - **Snapshots** save `current_shape` + `objects` only — the Python namespace is NOT restored on `restore_snapshot()`.
 - **`reset()`** clears everything: namespace, shapes, objects, snapshots.

@@ -39,6 +39,8 @@ def test_session_resource_reflects_live_state(patched_server):
     s.execute("show(Cylinder(3, 15), 'pin')")
     s.save_snapshot("v1")
     data = json.loads(srv.build123d_session_state())
-    assert data["current_shape"]["volume"] == pytest.approx(1000, rel=0.01)
+    # show() registers 'pin' as current_shape (explicit registration outranks
+    # the stale `result` Box from the earlier call — #236).
+    assert data["current_shape"]["volume"] == pytest.approx(3**2 * 3.14159 * 15, rel=0.01)
     assert "pin" in data["objects"]
     assert "v1" in data["snapshots"]

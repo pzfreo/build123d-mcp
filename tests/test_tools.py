@@ -206,6 +206,42 @@ def test_execute_warns_on_degenerate(session):
     assert "degenerate" in out
 
 
+def test_show_outranks_leftover_2d_object(session):
+    """A show()-registered solid must not be displaced by a leftover 2D object
+    created in the same execute() — the false 'volume ≈ 0' alarm from #236."""
+    out = execute_code(
+        session,
+        "peg = Cylinder(2, 8)\nsk = Rectangle(1.3, 4.8)\nshow(peg, 'peg')",
+    )
+    assert session.current_shape is session.objects["peg"]
+    assert "degenerate" not in out
+
+
+def test_show_outranks_stale_result_variable(session):
+    """show() in a later call wins over a `result` variable left from an
+    earlier call (#236)."""
+    execute_code(session, "result = Box(10, 10, 5)")
+    execute_code(session, "show(Cylinder(3, 10), 'cyl')")
+    assert session.current_shape is session.objects["cyl"]
+
+
+def test_variable_scan_resumes_after_show_call(session):
+    """The explicit-registration override applies only to the call that made
+    it — the next execute()'s variable scan works as before."""
+    execute_code(session, "show(Box(10, 10, 5), 'base')")
+    execute_code(session, "cyl = Cylinder(3, 10)")
+    assert session.current_shape is session.namespace["cyl"]
+
+
+def test_2d_shape_gets_note_not_degenerate_warning(session):
+    """A live sketch as current shape is reported as 2D geometry, not as a
+    failed boolean (#236)."""
+    execute_code(session, "show(Box(10, 10, 5), 'base')")
+    out = execute_code(session, "sk = Rectangle(5, 5)")
+    assert "degenerate" not in out
+    assert "no solid volume" in out
+
+
 def test_execute_move_does_not_warn(session):
     """A pure translation changes bbox center, not size/topology/volume — must
     not trigger the no-op warning."""

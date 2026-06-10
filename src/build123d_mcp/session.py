@@ -29,6 +29,10 @@ class Session:
         self.drawing_page: dict[str, Any] | None = None
         self.geometry_refs: dict[str, Any] = {}
         self.execute_history: list[str] = []
+        # True while the current execute() call has explicitly registered a
+        # shape via show()/annotate()/register_centerline() — blocks the
+        # post-exec variable scan from overriding that registration (#236).
+        self._shape_explicitly_set = False
         self._inject_builtins()
 
     def _inject_builtins(self) -> None:
@@ -129,6 +133,7 @@ class Session:
             drawing_annotations[name] = meta
             objects[name] = shape
             session_ref.current_shape = shape
+            session_ref._shape_explicitly_set = True
             print(f"Annotated '{name}': {meta.get('label_str', '')}")
 
         session_ref.namespace["annotate"] = annotate
@@ -138,6 +143,7 @@ class Session:
                 name = "shape"
             objects[name] = shape
             session_ref.current_shape = shape
+            session_ref._shape_explicitly_set = True
             try:
                 vol = shape.volume
                 faces = len(shape.faces())
@@ -192,6 +198,7 @@ class Session:
             drawing_annotations[name] = {"type": "centerline"}
             objects[name] = shape
             session_ref.current_shape = shape
+            session_ref._shape_explicitly_set = True
             print(f"Registered centerline '{name}'")
 
         self.namespace["register_centerline"] = register_centerline
@@ -305,12 +312,25 @@ class Session:
                 "— boolean may have missed (no intersection?)"
             )
 
-        # Degenerate: previously had volume, now ≈ 0. Failed loft/extrude/intersection.
+        # Degenerate: previously had volume, now ≈ 0. Failed loft/extrude/intersection —
+        # unless the shape is live 2D/1D geometry (a sketch, face, or wire), which has
+        # faces/edges but no solids; an empty boolean result has none of the three (#236).
         if b["vol"] > 1e-9 and a["vol"] < 1e-9:
-            warnings.append(
-                "Warning: resulting shape has volume ≈ 0 — degenerate "
-                "(failed loft/extrude/intersection?)"
-            )
+            try:
+                has_solids = bool(shape.solids())
+            except Exception:
+                has_solids = True  # can't tell — keep the strong warning
+            if not has_solids and (a["faces"] > 0 or a["edges"] > 0):
+                warnings.append(
+                    f"Note: current shape is a {type(shape).__name__} with no solid "
+                    "volume (2D/1D geometry). If this call built a solid, register it "
+                    "with show(part, 'name') or assign it to `result`."
+                )
+            else:
+                warnings.append(
+                    "Warning: resulting shape has volume ≈ 0 — degenerate "
+                    "(failed loft/extrude/intersection?)"
+                )
 
         return diag, warnings
 
@@ -347,6 +367,7 @@ class Session:
         shape_before = self.current_shape
         objects_before = dict(self.objects)
         annotations_before = dict(self.drawing_annotations)
+        self._shape_explicitly_set = False
 
         buf = io.StringIO()
         exc: Exception | None = None
@@ -498,6 +519,14 @@ class Session:
         return {"type": type(exc).__name__, "message": str(exc), "line": lineno, "excerpt": excerpt}
 
     def _update_current_shape(self, new_keys: set[str]) -> None:
+        # show()/annotate()/register_centerline() set current_shape explicitly,
+        # and that registration must win: the new-variable scan below iterates
+        # an unordered set and can land on an incidental leftover (e.g. the
+        # sketch a solid was revolved from), making the degenerate-shape
+        # warning fire on the wrong object (#236).
+        if self._shape_explicitly_set:
+            return
+
         try:
             from build123d import BuildPart, Shape
         except ImportError:
