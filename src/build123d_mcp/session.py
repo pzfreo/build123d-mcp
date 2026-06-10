@@ -539,8 +539,9 @@ class Session:
             self.current_shape = ns["result"]
             return
 
-        # Scan newly created variables for BuildPart or Shape
-        for key in new_keys:
+        # Scan newly created variables for BuildPart or Shape. Sorted so that
+        # which variable wins is deterministic (set order is hash-seeded).
+        for key in sorted(new_keys):
             if key.startswith("_"):
                 continue
             obj = ns.get(key)
