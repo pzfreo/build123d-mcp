@@ -1224,6 +1224,25 @@ def test_export_multi_format(session, tmp_path, monkeypatch):
     assert ".stl" in result
 
 
+def test_export_echoes_sanity_line_3d(session, tmp_path, monkeypatch):
+    """Export result reports volume/bbox/faces of the written solid (#241)."""
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Box(10, 10, 10)")
+    result = export_file(session, "out", "step")
+    assert "volume 1000" in result
+    assert "10×10×10 mm" in result
+    assert "6 faces" in result
+
+
+def test_export_echoes_sanity_line_2d(session, tmp_path, monkeypatch):
+    """2D exports report bbox/edge count instead of volume (#241)."""
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "show(Rectangle(20, 10), 'sk')")
+    result = export_file(session, "out", "dxf", object_name="sk")
+    assert "2D drawing" in result
+    assert "edges" in result
+
+
 def test_export_invalid_format(session):
     execute_code(session, "result = Box(10, 10, 10)")
     with pytest.raises(ValueError, match="Unknown format"):
@@ -2205,9 +2224,19 @@ def test_version_returns_package_versions():
 
     info = version_info()
     assert isinstance(info, dict)
-    for key in ("build123d-mcp", "build123d", "build123d-drafting-helpers"):
+    for key in (
+        "build123d-mcp",
+        "build123d",
+        "build123d-drafting-helpers",
+        "bd_warehouse",
+        "augura",
+    ):
         assert key in info, f"version_info() missing key {key!r}"
         assert isinstance(info[key], str) and info[key], f"empty version for {key}"
+    # Companion packages are hard deps of this distribution — they must report
+    # a real version, otherwise the #240 discoverability promise is broken.
+    assert info["bd_warehouse"] != "unknown"
+    assert info["augura"] != "unknown"
 
 
 def test_version_build123d_mcp_matches_metadata():

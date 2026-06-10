@@ -145,7 +145,7 @@ def cross_sections(object_name: str = "", axis: str = "Z", num_slices: int = 10)
 
 @mcp.tool()
 def export(filename: str, format: str = "step", object_name: str = "") -> str:
-    """Export model. format: step, stl, dxf, svg, or comma-separated list e.g. 'step,stl' or 'dxf,svg'. 3D shapes (solids) export to step/stl; 2D shapes (Sketches and dimensioned drawings composed via build123d.drafting) export to dxf/svg. Mixing 2D and 3D formats for the same shape errors with a clear message. object_name: named object from show(), '*' to export all named shapes as a combined assembly (default: current shape). STEP exports carry the session names as labels — single-object exports use the object_name, '*' exports produce a Compound labelled 'assembly' with each child labelled by its show() name. Downstream CAD tools (FreeCAD, Fusion) will see the structured assembly with named bodies. Use dxf for engineering-drawing handoff to other CAD tools; svg for embedding in docs/wikis."""
+    """Export model. format: step, stl, dxf, svg, or comma-separated list e.g. 'step,stl' or 'dxf,svg'. 3D shapes (solids) export to step/stl; 2D shapes (Sketches and dimensioned drawings composed via build123d.drafting) export to dxf/svg. Mixing 2D and 3D formats for the same shape errors with a clear message. object_name: named object from show(), '*' to export all named shapes as a combined assembly (default: current shape). STEP exports carry the session names as labels — single-object exports use the object_name, '*' exports produce a Compound labelled 'assembly' with each child labelled by its show() name. Downstream CAD tools (FreeCAD, Fusion) will see the structured assembly with named bodies. Use dxf for engineering-drawing handoff to other CAD tools; svg for embedding in docs/wikis. The result echoes the exported shape's volume/bbox/face count (or bbox/edge count for 2D) as a final sanity check that the right, non-degenerate object was written."""
     return _session.export_file(filename, format, object_name)
 
 
@@ -402,7 +402,7 @@ def last_error() -> str:
 
 @mcp.tool()
 def version() -> str:
-    """Return the installed versions of the build123d-mcp server and its key dependencies (build123d, build123d-drafting-helpers). Use this to confirm which server build is running — e.g. to check whether a feature or fix is present, or whether the client is talking to a stale install."""
+    """Return the installed versions of the build123d-mcp server, its key dependencies (build123d, build123d-drafting-helpers), and the companion packages importable inside execute() (bd_warehouse for threads/fasteners/gears/bearings, augura for printability analysis). Use this to confirm which server build is running — e.g. to check whether a feature or fix is present, or whether the client is talking to a stale install."""
     # Computed in-process (pure importlib.metadata, same venv as the worker), so
     # it still answers when the worker subprocess is down — exactly the stale /
     # broken-install case this tool exists to diagnose.
@@ -468,7 +468,10 @@ BUILD123D-MCP WORKFLOW GUIDE
    Call load_part("name", '{"param": value}') immediately — no second lookup needed.
    Unspecified parameters use the defaults shown in search results.
 
-9. BD_WAREHOUSE FASTENERS
+9. BD_WAREHOUSE FASTENERS, THREADS, GEARS, BEARINGS
+   bd_warehouse ships with this server — import it directly in execute() instead of
+   hand-rolling threads, fasteners, gears, or bearings (a 5-line Thread beats a fiddly
+   helical sweep). version() lists installed companion packages.
    Read the build123d://bd_warehouse resource before scripting any fastener geometry.
    Always probe sizes before writing the script to get the correct string format:
      execute('from bd_warehouse.fastener import CounterSunkScrew; print(CounterSunkScrew.sizes("iso10642"))')

@@ -141,6 +141,21 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
         _write_one(shape, abs_path, fmt)
         exported.append(abs_path)
 
+    # Echo what was written so the (typically final) export step doubles as a
+    # sanity check that the right, non-degenerate object landed in the file (#241).
+    sanity = _sanity_line(shape)
+    suffix = f"\n{sanity}" if sanity else ""
     if len(exported) == 1:
-        return f"Exported to {exported[0]}"
-    return "Exported to:\n" + "\n".join(exported)
+        return f"Exported to {exported[0]}{suffix}"
+    return "Exported to:\n" + "\n".join(exported) + suffix
+
+
+def _sanity_line(shape) -> str:
+    try:
+        bb = shape.bounding_box()
+        size = f"{bb.size.X:.4g}×{bb.size.Y:.4g}×{bb.size.Z:.4g} mm"
+        if _is_2d(shape):
+            return f"2D drawing: bbox {size}, {len(shape.edges())} edges"
+        return f"volume {shape.volume:.4g} mm³, bbox {size}, {len(shape.faces())} faces"
+    except Exception:
+        return ""

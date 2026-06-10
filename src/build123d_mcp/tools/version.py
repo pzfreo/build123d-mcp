@@ -10,8 +10,10 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
 
-# distribution names (as on PyPI); these double as the display labels
-_PACKAGES = ("build123d-mcp", "build123d", "build123d-drafting-helpers")
+# distribution names (as on PyPI); these double as the display labels.
+# Companion packages importable inside execute() (bd_warehouse, augura) are
+# listed so agents can discover them instead of hand-rolling threads/gears (#240).
+_PACKAGES = ("build123d-mcp", "build123d", "build123d-drafting-helpers", "bd_warehouse", "augura")
 
 
 def version_info() -> dict:

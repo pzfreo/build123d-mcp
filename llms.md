@@ -45,11 +45,11 @@ show(axle, "axle")
 ## Tools
 
 ### `version`
-Return the server version string.
+Return installed versions of the server, key dependencies, and companion packages importable inside `execute()` (`bd_warehouse` for threads/fasteners/gears/bearings, `augura` for printability analysis).
 
 **No inputs.**
 
-**Returns:** version string, e.g. `"0.3.5"`
+**Returns:** one `name: version` line per package
 
 ---
 
@@ -194,7 +194,7 @@ Export a shape to a file.
 - `format` (string, default `"step"`) — `"step"`, `"stl"`, `"dxf"`, `"svg"`, or comma-separated like `"step,stl"` or `"dxf,svg"`. 3D solids → step/stl; 2D Sketches/dimensioned drawings → dxf/svg. Mixing dimensions across that boundary errors with a clear pointer at the right tool.
 - `object_name` (string, default `""`) — named object from `show()`; `"*"` to export all named objects as a combined assembly; empty = `current_shape`
 
-**Returns:** path(s) of exported file(s)
+**Returns:** path(s) of exported file(s), plus a sanity line echoing the exported shape's volume/bbox/face count (bbox/edge count for 2D) — confirms the right, non-degenerate object was written
 
 STEP preserves exact geometry for downstream CAD tools. STL is for mesh-based workflows (3D printing, slicers, GitHub preview).
 
