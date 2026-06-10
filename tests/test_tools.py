@@ -1607,6 +1607,76 @@ def test_render_view_azimuth_and_elevation_returns_png(session):
     assert out["png"][:8] == PNG_MAGIC
 
 
+# --- _viewport_origin_for azimuth/elevation math (#222) ---
+
+
+def _viewport_direction(direction, azimuth=0.0, elevation=0.0):
+    """Unit view direction (look_at -> origin) and up from _viewport_origin_for."""
+    import math
+
+    from build123d import Box
+
+    from build123d_mcp.tools.render import _viewport_origin_for
+
+    shapes = [("s", Box(10, 10, 10), None)]
+    origin, up, look_at = _viewport_origin_for(direction, shapes, azimuth, elevation)
+    v = [o - l for o, l in zip(origin, look_at)]
+    n = math.sqrt(sum(c * c for c in v))
+    return tuple(c / n for c in v), up
+
+
+def test_viewport_top_elevation_tilts_toward_y():
+    import math
+
+    e = math.radians(30)
+    d, up = _viewport_direction("top", elevation=30.0)
+    # VTK Elevation() rotates about the camera right axis (d x up); for the
+    # top baseline (d=(0,0,1), up=(0,1,0)) the camera tilts toward +Y.
+    assert d == pytest.approx((0.0, math.sin(e), math.cos(e)), abs=1e-9)
+    # up is carried along (OrthogonalizeViewUp), staying perpendicular to d.
+    assert up == pytest.approx((0.0, math.cos(e), -math.sin(e)), abs=1e-9)
+
+
+def test_viewport_top_azimuth_rotates_about_up():
+    d, _up = _viewport_direction("top", azimuth=90.0)
+    # Azimuth rotates about the view-up vector (0,1,0): top swings to side.
+    assert d == pytest.approx((1.0, 0.0, 0.0), abs=1e-9)
+
+
+def test_viewport_front_elevation_matches_z_up_baseline():
+    import math
+
+    e = math.radians(30)
+    d, _up = _viewport_direction("front", elevation=30.0)
+    # Z-up views must keep the pre-#222 behaviour: front tilts up toward +Z.
+    assert d == pytest.approx((0.0, -math.cos(e), math.sin(e)), abs=1e-9)
+
+
+def test_viewport_iso_elevation_matches_z_up_baseline():
+    import math
+
+    e = math.radians(30)
+    d, _up = _viewport_direction("iso", elevation=30.0)
+    expected = (
+        math.cos(e) - math.sin(e) / math.sqrt(2),
+        math.cos(e) - math.sin(e) / math.sqrt(2),
+        math.sqrt(2) * math.sin(e) + math.cos(e),
+    )
+    n = math.sqrt(sum(c * c for c in expected))
+    assert d == pytest.approx(tuple(c / n for c in expected), abs=1e-9)
+
+
+def test_viewport_front_elevation_90_up_not_degenerate():
+    d, up = _viewport_direction("front", elevation=90.0)
+    # At elevation=90 the old code left up parallel to the view direction.
+    cross = (
+        d[1] * up[2] - d[2] * up[1],
+        d[2] * up[0] - d[0] * up[2],
+        d[0] * up[1] - d[1] * up[0],
+    )
+    assert max(abs(c) for c in cross) > 0.5
+
+
 # --- render_view clip_at (new) ---
 
 

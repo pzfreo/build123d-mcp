@@ -494,21 +494,28 @@ def _viewport_origin_for(direction: str, shapes, azimuth: float, elevation: floa
     }.get(direction, (1.0, 1.0, 1.0))
     up = (0.0, 1.0, 0.0) if direction == "top" else (0.0, 0.0, 1.0)
 
-    # Apply azimuth/elevation as rotations of the direction vector
+    # Apply azimuth/elevation mirroring VTK camera semantics: Azimuth()
+    # rotates the position about the view-up axis, Elevation() about the
+    # camera's right axis (direction x up); up is carried along with the
+    # elevation rotation (OrthogonalizeViewUp).
+    def _rodrigues(v, axis, angle_rad):
+        k = Vector(*axis).normalized()
+        vv = Vector(*v)
+        cos_a, sin_a = math.cos(angle_rad), math.sin(angle_rad)
+        out = vv * cos_a + k.cross(vv) * sin_a + k * (k.dot(vv) * (1.0 - cos_a))
+        return (out.X, out.Y, out.Z)
+
+    d = (dx, dy, dz)
     if azimuth != 0.0:
-        a = math.radians(azimuth)
-        dx, dy = dx * math.cos(a) - dy * math.sin(a), dx * math.sin(a) + dy * math.cos(a)
+        d = _rodrigues(d, up, math.radians(azimuth))
     if elevation != 0.0:
-        e = math.radians(elevation)
-        # Rotate in the plane spanned by current direction and up
-        ux, uy, uz = up
-        # simple elevation: tilt the dz component
-        horiz = math.sqrt(dx * dx + dy * dy)
-        new_horiz = horiz * math.cos(e) - dz * math.sin(e)
-        dz = horiz * math.sin(e) + dz * math.cos(e)
-        if horiz > 1e-9:
-            dx = dx * (new_horiz / horiz)
-            dy = dy * (new_horiz / horiz)
+        right = Vector(*d).cross(Vector(*up))
+        if right.length > 1e-9:
+            axis = (right.X, right.Y, right.Z)
+            e = math.radians(elevation)
+            d = _rodrigues(d, axis, e)
+            up = _rodrigues(up, axis, e)
+    dx, dy, dz = d
 
     # Distance: 10x the largest bounding extent across all shapes (effectively orthographic)
     extents = []
