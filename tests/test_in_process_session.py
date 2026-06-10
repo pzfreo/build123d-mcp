@@ -3,6 +3,11 @@
 Verifies the WorkerSession-compatible surface works with the Session living
 in-process, and that the error contract matches the worker path (tool
 exceptions surface as RuntimeError("TypeName: message")).
+
+The parametrized smoke test reuses test_worker_boundary_coverage's per-op
+inventory, so every stateful tool is exercised against InProcessSession — and
+any future WorkerSession proxy method that touches self._proc directly (the
+way reset() does) fails here instead of in a sandboxed user's session.
 """
 
 import json
@@ -12,12 +17,33 @@ import pytest
 
 from build123d_mcp.worker import InProcessSession
 
+from .test_worker_boundary_coverage import SESSION_STATEFUL_TOOLS
+
 
 @pytest.fixture
 def session():
     s = InProcessSession(exec_timeout=60)
     s.execute("from build123d import *\nshow(Box(10, 10, 10), 'b')")
     return s
+
+
+@pytest.fixture
+def seeded_in_process(tmp_path):
+    """Same geometry seed as test_worker_boundary_coverage's seeded_ws."""
+    s = InProcessSession(exec_timeout=60)
+    s.execute(
+        "from build123d import *\n"
+        "show(Box(1, 1, 1), 'a')\n"
+        "show(Box(1, 1, 1).move(Location((0, 0, 1))), 'b')\n"
+    )
+    s.save_snapshot("snap")
+    return s
+
+
+@pytest.mark.parametrize("op", sorted(SESSION_STATEFUL_TOOLS))
+def test_stateful_tool_works_in_process(seeded_in_process, tmp_path, op):
+    """Every stateful tool from the worker smoke inventory works in-process."""
+    SESSION_STATEFUL_TOOLS[op](seeded_in_process, tmp_path)
 
 
 def test_execute_and_show(session):

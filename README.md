@@ -118,7 +118,7 @@ Unlike CAD MCP servers that simply `exec()` user code, build123d-mcp ships with 
 
 1. **AST inspection** — rejects imports of anything outside the allowlist (`build123d`, `bd_warehouse`, `math`, `numpy`, `inspect`, plus the rest of the safe stdlib subset and a curated set of geometric OCP submodules), blocks `eval`/`exec`/`compile`/`open`, and refuses dunder attribute access (the most common Python sandbox-escape route).
 2. **Restricted builtins** — the `__builtins__` exposed to user code has the dangerous functions removed and `__import__` rewrapped to enforce the same allowlist at runtime, so a payload that bypasses the AST check still hits the wall on import.
-3. **Execution timeout** — wall-clock limit (default 120 s, `--exec-timeout N` to override) enforced via SIGALRM, with the worker process restarted on breach so a hung script can't hold the session forever.
+3. **Execution timeout** — wall-clock limit (default 120 s, `--exec-timeout N` to override) enforced via SIGALRM, with the worker process restarted on breach so a hung script can't hold the session forever. In `--in-process` mode this layer is absent on Windows (no SIGALRM, no worker to restart) — a runaway script blocks the server.
 
 Filesystem I/O modules (`os`, `pathlib`, `shutil`), networking (`socket`, `urllib`, `requests`), shell access (`subprocess`), and the OCP file-I/O submodules (`STEPControl`, `IGESControl`, `OSD`, …) are **all blocked**. Path traversal is rejected for `export()` and `render_view(save_to=)`.
 
