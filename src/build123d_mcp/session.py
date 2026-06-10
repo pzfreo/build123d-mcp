@@ -13,7 +13,15 @@ from build123d_mcp.security import (
 
 # Names injected by the session itself — excluded from rollback and new-key detection.
 _INJECTED = frozenset(
-    {"__builtins__", "show", "named_face", "annotate", "register_centerline", "set_page"}
+    {
+        "__builtins__",
+        "show",
+        "named_face",
+        "find_edges",
+        "annotate",
+        "register_centerline",
+        "set_page",
+    }
 )
 
 
@@ -226,6 +234,72 @@ class Session:
                     )
 
         self.namespace["named_face"] = named_face
+
+        def find_edges(
+            shape: Any,
+            geom: str | None = None,
+            radius: float | None = None,
+            at_z: float | None = None,
+            length: float | None = None,
+            tol: float = 0.05,
+        ) -> Any:
+            """Filter shape.edges() by geometry type, radius, Z position, and/or
+            length — the bread-and-butter selection for fillet/chamfer on turned
+            parts ("the circular edge of radius 4.25 at Z=10.2") without
+            hand-rolled filtering (#239).
+
+            Args:
+                shape: the part to select edges from.
+                geom: edge geometry type name, e.g. 'circle', 'line', 'bspline'.
+                radius: keep circular edges with this radius (within tol).
+                at_z: keep edges whose center Z is within tol of this value.
+                length: keep edges with this length (within tol).
+                tol: tolerance for radius/at_z/length matching (default 0.05 mm).
+
+            Returns a ShapeList; prints the match count plus the radii and Z
+            levels found so a wrong selection is visible immediately.
+            """
+            from build123d import GeomType, ShapeList
+
+            def _radius(e: Any) -> float | None:
+                try:
+                    return e.radius
+                except Exception:
+                    return None
+
+            edges = shape.edges()
+            if geom is not None:
+                try:
+                    gt = GeomType[geom.upper()]
+                except KeyError:
+                    names = ", ".join(g.name.lower() for g in GeomType)
+                    raise ValueError(f"Unknown geom '{geom}'. Use one of: {names}") from None
+                edges = edges.filter_by(gt)
+            if radius is not None:
+                edges = [
+                    e for e in edges if (r := _radius(e)) is not None and abs(r - radius) <= tol
+                ]
+            if at_z is not None:
+                edges = [e for e in edges if abs(e.center().Z - at_z) <= tol]
+            if length is not None:
+                edges = [e for e in edges if abs(e.length - length) <= tol]
+
+            result = ShapeList(edges)
+            radii = sorted({round(r, 3) for e in result if (r := _radius(e)) is not None})
+            zs = sorted({round(e.center().Z, 3) for e in result})
+
+            def _fmt(vals: list) -> str:
+                return str(vals[:8])[:-1] + ", …]" if len(vals) > 8 else str(vals)
+
+            desc = f"find_edges: {len(result)} edge(s) matched"
+            if radii:
+                desc += f", radii {_fmt(radii)}"
+            if zs:
+                desc += f", Z levels {_fmt(zs)}"
+            print(desc)
+            return result
+
+        self.namespace["find_edges"] = find_edges
 
     def _shape_summary(self, shape) -> dict | None:
         """Pull volume/bbox/topology from a shape; None if anything errors."""

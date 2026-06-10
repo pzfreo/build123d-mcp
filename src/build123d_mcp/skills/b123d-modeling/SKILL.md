@@ -153,6 +153,10 @@ The ceiling can be raised with `--exec-timeout N` or `BUILD123D_EXEC_TIMEOUT=N`
 - Selector indices are not stable across rebuilds. Use
   `resolve("part", ".faces().sort_by(Axis.Z)[-1]", label="top")` to confirm a
   selector grabs the entity you think it does.
+- For fillet/chamfer edge selection on turned parts, use the built-in
+  `find_edges(shape, geom="circle", radius=4.25, at_z=10.2)` instead of
+  hand-rolled filtering — it prints the match count, radii, and Z levels so a
+  wrong selection is visible before the fillet runs.
 - Errors from `execute()` come back with a failure classification and fix hint —
   read them before retrying; `last_error()` has the line number and excerpt.
 - `show()` stores by reference: mutating a shape after `show()` changes the

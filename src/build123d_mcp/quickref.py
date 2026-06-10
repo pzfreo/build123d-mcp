@@ -314,7 +314,8 @@ show(result, "part_unchanged_by_private")""",
 ## MCP server conventions
 - Name the final shape 'result' OR call show() — both trigger current_shape auto-detection
 - show(shape, "name")      registers object, prints vol + face count as immediate confirmation
-- named_face(shape, "top") returns the highest-Z face; also: bottom/front/back/left/right""",
+- named_face(shape, "top") returns the highest-Z face; also: bottom/front/back/left/right
+- find_edges(shape, geom="circle", radius=4.25, at_z=10.2) filters edges for fillet/chamfer; prints count + radii + Z levels""",
     ),
     Section(
         text="""\

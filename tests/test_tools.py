@@ -1714,6 +1714,86 @@ def test_face_unknown_name_raises(session):
     assert "Error" in result and "diagonal" in result
 
 
+# --- find_edges() helper (#239) ---
+
+
+def test_find_edges_circle_radius_at_z(session):
+    """The turned-part bread-and-butter: circular edges of a given radius at a
+    given Z. A Cylinder(5, 10) has two Ø10 rim circles at Z=±5."""
+    out = execute_code(
+        session,
+        "from build123d import *\n"
+        "c = Cylinder(5, 10)\n"
+        "top_rim = find_edges(c, geom='circle', radius=5, at_z=5)",
+    )
+    assert "1 edge(s) matched" in out
+    assert "radii [5" in out
+    rim = session.namespace["top_rim"]
+    assert len(rim) == 1
+    assert abs(rim[0].center().Z - 5) < 0.01
+
+
+def test_find_edges_no_filters_returns_all(session):
+    execute_code(session, "from build123d import *\nb = Box(10, 10, 10)\nes = find_edges(b)")
+    assert len(session.namespace["es"]) == 12
+
+
+def test_find_edges_by_length(session):
+    """Box(10, 20, 30) has exactly 4 edges of each length."""
+    execute_code(
+        session, "from build123d import *\nb = Box(10, 20, 30)\nes = find_edges(b, length=20)"
+    )
+    assert len(session.namespace["es"]) == 4
+
+
+def test_find_edges_radius_excludes_lines(session):
+    """A radius filter silently drops non-circular edges instead of raising."""
+    execute_code(
+        session,
+        "from build123d import *\n"
+        "p = Box(20, 20, 5) + Cylinder(4, 5).move(Location((0, 0, 5)))\n"
+        "es = find_edges(p, radius=4)",
+    )
+    es = session.namespace["es"]
+    assert len(es) >= 1
+    assert all(abs(e.radius - 4) < 0.05 for e in es)
+
+
+def test_find_edges_unknown_geom_raises(session):
+    out = execute_code(
+        session, "from build123d import *\nb = Box(10,10,10)\nfind_edges(b, geom='wiggle')"
+    )
+    assert "Error" in out and "wiggle" in out and "circle" in out
+
+
+def test_find_edges_zero_matches_prints_count(session):
+    out = execute_code(
+        session, "from build123d import *\nb = Box(10,10,10)\nes = find_edges(b, geom='circle')"
+    )
+    assert "0 edge(s) matched" in out
+    assert len(session.namespace["es"]) == 0
+
+
+def test_find_edges_result_feeds_fillet(session):
+    """The returned ShapeList plugs straight into fillet()."""
+    out = execute_code(
+        session,
+        "from build123d import *\n"
+        "c = Cylinder(5, 10)\n"
+        "rim = find_edges(c, geom='circle', at_z=5)\n"
+        "result = fillet(rim, 1)",
+    )
+    assert "Error" not in out
+
+
+def test_find_edges_survives_rollback(session):
+    execute_code(session, "raise ValueError('oops')")
+    out = execute_code(
+        session, "from build123d import *\nb = Box(5,5,5)\nes = find_edges(b, length=5)"
+    )
+    assert "Error" not in out
+
+
 def test_face_survives_rollback(session):
     # face() should still be available after a failed execute()
     execute_code(session, "raise ValueError('oops')")
