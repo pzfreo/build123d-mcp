@@ -23,8 +23,7 @@ SKILLS = {
     "drawing": {
         "dir": "b123d-drawing",
         "cursor_description": (
-            "Engineering drawing workflow for build123d geometry "
-            "using the build123d-mcp MCP server"
+            "Engineering drawing workflow for build123d geometry using the build123d-mcp MCP server"
         ),
         "cursor_globs": "scripts/drawings/**, scripts/*_drawing.py, drawings/**",
     },
@@ -82,11 +81,7 @@ def _cursor_frontmatter(skill: str) -> str:
     spec = SKILLS[skill]
     globs_line = f'globs: "{spec["cursor_globs"]}"\n' if spec["cursor_globs"] else ""
     return (
-        "---\n"
-        f"description: {spec['cursor_description']}\n"
-        f"{globs_line}"
-        "alwaysApply: false\n"
-        "---\n\n"
+        f"---\ndescription: {spec['cursor_description']}\n{globs_line}alwaysApply: false\n---\n\n"
     )
 
 
@@ -170,7 +165,9 @@ def install_skill(
             dest_file.write_text(_replace_or_append(existing, section, skill), encoding="utf-8")
         else:
             dest_file.write_text(section, encoding="utf-8")
-        return f"Installed {skill_dir} skill into {dest_file} (Codex / Antigravity / Copilot / Cline)"
+        return (
+            f"Installed {skill_dir} skill into {dest_file} (Codex / Antigravity / Copilot / Cline)"
+        )
 
     if target == "cursor":
         dest_file = base / ".cursor" / "rules" / f"{skill_dir}.mdc"
