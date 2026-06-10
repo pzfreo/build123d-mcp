@@ -13,14 +13,16 @@ import pytest
 from build123d_mcp.worker import InProcessSession
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def session():
-    return InProcessSession(exec_timeout=60)
+    s = InProcessSession(exec_timeout=60)
+    s.execute("from build123d import *\nshow(Box(10, 10, 10), 'b')")
+    return s
 
 
 def test_execute_and_show(session):
-    out = session.execute("from build123d import *\nshow(Box(10, 10, 10), 'b')")
-    assert "Registered 'b'" in out
+    out = session.execute("show(Cylinder(3, 10), 'c')")
+    assert "Registered 'c'" in out
     assert "Error" not in out
 
 
@@ -50,7 +52,7 @@ def test_execute_error_returns_error_string(session):
 
 def test_export_round_trip(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    result = session.export_file("part", "step")
+    result = session.export_file("part", "step", object_name="b")
     assert "Exported to" in result
     assert os.path.exists("part.step")
 

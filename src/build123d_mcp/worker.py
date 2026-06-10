@@ -694,13 +694,10 @@ class InProcessSession(WorkerSession):
 
     def _call(self, op: str, args: dict, timeout: int) -> Any:
         # Same error contract as the worker path: tool exceptions surface as
-        # RuntimeError("TypeName: message"). ExecutionTimeout is re-raised
-        # as itself so execute()'s except clause formats it identically.
-        from build123d_mcp.security import ExecutionTimeout
-
+        # RuntimeError("TypeName: message"), mirroring worker_main's error
+        # envelope. (Session.execute() handles ExecutionTimeout internally
+        # and returns an error string, so no special-casing is needed here.)
         try:
             return _dispatch(self._session, op, args, self._library_index)
-        except ExecutionTimeout:
-            raise
         except Exception as exc:
             raise RuntimeError(f"{type(exc).__name__}: {exc}") from exc
