@@ -32,6 +32,12 @@ def test_load_raw_returns_skill_content():
     assert len(content) > 1000
 
 
+def test_load_raw_modeling_returns_skill_content():
+    content = _load_raw("modeling")
+    assert "Build 3D Geometry" in content
+    assert len(content) > 1000
+
+
 # ---------------------------------------------------------------------------
 # _strip_claude_markers
 # ---------------------------------------------------------------------------
@@ -214,6 +220,86 @@ def test_dest_exists_true_after_install(tmp_path):
 
 def test_dest_exists_unknown_target():
     assert not _dest_exists("unknown")
+
+
+# ---------------------------------------------------------------------------
+# skill: modeling
+# ---------------------------------------------------------------------------
+
+
+def test_install_claude_modeling(tmp_path):
+    result = install_skill(target="claude", cwd=tmp_path, skill="modeling")
+    dest = tmp_path / ".claude" / "skills" / "b123d-modeling" / "SKILL.md"
+    assert dest.exists()
+    assert "Build 3D Geometry" in _read(dest)
+    assert "Installed" in result
+
+
+def test_agents_md_both_skills_coexist(tmp_path):
+    install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
+    install_skill(target="agents-md", cwd=tmp_path, skill="modeling")
+    content = _read(tmp_path / "AGENTS.md")
+    assert "<!-- b123d-drawing:start -->" in content
+    assert "<!-- b123d-modeling:start -->" in content
+    assert "Engineering Drawing" in content
+    assert "Build 3D Geometry" in content
+
+
+def test_agents_md_modeling_force_only_replaces_own_section(tmp_path):
+    install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
+    install_skill(target="agents-md", cwd=tmp_path, skill="modeling")
+    install_skill(target="agents-md", cwd=tmp_path, skill="modeling", force=True)
+    content = _read(tmp_path / "AGENTS.md")
+    assert content.count("<!-- b123d-drawing:start -->") == 1
+    assert content.count("<!-- b123d-modeling:start -->") == 1
+    assert "Engineering Drawing" in content
+
+
+def test_install_cursor_modeling_description_routed(tmp_path):
+    install_skill(target="cursor", cwd=tmp_path, skill="modeling")
+    content = _read(tmp_path / ".cursor" / "rules" / "b123d-modeling.mdc")
+    assert "description:" in content
+    assert "alwaysApply: false" in content
+    # modeling has no path affinity — no globs line at all
+    assert "globs" not in content.split("---")[1]
+
+
+def test_dest_exists_tracks_skills_independently(tmp_path):
+    install_skill(target="claude", cwd=tmp_path, skill="drawing")
+    assert _dest_exists("claude", cwd=tmp_path, skill="drawing")
+    assert not _dest_exists("claude", cwd=tmp_path, skill="modeling")
+
+
+def test_unknown_skill_returns_error():
+    result = install_skill(skill="welding")
+    assert "Unknown skill" in result
+    assert "welding" in result
+
+
+# ---------------------------------------------------------------------------
+# server instructions + skill resources
+# ---------------------------------------------------------------------------
+
+
+def test_server_instructions_registered():
+    # The instructions field is what stays visible when MCP clients defer tool
+    # schemas behind tool search — it must exist and fit the 2KB client cap.
+    from build123d_mcp.server import _INSTRUCTIONS, mcp
+
+    assert mcp.instructions == _INSTRUCTIONS
+    assert 0 < len(_INSTRUCTIONS.encode("utf-8")) <= 2048
+    for needle in ("execute()", "measure()", "skill/modeling", "skill/drawing"):
+        assert needle in _INSTRUCTIONS
+
+
+def test_modeling_skill_resource_registered():
+    import asyncio
+
+    from build123d_mcp.server import mcp
+
+    uris = {str(r.uri) for r in asyncio.run(mcp.list_resources())}
+    assert "build123d://skill/modeling" in uris
+    assert "build123d://skill/drawing" in uris
 
 
 # ---------------------------------------------------------------------------

@@ -10,12 +10,12 @@ def _cmd_install_skill(argv: list) -> None:
     import argparse
     import sys
 
-    from build123d_mcp.tools.install_skill import TARGETS
+    from build123d_mcp.tools.install_skill import SKILLS, TARGETS
     from build123d_mcp.tools.install_skill import install_skill as _install
 
     p = argparse.ArgumentParser(
         prog="build123d-mcp install-skill",
-        description="Copy the b123d-drawing skill into the current project for the specified agent.",
+        description="Copy a b123d workflow skill into the current project for the specified agent.",
     )
     p.add_argument(
         "--target",
@@ -23,18 +23,24 @@ def _cmd_install_skill(argv: list) -> None:
         default="claude",
         help="Agent to install for (default: claude)",
     )
+    p.add_argument(
+        "--skill",
+        choices=tuple(SKILLS),
+        default="drawing",
+        help="Workflow to install: drawing or modeling (default: drawing)",
+    )
     p.add_argument("--force", action="store_true", help="Overwrite existing installation")
     args = p.parse_args(argv)
 
     from build123d_mcp.tools.install_skill import _dest_exists
 
-    if not args.force and _dest_exists(args.target):
+    if not args.force and _dest_exists(args.target, skill=args.skill):
         print(
             f"Skill already installed for '{args.target}' — use --force to overwrite.",
             file=sys.stderr,
         )
         sys.exit(1)
-    print(_install(target=args.target, force=args.force))
+    print(_install(target=args.target, force=args.force, skill=args.skill))
 
 
 def main():
@@ -56,8 +62,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 Subcommands:
-  install-skill     Copy the b123d-drawing Claude Code skill into .claude/skills/ of the current project
-                    Usage: build123d-mcp install-skill [--force]
+  install-skill     Copy a b123d workflow skill (drawing or modeling) into .claude/skills/ of the current project
+                    Usage: build123d-mcp install-skill [--skill drawing|modeling] [--force]
 
 MCP client configuration example:
   {

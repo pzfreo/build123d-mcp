@@ -4,7 +4,27 @@ from mcp.types import PromptMessage, TextContent
 from build123d_mcp.tools._marshal import marshal_render_drawing, marshal_render_view
 from build123d_mcp.worker import WorkerSession
 
-mcp = FastMCP("build123d-mcp")
+_INSTRUCTIONS = """\
+Persistent CAD modeling server for build123d. Use these tools for ANY task that
+builds, modifies, measures, or renders 3D geometry or engineering drawings —
+"model this part", "build this from the technical drawing", "does A fit inside
+B", "make a drawing of X" — instead of writing standalone Python scripts run
+via the shell. The server keeps a persistent build123d session, so you can
+build incrementally with execute(), verify each step numerically with measure()
+(volume, bounding box, face inventory), inspect visually with render_view(),
+check fits with clearance(), and undo experiments with snapshots — a feedback
+loop a one-shot script cannot give.
+
+Quick start: execute("from build123d import *"), build in small steps,
+register parts with show(part, "name"), measure() after every boolean,
+export() when done. Read the build123d://quickref resource before writing
+build code. Step-by-step workflows: build123d://skill/modeling (build 3D
+parts, incl. from technical drawings) and build123d://skill/drawing
+(multi-view engineering drawings); install either into the project with
+install_skill().
+"""
+
+mcp = FastMCP("build123d-mcp", instructions=_INSTRUCTIONS)
 _session: WorkerSession
 
 
@@ -638,26 +658,41 @@ def build123d_drawing_skill() -> str:
     """b123d-drawing engineering workflow skill."""
     from build123d_mcp.tools.install_skill import _load_raw
 
-    return _load_raw()
+    return _load_raw("drawing")
+
+
+@mcp.resource(
+    "build123d://skill/modeling",
+    mime_type="text/plain",
+    description="The b123d-modeling workflow skill: step-by-step guide for building 3D parts and assemblies with build123d via this server — including extracting a spec from a technical drawing, the incremental build/measure/render loop, snapshots, and export.",
+)
+def build123d_modeling_skill() -> str:
+    """b123d-modeling workflow skill."""
+    from build123d_mcp.tools.install_skill import _load_raw
+
+    return _load_raw("modeling")
 
 
 @mcp.tool()
-def install_skill(target: str = "claude", force: bool = False) -> str:
-    """Copy the b123d-drawing engineering drawing skill into the current project.
+def install_skill(target: str = "claude", force: bool = False, skill: str = "drawing") -> str:
+    """Copy a b123d workflow skill into the current project.
 
     Writes the appropriate config file for the requested agent so the
-    step-by-step drawing workflow is available in future sessions.
+    step-by-step workflow is available in future sessions.
 
+    skill: which workflow to install (default "drawing")
+      - drawing   → multi-view engineering drawings from build123d geometry
+      - modeling  → build 3D parts/assemblies (incl. from technical drawings)
     target: one of "claude" (default), "agents-md", "cursor", "windsurf"
-      - claude     → .claude/skills/b123d-drawing/SKILL.md  (Claude Code)
+      - claude     → .claude/skills/<skill-dir>/SKILL.md  (Claude Code)
       - agents-md  → AGENTS.md  (Codex CLI, Antigravity, GitHub Copilot, Cline)
-      - cursor     → .cursor/rules/b123d-drawing.mdc
+      - cursor     → .cursor/rules/<skill-dir>.mdc
       - windsurf   → .windsurfrules
     force: overwrite existing installation (default False)
     """
     from build123d_mcp.tools.install_skill import install_skill as _install
 
-    return _install(target=target, force=force)
+    return _install(target=target, force=force, skill=skill)
 
 
 @mcp.prompt(
