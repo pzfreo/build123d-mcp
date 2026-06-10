@@ -575,7 +575,7 @@ def build123d_bd_warehouse() -> str:
 
 @mcp.tool()
 def suggest_view_layout(
-    object_name: str,
+    object_name: str = "",
     page_w: float = 297.0,
     page_h: float = 210.0,
     scale: float = 1.0,
@@ -583,6 +583,8 @@ def suggest_view_layout(
     title_block_w: float = 150.0,
     title_block_h: float = 30.0,
     margin: float = 10.0,
+    extents: list[float] | None = None,
+    centroid: list[float] | None = None,
 ) -> str:
     """Auto-calculate safe VIEW_X / VIEW_Y positions for a multi-view engineering drawing.
 
@@ -605,13 +607,25 @@ def suggest_view_layout(
     views: subset of ["front","plan","side","iso"] to place
     title_block_w/h: reserved bottom-right area (default 150×30 mm)
     margin: page margin in mm (default 10)
+    extents: [x, y, z] part sizes in mm — lays out from these numbers instead
+        of a session object (use when the part isn't loaded, e.g. import failed)
+    centroid: [x, y, z] look_at origin when using extents (default [0, 0, 0])
 
     Accuracy: front/plan/side positions are exact for orthographic projection.
     Iso position is approximate (75% of 3-D diagonal as half-extent) — verify
     with render_view() and adjust manually if the iso overlaps a neighbour.
     """
     return _session.suggest_view_layout(
-        object_name, page_w, page_h, scale, views, title_block_w, title_block_h, margin
+        object_name,
+        page_w,
+        page_h,
+        scale,
+        views,
+        title_block_w,
+        title_block_h,
+        margin,
+        extents,
+        centroid,
     )
 
 

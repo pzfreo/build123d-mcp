@@ -241,6 +241,8 @@ def _dispatch(session: Any, op: str, args: dict, library_index: Any) -> Any:
             args.get("title_block_w", 150.0),
             args.get("title_block_h", 30.0),
             args.get("margin", 10.0),
+            args.get("extents"),
+            args.get("centroid"),
         )
 
     if op == "script":
@@ -510,7 +512,12 @@ class WorkerSession:
         )
 
     def import_cad_file(self, path: str, name: str = "") -> str:
-        return self._call("import_cad_file", {"path": path, "name": name}, self._EXPORT_TIMEOUT)
+        # STEP import of heavy geometry (threads, gears — lots of BSpline faces)
+        # can outlast _EXPORT_TIMEOUT, and a timeout kills the whole session.
+        # Honour the user's exec-timeout knob (--exec-timeout /
+        # BUILD123D_EXEC_TIMEOUT) when it is the larger budget (#229).
+        timeout = max(self._EXPORT_TIMEOUT, self._exec_timeout)
+        return self._call("import_cad_file", {"path": path, "name": name}, timeout)
 
     def inspect_drawing(self, objects: str = "", svg_path: str = "") -> str:
         return self._call(
@@ -587,6 +594,8 @@ class WorkerSession:
         title_block_w: float = 150.0,
         title_block_h: float = 30.0,
         margin: float = 10.0,
+        extents: list[float] | None = None,
+        centroid: list[float] | None = None,
     ) -> str:
         return self._call(
             "suggest_view_layout",
@@ -599,6 +608,8 @@ class WorkerSession:
                 "title_block_w": title_block_w,
                 "title_block_h": title_block_h,
                 "margin": margin,
+                "extents": extents,
+                "centroid": centroid,
             },
             self._GEOMETRY_TIMEOUT,
         )

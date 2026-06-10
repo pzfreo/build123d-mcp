@@ -19,7 +19,7 @@ from build123d_mcp.worker import WorkerSession
 _STATE_LOSS_MARKER = "has been lost"
 
 
-def _proxy_session(record):
+def _proxy_session(record, exec_timeout=120):
     """A WorkerSession whose _call only records (op, timeout) — no worker."""
     ws = WorkerSession.__new__(WorkerSession)
 
@@ -28,7 +28,7 @@ def _proxy_session(record):
         return ""
 
     ws._call = _call
-    ws._exec_timeout = 120
+    ws._exec_timeout = exec_timeout
     return ws
 
 
@@ -50,6 +50,24 @@ def test_geometry_heavy_ops_use_geometry_timeout():
 
     assert all(t == WorkerSession._GEOMETRY_TIMEOUT for _op, t in record), record
     assert WorkerSession._GEOMETRY_TIMEOUT > WorkerSession._SHORT_TIMEOUT
+
+
+def test_import_cad_file_honours_exec_timeout():
+    # Heavy STEP imports (threads, gears) can outlast _EXPORT_TIMEOUT and a
+    # timeout destroys the session, so the user's exec-timeout knob must apply
+    # when it grants a larger budget (#229).
+    record = []
+    ws = _proxy_session(record, exec_timeout=300)
+    ws.import_cad_file("part.step")
+    assert record == [("import_cad_file", 300)]
+
+
+def test_import_cad_file_keeps_export_floor():
+    # A short exec timeout must not shrink the import budget below the default.
+    record = []
+    ws = _proxy_session(record, exec_timeout=10)
+    ws.import_cad_file("part.step")
+    assert record == [("import_cad_file", WorkerSession._EXPORT_TIMEOUT)]
 
 
 def test_bookkeeping_ops_keep_short_timeout():

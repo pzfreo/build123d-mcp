@@ -134,6 +134,54 @@ def test_suggestion_scale_smaller_than_requested(session_with_box):
     assert r["suggestion"]["scale"] < 10.0
 
 
+# --- raw extents (no session object, #229) ---
+
+
+def test_extents_without_session_object():
+    s = Session()
+    r = json.loads(suggest_view_layout(s, "", extents=[40.0, 20.0, 15.0]))
+    assert "error" not in r
+    assert abs(r["part_size"]["x"] - 40.0) < 0.01
+    assert abs(r["part_size"]["y"] - 20.0) < 0.01
+    assert abs(r["part_size"]["z"] - 15.0) < 0.01
+
+
+def test_extents_match_equivalent_shape_layout(session_with_box):
+    from_shape = json.loads(suggest_view_layout(session_with_box, "shape"))
+    from_extents = json.loads(suggest_view_layout(Session(), "", extents=[40.0, 20.0, 15.0]))
+    for vname, vdata in from_shape["views"].items():
+        assert from_extents["views"][vname]["VIEW_X"] == vdata["VIEW_X"]
+        assert from_extents["views"][vname]["VIEW_Y"] == vdata["VIEW_Y"]
+
+
+def test_extents_centroid_sets_look_at():
+    r = json.loads(
+        suggest_view_layout(Session(), "", extents=[40.0, 20.0, 15.0], centroid=[5.0, 0.0, 7.5])
+    )
+    assert r["views"]["iso"]["look_at"] == [5.0, 0.0, 7.5]
+    assert r["part_size"]["centroid"] == [5.0, 0.0, 7.5]
+
+
+def test_extents_default_centroid_is_origin():
+    r = json.loads(suggest_view_layout(Session(), "", extents=[40.0, 20.0, 15.0]))
+    assert r["views"]["iso"]["look_at"] == [0.0, 0.0, 0.0]
+
+
+def test_invalid_extents_returns_error():
+    assert "error" in json.loads(suggest_view_layout(Session(), "", extents=[40.0, 20.0]))
+    assert "error" in json.loads(suggest_view_layout(Session(), "", extents=[40.0, -1.0, 15.0]))
+
+
+def test_invalid_centroid_returns_error():
+    r = json.loads(suggest_view_layout(Session(), "", extents=[40.0, 20.0, 15.0], centroid=[1.0]))
+    assert "error" in r
+
+
+def test_missing_object_error_mentions_extents():
+    r = json.loads(suggest_view_layout(Session(), "nonexistent"))
+    assert "extents" in r["error"]
+
+
 # --- look_at ---
 
 

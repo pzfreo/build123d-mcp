@@ -143,6 +143,11 @@ drawing should live in version control as reproducible code, not only as output
 artifacts. This must be a tidy reproducible script — **not** a dump of your
 exploratory `execute()` session.
 
+If the project already has a conflicting name at that path (e.g. a
+`scripts/drawings.py` module), do **not** create a `scripts/drawings/`
+directory alongside it — pick a non-colliding path such as
+`scripts/<part>_drawing.py` and follow the project's existing script layout.
+
 Pick the case that matches how you obtained the geometry:
 
 **A — Drawing from a STEP file** → use `generate_script()`. It writes an

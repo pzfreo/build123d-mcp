@@ -52,7 +52,7 @@ def _cursor_frontmatter() -> str:
     return (
         "---\n"
         "description: Engineering drawing workflow for build123d geometry using the build123d-mcp MCP server\n"
-        'globs: "scripts/drawings/**, drawings/**"\n'
+        'globs: "scripts/drawings/**, scripts/*_drawing.py, drawings/**"\n'
         "alwaysApply: false\n"
         "---\n\n"
     )

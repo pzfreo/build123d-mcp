@@ -162,12 +162,20 @@ def suggest_view_layout(
     title_block_w: float = 150.0,
     title_block_h: float = 30.0,
     margin: float = 10.0,
+    extents: list[float] | None = None,
+    centroid: list[float] | None = None,
 ) -> str:
     """Compute safe VIEW_X / VIEW_Y positions for a multi-view engineering drawing.
 
     Returns JSON with per-view positions, camera/up/look_at values, and any
     warnings (out-of-bounds, title-block overlap).  If the layout does not fit,
     an alternative scale or page size is suggested.
+
+    If *extents* ([x_size, y_size, z_size] in mm) is given, the layout is
+    computed from those numbers directly and no in-session object is needed —
+    *centroid* (default [0, 0, 0]) supplies the look_at origin.  This keeps the
+    layout math usable when the part failed to import or lives outside the
+    session (#229).
 
     ACCURACY NOTES
     --------------
@@ -187,21 +195,36 @@ def suggest_view_layout(
     if unknown:
         return json.dumps({"error": f"Unknown view(s): {unknown}. Choose from {list(_CAMERAS)}"})
 
-    # Resolve shape: named object first, then current_shape as fallback.
-    shape = session.objects.get(object_name) or session.current_shape
-    if shape is None:
-        return json.dumps({"error": f"Object '{object_name}' not found. Run show() first."})
+    if extents is not None:
+        if len(extents) != 3 or any(e <= 0 for e in extents):
+            return json.dumps(
+                {"error": f"extents must be three positive sizes [x, y, z], got {extents}"}
+            )
+        if centroid is not None and len(centroid) != 3:
+            return json.dumps({"error": f"centroid must be [x, y, z], got {centroid}"})
+        x_size, y_size, z_size = (float(e) for e in extents)
+        cx, cy, cz = (float(c) for c in centroid) if centroid else (0.0, 0.0, 0.0)
+    else:
+        # Resolve shape: named object first, then current_shape as fallback.
+        shape = session.objects.get(object_name) or session.current_shape
+        if shape is None:
+            return json.dumps(
+                {
+                    "error": f"Object '{object_name}' not found. Run show() first, "
+                    "or pass extents=[x, y, z] to lay out without a session object."
+                }
+            )
 
-    try:
-        bb = shape.bounding_box()
-        x_size = bb.max.X - bb.min.X
-        y_size = bb.max.Y - bb.min.Y
-        z_size = bb.max.Z - bb.min.Z
-        cx = (bb.min.X + bb.max.X) / 2
-        cy = (bb.min.Y + bb.max.Y) / 2
-        cz = (bb.min.Z + bb.max.Z) / 2
-    except Exception as exc:
-        return json.dumps({"error": f"Could not measure '{object_name}': {exc}"})
+        try:
+            bb = shape.bounding_box()
+            x_size = bb.max.X - bb.min.X
+            y_size = bb.max.Y - bb.min.Y
+            z_size = bb.max.Z - bb.min.Z
+            cx = (bb.min.X + bb.max.X) / 2
+            cy = (bb.min.Y + bb.max.Y) / 2
+            cz = (bb.min.Z + bb.max.Z) / 2
+        except Exception as exc:
+            return json.dumps({"error": f"Could not measure '{object_name}': {exc}"})
 
     hw = {v: _page_half_extents(v, x_size, y_size, z_size, scale) for v in views}
     pos = _layout(x_size, y_size, z_size, scale, views, margin, title_block_w, title_block_h)
