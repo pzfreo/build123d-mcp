@@ -180,6 +180,11 @@ Part library file format (Python, any .py file under --library path):
     if args.library and not os.path.isdir(args.library):
         parser.error(f"Library path is not a directory: {args.library}")
 
+    if args.transport not in ("stdio", "http"):
+        parser.error(
+            f"invalid BUILD123D_TRANSPORT value '{args.transport}'; must be 'stdio' or 'http'"
+        )
+
     if args.memory_limit_mb is not None and args.memory_limit_mb <= 0:
         parser.error(f"--memory-limit-mb must be a positive integer, got {args.memory_limit_mb}")
     if args.cpu_limit_s is not None and args.cpu_limit_s <= 0:
