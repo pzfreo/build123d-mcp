@@ -155,6 +155,26 @@ Part library file format (Python, any .py file under --library path):
         help="Port to bind when --transport http (default: 8000). "
         "Overrides BUILD123D_PORT env var.",
     )
+    parser.add_argument(
+        "--memory-limit-mb",
+        metavar="MB",
+        type=int,
+        default=int(os.environ.get("BUILD123D_MEMORY_LIMIT_MB", "0")) or None,
+        help="Cap the worker's heap/data segment in MB via RLIMIT_DATA (POSIX only; "
+        "ignored on Windows). Note: mmap-backed allocations (large OCC buffers) are "
+        "not covered — use container cgroup limits for comprehensive memory control. "
+        "Overrides BUILD123D_MEMORY_LIMIT_MB env var.",
+    )
+    parser.add_argument(
+        "--cpu-limit-s",
+        metavar="SECONDS",
+        type=int,
+        default=int(os.environ.get("BUILD123D_CPU_LIMIT_S", "0")) or None,
+        help="Cap total CPU time for the worker subprocess in seconds via RLIMIT_CPU "
+        "(POSIX only; ignored on Windows). The worker receives SIGXCPU when the soft "
+        "limit is reached and is killed at the hard limit. "
+        "Overrides BUILD123D_CPU_LIMIT_S env var.",
+    )
     args = parser.parse_args()
 
     if args.library and not os.path.isdir(args.library):
@@ -171,18 +191,30 @@ Part library file format (Python, any .py file under --library path):
             _sec.EXTRA_ALLOWED_IMPORTS.update(extra_imports)
 
     session_cls = InProcessSession if args.in_process else WorkerSession
-    server.configure(
-        session_cls(
-            library_path=args.library,
-            allow_all_imports=args.allow_all_imports,
-            extra_allowed_imports=extra_imports,
-            exec_timeout=args.exec_timeout,
-        )
-    )
+    session_kwargs: dict = {
+        "library_path": args.library,
+        "allow_all_imports": args.allow_all_imports,
+        "extra_allowed_imports": extra_imports,
+        "exec_timeout": args.exec_timeout,
+    }
+    if not args.in_process:
+        if args.memory_limit_mb is not None:
+            session_kwargs["memory_limit_mb"] = args.memory_limit_mb
+        if args.cpu_limit_s is not None:
+            session_kwargs["cpu_limit_s"] = args.cpu_limit_s
+    server.configure(session_cls(**session_kwargs))
 
     if args.transport == "http":
+        import sys
+
         import uvicorn
 
+        print(
+            "WARNING: HTTP transport runs a single shared CAD session. "
+            "Concurrent clients will share the same build123d namespace — "
+            "suitable for single-user deployments only.",
+            file=sys.stderr,
+        )
         uvicorn.run(server.http_app(), host=args.host, port=args.port)
     else:
         server.mcp.run()

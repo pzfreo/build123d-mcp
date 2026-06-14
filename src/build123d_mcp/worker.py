@@ -75,13 +75,24 @@ def worker_main(
         try:
             import resource
 
-            if memory_limit_mb is not None:
+            if memory_limit_mb is not None and memory_limit_mb > 0:
+                # RLIMIT_DATA caps the heap/BSS data segment.  It is safe to set on
+                # a process that has already loaded large shared libraries (OCC, Python)
+                # because those VAS mappings do not count against the data segment.
+                # Note: large mmap() allocations (>128 KB by default in glibc) are not
+                # covered; for comprehensive memory control use container cgroup limits.
                 limit = memory_limit_mb * 1024 * 1024
-                resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-            if cpu_limit_s is not None:
+                resource.setrlimit(resource.RLIMIT_DATA, (limit, limit))
+            if cpu_limit_s is not None and cpu_limit_s > 0:
                 resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit_s, cpu_limit_s))
         except (ImportError, AttributeError):
             pass  # Windows has no resource module
+        except (OSError, ValueError) as exc:
+            # OSError(EPERM): soft limit exceeds the container/system hard limit.
+            # ValueError: limit value is out of range.
+            # Both mean the limit was not applied — propagate so the caller sees a
+            # clear error rather than silently running without the requested cap.
+            raise RuntimeError(f"Failed to apply resource limit: {exc}") from exc
 
     session, library_index = _build_session(
         library_path, exec_timeout, allow_all_imports, extra_allowed_imports

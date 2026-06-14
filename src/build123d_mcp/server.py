@@ -53,9 +53,15 @@ def configure(session: WorkerSession) -> None:
 def http_app():
     """Return the FastMCP ASGI app for use with an ASGI server (e.g. uvicorn).
 
-    The app is stateless: each HTTP request resolves its WorkerSession via
-    ``_session_var`` (set by host middleware) and falls back to the module-level
-    singleton when the ContextVar is unset.
+    **Single-session mode (default)**: all HTTP requests share the module-level
+    WorkerSession set by ``configure()``.  This is correct for single-user
+    deployments (one operator, one CAD namespace).  Concurrent clients will
+    interleave operations in the same session.
+
+    **Multi-session mode**: host middleware can isolate tenants by setting
+    ``_session_var`` to a per-request ``WorkerSession`` before the MCP handler
+    runs; ``_resolve_session()`` will then return that session instead of the
+    singleton.  No such middleware is included — this hook exists for embedders.
     """
     return mcp.streamable_http_app()
 
