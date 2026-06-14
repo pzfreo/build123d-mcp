@@ -76,13 +76,28 @@ def worker_main(
             import resource
 
             if memory_limit_mb is not None and memory_limit_mb > 0:
-                # RLIMIT_DATA caps the heap/BSS data segment.  It is safe to set on
-                # a process that has already loaded large shared libraries (OCC, Python)
-                # because those VAS mappings do not count against the data segment.
-                # Note: large mmap() allocations (>128 KB by default in glibc) are not
-                # covered; for comprehensive memory control use container cgroup limits.
-                limit = memory_limit_mb * 1024 * 1024
-                resource.setrlimit(resource.RLIMIT_DATA, (limit, limit))
+                import sys as _sys
+
+                if _sys.platform == "darwin":
+                    # macOS accepts setrlimit(RLIMIT_DATA) without error but silently
+                    # ignores it — the kernel never enforces it.  Skip the call and
+                    # send a warning so the parent can surface it to the operator.
+                    conn.send(
+                        {
+                            "warning": (
+                                "--memory-limit-mb has no effect on macOS: "
+                                "RLIMIT_DATA is a documented no-op on this platform. "
+                                "Use container/VM memory limits instead."
+                            )
+                        }
+                    )
+                else:
+                    # RLIMIT_DATA caps the heap/BSS data segment.  Safe to set after
+                    # shared libraries are loaded (VAS mappings don't count against it).
+                    # Note: large mmap() allocations (>128 KB glibc default) are not
+                    # covered; use container cgroup limits for comprehensive control.
+                    limit = memory_limit_mb * 1024 * 1024
+                    resource.setrlimit(resource.RLIMIT_DATA, (limit, limit))
             if cpu_limit_s is not None and cpu_limit_s > 0:
                 resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit_s, cpu_limit_s))
         except (ImportError, AttributeError):
@@ -90,9 +105,10 @@ def worker_main(
         except (OSError, ValueError) as exc:
             # OSError(EPERM): soft limit exceeds the container/system hard limit.
             # ValueError: limit value is out of range.
-            # Both mean the limit was not applied — propagate so the caller sees a
-            # clear error rather than silently running without the requested cap.
-            raise RuntimeError(f"Failed to apply resource limit: {exc}") from exc
+            # Send the error over the pipe so the parent receives it before the
+            # worker exits — avoids the parent seeing a bare EOFError from recv().
+            conn.send({"error": f"Failed to apply resource limit: {exc}"})
+            return
 
     session, library_index = _build_session(
         library_path, exec_timeout, allow_all_imports, extra_allowed_imports
@@ -369,7 +385,31 @@ class WorkerSession:
                 "relaunch the server with --in-process or BUILD123D_IN_PROCESS=1 — a "
                 "degraded mode without crash containment or operation timeouts."
             )
-        self._conn.recv()  # consume the ready signal
+        try:
+            msg = self._conn.recv()  # ready signal or startup-error dict
+        except EOFError:
+            # Worker exited before sending any message (uncaught exception in
+            # worker_main before the rlimit try block, or a spawn failure).
+            self._proc.join(5)
+            exitcode = self._proc.exitcode
+            raise RuntimeError(
+                f"Worker process failed to start: exited with code {exitcode} "
+                "before signalling ready. If your MCP host blocks subprocess "
+                "creation (seen with sandboxed hosts on Windows, issue #143), "
+                "relaunch the server with --in-process or BUILD123D_IN_PROCESS=1."
+            )
+        if "warning" in msg:
+            import sys as _sys
+
+            print(f"WARNING: {msg['warning']}", file=_sys.stderr)
+            # Warning message is followed by the real ready signal.
+            msg = self._conn.recv()
+        if "error" in msg:
+            self._proc.join(5)
+            raise RuntimeError(
+                f"Worker process failed to start: {msg['error']}. "
+                "Relaunch with --in-process to skip subprocess resource limits."
+            )
 
     def _kill_worker(self) -> None:
         try:

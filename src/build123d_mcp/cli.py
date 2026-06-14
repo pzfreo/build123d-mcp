@@ -159,7 +159,7 @@ Part library file format (Python, any .py file under --library path):
         "--memory-limit-mb",
         metavar="MB",
         type=int,
-        default=int(os.environ.get("BUILD123D_MEMORY_LIMIT_MB", "0")) or None,
+        default=int(os.environ.get("BUILD123D_MEMORY_LIMIT_MB") or "0") or None,
         help="Cap the worker's heap/data segment in MB via RLIMIT_DATA (POSIX only; "
         "ignored on Windows). Note: mmap-backed allocations (large OCC buffers) are "
         "not covered — use container cgroup limits for comprehensive memory control. "
@@ -169,7 +169,7 @@ Part library file format (Python, any .py file under --library path):
         "--cpu-limit-s",
         metavar="SECONDS",
         type=int,
-        default=int(os.environ.get("BUILD123D_CPU_LIMIT_S", "0")) or None,
+        default=int(os.environ.get("BUILD123D_CPU_LIMIT_S") or "0") or None,
         help="Cap total CPU time for the worker subprocess in seconds via RLIMIT_CPU "
         "(POSIX only; ignored on Windows). The worker receives SIGXCPU when the soft "
         "limit is reached and is killed at the hard limit. "
@@ -179,6 +179,11 @@ Part library file format (Python, any .py file under --library path):
 
     if args.library and not os.path.isdir(args.library):
         parser.error(f"Library path is not a directory: {args.library}")
+
+    if args.memory_limit_mb is not None and args.memory_limit_mb <= 0:
+        parser.error(f"--memory-limit-mb must be a positive integer, got {args.memory_limit_mb}")
+    if args.cpu_limit_s is not None and args.cpu_limit_s <= 0:
+        parser.error(f"--cpu-limit-s must be a positive integer, got {args.cpu_limit_s}")
 
     extra_imports = tuple(m.strip() for m in args.allow_imports.split(",") if m.strip())
 
@@ -205,8 +210,6 @@ Part library file format (Python, any .py file under --library path):
     server.configure(session_cls(**session_kwargs))
 
     if args.transport == "http":
-        import sys
-
         import uvicorn
 
         print(
