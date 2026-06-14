@@ -33,6 +33,7 @@ IMPORT_ALLOWLIST = frozenset(
         "build123d",
         "bd_warehouse",
         "build123d_drafting",
+        "draftwright",
         # Numeric / math
         "math",
         "numpy",
