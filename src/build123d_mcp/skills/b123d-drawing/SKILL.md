@@ -15,8 +15,8 @@ build123d component. Drawings export to a project `drawings/` output directory.
    for cases the builder cannot express (e.g. a true cut section). Documented at
    the end as a fallback.
 
-Requires `build123d-drafting-helpers >= 0.7.0` (automatic hole callouts,
-patterns, location dims, and section views).
+Requires `draftwright >= 0.1.0` (the automated drawing engine) and
+`build123d-drafting-helpers >= 0.9.1` (annotation primitives).
 
 ---
 
@@ -45,7 +45,7 @@ drives any manual layout decisions later.
 In the same `execute()` session where you built the part:
 
 ```python
-from build123d_drafting import make_drawing
+from draftwright import make_drawing
 
 svg, dxf = make_drawing(
     part,                       # an in-session build123d object, OR a "path/to/part.step"
@@ -95,7 +95,8 @@ keyword names of every class and function used below (`Dimension`, `Leader`,
 resource — it is generated from the installed library, so it always matches:
 
 ```python
-from build123d_drafting import build_drawing, Leader
+from draftwright import build_drawing
+from build123d_drafting import Leader
 
 dwg = build_drawing(part, out="drawings/bracket", title="BRACKET",
                     number="DWG-042", tolerance="ISO 2768-f", drawn_by="Your Name")
@@ -190,7 +191,7 @@ editable `build_drawing` script (including the customise-before-export seam)
 that reloads the STEP from disk:
 
 ```python
-from build123d_drafting import generate_script
+from draftwright import generate_script
 
 generate_script(
     "path/to/part.step",
@@ -216,7 +217,7 @@ Write the script by hand so it is self-contained:
 ```python
 #!/usr/bin/env python3
 """BRACKET — regenerates drawings/bracket.svg + .dxf in one run."""
-from build123d_drafting import make_drawing
+from draftwright import make_drawing
 from myproject.bracket import build_bracket   # the part's source of truth
 
 part = build_bracket()
@@ -271,11 +272,11 @@ is known — see the `view_axes` and `suggest_view_layout` calls there.
 
 ## Manual 2 — Choose page size and scale, then project
 
-Use `choose_scale()` from `build123d_drafting` — it applies the same thresholds as
+Use `choose_scale()` from `draftwright` — it applies the same thresholds as
 the automated pipeline and returns `TB_W` (title-block width) too:
 
 ```python
-from build123d_drafting import choose_scale
+from draftwright import choose_scale
 
 # Extract geometry from part — drives all layout decisions below.
 _bb   = part.bounding_box()
@@ -427,7 +428,8 @@ draft = draft_preset(font_size=2.5, decimal_precision=1)
 
 ```python
 # Z-axis diameters, largest first (or build the list by hand):
-from build123d_drafting import analyse_cylinders, dedup_diams
+from build123d_drafting import analyse_cylinders
+from draftwright import dedup_diams
 z_diams = dedup_diams(analyse_cylinders(part)[0])
 if z_diams:
     # Rotation-axis centreline in front and side views
@@ -577,7 +579,7 @@ svg_exp.write(str(output_dir / "part_name.svg"))
 
 # Mandatory: fix the SVG viewBox so the full ISO page is preserved, not cropped
 # to the content bounding box (build123d ExportSVG default).
-from build123d_drafting import fix_svg_page_size
+from draftwright import fix_svg_page_size
 fix_svg_page_size(str(output_dir / "part_name.svg"), PAGE_W, PAGE_H)
 ```
 
