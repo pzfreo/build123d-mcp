@@ -403,6 +403,16 @@ class WorkerSession:
 
             print(f"WARNING: {msg['warning']}", file=_sys.stderr)
             # Warning message is followed by the real ready/error signal.
+            # Re-apply the timeout: poll() was already satisfied by the warning,
+            # so without a second poll() the recv() below would block forever if
+            # the worker hangs in _build_session() (e.g. loading a large library).
+            if not self._conn.poll(_WORKER_READY_TIMEOUT):
+                self._proc.kill()
+                self._proc.join(5)
+                raise RuntimeError(
+                    f"Worker process did not signal ready within {_WORKER_READY_TIMEOUT}s "
+                    "after sending a startup warning."
+                )
             try:
                 msg = self._conn.recv()
             except EOFError:

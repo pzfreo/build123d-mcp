@@ -121,7 +121,7 @@ Part library file format (Python, any .py file under --library path):
         "--exec-timeout",
         metavar="SECONDS",
         type=int,
-        default=int(os.environ.get("BUILD123D_EXEC_TIMEOUT", "120")),
+        default=int(os.environ.get("BUILD123D_EXEC_TIMEOUT") or "120"),
         help="Execution time limit in seconds for user code (default: 120). "
         "Overrides BUILD123D_EXEC_TIMEOUT env var.",
     )
