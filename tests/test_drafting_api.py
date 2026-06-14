@@ -16,7 +16,7 @@ def test_reference_carries_signatures_not_just_names():
     ref = drafting_api(None)
     # Keyword names are the whole point of the resource (#260).
     assert "label" in ref
-    assert ".add_view(" in ref or "add_view(" in ref
+    assert "drawing_scale" in ref  # lint_drawing keyword — proves signatures, not just names
 
 
 def test_resource_uses_worker_routing():
