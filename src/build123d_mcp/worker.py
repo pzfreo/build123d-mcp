@@ -402,8 +402,16 @@ class WorkerSession:
             import sys as _sys
 
             print(f"WARNING: {msg['warning']}", file=_sys.stderr)
-            # Warning message is followed by the real ready signal.
-            msg = self._conn.recv()
+            # Warning message is followed by the real ready/error signal.
+            try:
+                msg = self._conn.recv()
+            except EOFError:
+                self._proc.join(5)
+                exitcode = self._proc.exitcode
+                raise RuntimeError(
+                    f"Worker process failed to start: exited with code {exitcode} "
+                    "after sending a startup warning but before signalling ready."
+                )
         if "error" in msg:
             self._proc.join(5)
             raise RuntimeError(

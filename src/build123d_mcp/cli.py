@@ -151,7 +151,7 @@ Part library file format (Python, any .py file under --library path):
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.environ.get("BUILD123D_PORT", "8000")),
+        default=int(os.environ.get("BUILD123D_PORT") or "8000"),
         help="Port to bind when --transport http (default: 8000). "
         "Overrides BUILD123D_PORT env var.",
     )
