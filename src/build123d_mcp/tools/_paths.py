@@ -12,8 +12,13 @@ traversal are rejected naturally rather than relying on textual checks.
 
 from __future__ import annotations
 
+import contextvars
 import os
 import tempfile
+
+_root_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "b123d_fs_root", default=None
+)
 
 
 def _allowed_roots() -> list[str]:
@@ -25,6 +30,11 @@ def _allowed_roots() -> list[str]:
         slash_tmp = os.path.realpath("/tmp")
         if slash_tmp not in roots:
             roots.append(slash_tmp)
+    pinned = _root_var.get()
+    if pinned:
+        pinned = os.path.realpath(pinned)
+        if pinned not in roots:
+            roots.append(pinned)
     return roots
 
 

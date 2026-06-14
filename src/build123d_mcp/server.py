@@ -1,3 +1,5 @@
+import contextvars
+
 from mcp.server.fastmcp import FastMCP
 from mcp.types import PromptMessage, TextContent
 
@@ -24,8 +26,17 @@ parts, incl. from technical drawings) and build123d://skill/drawing
 install_skill().
 """
 
-mcp = FastMCP("build123d-mcp", instructions=_INSTRUCTIONS)
+mcp = FastMCP("build123d-mcp", instructions=_INSTRUCTIONS, stateless_http=True)
 _session: WorkerSession
+_session_var: contextvars.ContextVar[WorkerSession | None] = contextvars.ContextVar(
+    "b123d_session", default=None
+)
+
+
+def _resolve_session() -> WorkerSession:
+    """Return the per-request session (HTTP) or the module-level singleton (stdio)."""
+    s = _session_var.get()
+    return s if s is not None else _session
 
 
 def configure(session: WorkerSession) -> None:
@@ -39,12 +50,22 @@ def configure(session: WorkerSession) -> None:
     _session = session
 
 
+def http_app():
+    """Return the FastMCP ASGI app for use with an ASGI server (e.g. uvicorn).
+
+    The app is stateless: each HTTP request resolves its WorkerSession via
+    ``_session_var`` (set by host middleware) and falls back to the module-level
+    singleton when the ContextVar is unset.
+    """
+    return mcp.streamable_http_app()
+
+
 @mcp.tool()
 def execute(code: str) -> str:
     """Execute build123d Python code in the persistent session. Errors include automatic fix hints — read them before retrying. Use show(shape, name) to register named objects (name defaults to 'shape'); show() immediately prints volume and face count confirming the shape is non-empty. After any boolean operation (-, +, &) call measure() to confirm it succeeded (check topology.faces). named_face(shape, name) is a built-in helper: named_face(box, 'top') returns the highest-Z face, 'bottom'/'front'/'back'/'left'/'right' work similarly. find_edges(shape, geom='circle', radius=4.25, at_z=10.2, length=None, tol=0.05) filters edges for fillet/chamfer selection and prints what matched. save_json(name, obj) writes structured analysis data (face inventories, hole tables) to a server scratch file and returns its path — use it instead of printing large results; open()/os stay blocked."""
     from build123d_mcp.tools.execute import execute_code
 
-    return execute_code(_session, code)
+    return execute_code(_resolve_session(), code)
 
 
 @mcp.tool()
@@ -64,7 +85,7 @@ def render_view(
     mode: str = "auto",
 ) -> list:
     """Render model. Auto-detects 3D vs 2D: solids use the VTK tessellation path; 2D shapes (Sketches, edge Compounds, dimensioned drawings) use the ezdxf+matplotlib raster path — review dimensioned drawings the same way as 3D parts. Renders confirm appearance, not geometry — verify booleans with measure() first. format: 'png' (raster, default), 'svg' (HLR line drawing, works without a display), 'dxf' (HLR projection as parseable polylines for downstream 2D CAD), or 'both' (PNG + SVG together). If the PNG path fails (headless host), falls back to SVG automatically. direction: top, front, side, iso. azimuth/elevation: camera rotation in degrees applied after the direction preset. objects: comma-separated names or name:color pairs e.g. 'u_frame:blue,roller:red' (default: all, auto-coloured). quality: standard, high. clip_plane: x, y, z to slice; clip_at: absolute world coordinate along that axis (default: each mesh's midpoint). save_to: optional file path; for format='both' writes <save_to>.png and <save_to>.svg. mode: 'auto' (default; no solids + flat in Z = 2D), or '2d'/'3d' to force a pipeline when auto-detection picks wrong (e.g. a Compound mixing a Sketch and a solid routes to 3D); the path used is reported as 'Rendered via <mode> pipeline.' colors: optional dict mapping object names and special layer keys (`_dims`, `_labels`) to colour names or '#aabbcc'; overrides name:color syntax and the default dimension colour (2D PNG/SVG only; ignored for 3D and DXF). label_objects: when true, each named object is labelled at its centroid in the PNG. highlights: optional list of entities to label, e.g. [{"object": "bracket", "type": "edge", "index": 5, "label": "hinge_edge"}]; type is 'face', 'edge', or 'vertex', index matches shape.faces()/edges()/vertices(); the object must be registered with show() and in the rendered set. Labels are PNG-only."""
-    result = _session.render_view(
+    result = _resolve_session().render_view(
         direction=direction,
         objects=objects,
         quality=quality,
@@ -86,13 +107,13 @@ def render_view(
 @mcp.tool()
 def measure(object_name: str = "", density: float = 0.0, material: str = "") -> str:
     """Measure a shape and return a complete geometric summary: volume (mm³), surface area (mm²), topology (face/edge/vertex counts), bounding box with per-axis size and center, volumetric center of mass, 6-component inertia tensor (Ixx/Iyy/Izz/Ixy/Ixz/Iyz), and a face-type inventory classifying every face as Plane/Cylinder/Cone/Sphere/Torus/BSpline with area and type-specific params (e.g. cylinder diameter and axis); identical faces are collapsed with a count, non-analytic sliver faces folded into one summary line. Prefer measure over render_view for verifying geometry — numbers are unambiguous. topology is the fastest confirmation that a boolean operation succeeded: a failed cut leaves face/edge/vertex counts unchanged. object_name: named object from show() (default: current shape). density (g/cm³) or material preset (steel, stainless, aluminum/6061, brass, copper, titanium, abs, pla, petg, nylon) adds mass_g and scales inertia to true mass moments in g·mm²."""
-    return _session.measure(object_name, density, material)
+    return _resolve_session().measure(object_name, density, material)
 
 
 @mcp.tool()
 def clearance(object_a: str, object_b: str) -> str:
     """Spatial relationship between two named shapes. Returns JSON with `clearance` (mm), `status` (one of: apart, touching, containing, interpenetrating), `containment` (a_in_b, b_in_a, or neither), and `intersection_volume` / `a_volume_outside_b` / `b_volume_outside_a` for overlap quantification. Reads `clearance` differently per status: apart=gap, containing=wall thickness from inner surface to outer hull (use this to verify a pocket fits inside a plate), touching=0, interpenetrating=0 (check intersection_volume + a_volume_outside_b for the wall-piercing case). object_a, object_b: names from show()."""
-    return _session.clearance(object_a, object_b)
+    return _resolve_session().clearance(object_a, object_b)
 
 
 @mcp.tool()
@@ -126,7 +147,7 @@ def analyze_printability(
         raise it for parts whose bottom faces sit slightly off Z=0.
     min_feature: minimum vertical feature size in mm to flag (default 0.5).
     """
-    return _session.analyze_printability(
+    return _resolve_session().analyze_printability(
         object_name,
         support_angle,
         nozzle,
@@ -140,13 +161,13 @@ def analyze_printability(
 @mcp.tool()
 def cross_sections(object_name: str = "", axis: str = "Z", num_slices: int = 10) -> str:
     """Compute cross-sectional areas at evenly spaced planes along an axis. Returns a list of {position, area} pairs. axis: X, Y, or Z (default Z). num_slices: number of planes (default 10, minimum 2). Useful for detecting internal voids, wall-thickness variation, or verifying that a shape's cross-section profile matches a reference. object_name: named object from show() (default: current shape)."""
-    return _session.cross_sections(object_name, axis, num_slices)
+    return _resolve_session().cross_sections(object_name, axis, num_slices)
 
 
 @mcp.tool()
 def export(filename: str, format: str = "step", object_name: str = "") -> str:
     """Export model. format: step, stl, dxf, svg, or comma-separated list e.g. 'step,stl' or 'dxf,svg'. 3D shapes (solids) export to step/stl; 2D shapes (Sketches and dimensioned drawings composed via build123d.drafting) export to dxf/svg. Mixing 2D and 3D formats for the same shape errors with a clear message. object_name: named object from show(), '*' to export all named shapes as a combined assembly (default: current shape). STEP exports carry the session names as labels — single-object exports use the object_name, '*' exports produce a Compound labelled 'assembly' with each child labelled by its show() name. Downstream CAD tools (FreeCAD, Fusion) will see the structured assembly with named bodies. Use dxf for engineering-drawing handoff to other CAD tools; svg for embedding in docs/wikis. The result echoes the exported shape's volume/bbox/face count (or bbox/edge count for 2D) as a final sanity check that the right, non-degenerate object was written."""
-    return _session.export_file(filename, format, object_name)
+    return _resolve_session().export_file(filename, format, object_name)
 
 
 @mcp.tool()
@@ -181,7 +202,7 @@ def inspect_drawing(objects: str = "", svg_path: str = "") -> str:
         objects: comma-separated object names (default: all). Session mode only.
         svg_path: path to an SVG file on disk. Switches to SVG mode.
     """
-    return _session.inspect_drawing(objects, svg_path)
+    return _resolve_session().inspect_drawing(objects, svg_path)
 
 
 @mcp.tool()
@@ -205,7 +226,7 @@ def view_axes(
         viewport_up: up vector. Defaults to (0,1,0).
         look_at: target point. Defaults to origin.
     """
-    return _session.view_axes(
+    return _resolve_session().view_axes(
         tuple(viewport_origin),
         tuple(viewport_up) if viewport_up is not None else (0.0, 1.0, 0.0),
         tuple(look_at) if look_at is not None else (0.0, 0.0, 0.0),
@@ -247,7 +268,7 @@ def lint_drawing(
     Each violation is {severity, check, object, message}. Run this after major
     drawing additions; running it BEFORE rendering catches the bug at the source.
     """
-    return _session.lint_drawing(svg_path, drawing_scale, view_shape_names)
+    return _resolve_session().lint_drawing(svg_path, drawing_scale, view_shape_names)
 
 
 @mcp.tool()
@@ -266,7 +287,7 @@ def render_drawing(svg_path: str, width: int = 1200, save_to: str = "") -> list:
         save_to: optional path to write the PNG. If empty, PNG bytes are
             delivered inline only.
     """
-    result = _session.render_drawing(svg_path, width, save_to)
+    result = _resolve_session().render_drawing(svg_path, width, save_to)
     return marshal_render_drawing(result, svg_path, save_to)
 
 
@@ -290,23 +311,23 @@ def save_drawing_annotations(svg_path: str) -> str:
     Args:
         svg_path: path to the SVG file (sidecar written as <svg_path>.dims.json).
     """
-    return _session.save_drawing_annotations(svg_path)
+    return _resolve_session().save_drawing_annotations(svg_path)
 
 
 @mcp.tool()
 def search_library(query: str = "") -> str:
     """Search the part library. query: keywords matched against name, description, tags, category (empty returns all). Returns name, category, description, tags, and full parameter specs including types, defaults, and descriptions."""
-    if not _session.has_library:
+    if not _resolve_session().has_library:
         return "No part library configured. Start the server with --library PATH or set BUILD123D_PART_LIBRARY."
-    return _session.search_library(query)
+    return _resolve_session().search_library(query)
 
 
 @mcp.tool()
 def load_part(name: str, params: str = "") -> str:
     """Load a named part from the library into the session. name: part name from search_library. params: optional JSON object of parameter overrides e.g. '{\"od\": 8.0, \"length\": 20.0}' — unspecified params use their defaults. The part is registered as a named object and becomes current_shape."""
-    if not _session.has_library:
+    if not _resolve_session().has_library:
         return "No part library configured. Start the server with --library PATH or set BUILD123D_PART_LIBRARY."
-    return _session.load_part(name, params)
+    return _resolve_session().load_part(name, params)
 
 
 @mcp.tool()
@@ -314,7 +335,7 @@ def save_snapshot(name: str) -> str:
     """Save a named checkpoint of the current geometric state (current_shape and the show() object registry).
     The Python variable namespace is NOT saved — only geometry. Call this before risky experiments so you can
     restore known-good geometry without re-running all prior execute() calls."""
-    return _session.save_snapshot(name)
+    return _resolve_session().save_snapshot(name)
 
 
 @mcp.tool()
@@ -323,79 +344,79 @@ def restore_snapshot(name: str) -> str:
     The Python variable namespace is NOT restored — execute() calls made after the snapshot are still in scope,
     but current_shape and all show() objects revert to what they were at snapshot time.
     Raises an error if the snapshot name does not exist."""
-    return _session.restore_snapshot(name)
+    return _resolve_session().restore_snapshot(name)
 
 
 @mcp.tool()
 def diff_snapshot(snapshot_a: str, snapshot_b: str = "", format: str = "text") -> str:
     """Compare two snapshots by geometry metrics (volume, topology, bounding box). snapshot_b defaults to current session state if omitted. format: 'text' (default, human-readable) or 'json' (structured, for programmatic consumption)."""
-    return _session.diff_snapshot(snapshot_a, snapshot_b, format)
+    return _resolve_session().diff_snapshot(snapshot_a, snapshot_b, format)
 
 
 @mcp.tool()
 def session_state() -> str:
     """Return a structured JSON snapshot of the current session: current_shape metrics, all named objects (replaces list_objects) with geometry stats, snapshot names, and a variables summary of the Python namespace (type + volume for shapes, type + length for collections, type + value for scalars). Use this to orient after a reset, restore, or multi-step build to confirm what geometry and variables are active."""
-    return _session.session_state()
+    return _resolve_session().session_state()
 
 
 @mcp.tool()
 def health_check() -> str:
     """Verify that render and export dependencies are working. Tests PNG render (VTK), SVG render (build123d HLR), STEP export, and STL export with a trivial shape. Returns JSON with ok/error per capability. Run at session start if you suspect a missing dependency."""
-    return _session.health_check()
+    return _resolve_session().health_check()
 
 
 @mcp.tool()
 def reset() -> str:
     """Clear the current session back to empty state, including all snapshots."""
-    return _session.reset()
+    return _resolve_session().reset()
 
 
 @mcp.tool()
 def shape_compare(object_a: str, object_b: str) -> str:
     """Compare two named shapes (from show()) by geometry metrics: volume delta, bbox delta, topology delta (faces/edges/vertices), and center offset. Useful when you have an intended design and a reference/test shape and want to verify they match — or to quantify how a modification changed the geometry."""
-    return _session.shape_compare(object_a, object_b)
+    return _resolve_session().shape_compare(object_a, object_b)
 
 
 @mcp.tool()
 def find_holes(object_name: str = "") -> str:
     """Recognise drilled holes on a session object (defaults to current shape). Coaxial internal cylinders are grouped into one record per hole: drill + counterbore + spotface stacks, keyway-split bores, and bores interrupted by crossing holes all count once. Returns JSON: {count, holes: [{axis (drilling direction, unit vector), location (opening point), diameter, depth (bore top to deep end; drill-point cone excluded), bottom: through|flat|drill_point|unknown, cbore: {diameter, depth}|null, spotface: {diameter, depth}|null}]}. Countersinks read as openings (not steps); threads and non-cylindrical features are not recognised."""
-    return _session.find_holes(object_name)
+    return _resolve_session().find_holes(object_name)
 
 
 @mcp.tool()
 def find_hole_patterns(object_name: str = "") -> str:
     """Recognise hole patterns on a session object (defaults to current shape): ≥3 identical-spec holes equally spaced on a circle → bolt_circle (center, diameter/BCD), collinear at constant pitch → linear_array (pitch, direction). Returns JSON: {count, patterns: [{type, holes: [HoleFeature records], center/diameter | pitch/direction}]}. Each hole belongs to at most one pattern; make_drawing already annotates these automatically."""
-    return _session.find_hole_patterns(object_name)
+    return _resolve_session().find_hole_patterns(object_name)
 
 
 @mcp.tool()
 def find_bosses(object_name: str = "") -> str:
     """Recognise external cylindrical bosses on a session object (defaults to current shape), including a turned part's OD — filter on diameter against the part envelope for local bosses only. Returns JSON: {count, bosses: [{axis (base toward free end), location (free-end point), diameter, height}]}."""
-    return _session.find_bosses(object_name)
+    return _resolve_session().find_bosses(object_name)
 
 
 @mcp.tool()
 def align_check(object_a: str, object_b: str, axis: str = "Z", mode: str = "flush") -> str:
     """Check alignment between two named objects along an axis. axis: X, Y, or Z. mode: flush (signed distance between bbox extremes — positive=A extends further), center (offset between bbox centroids), clearance (gap between nearest faces — positive=apart, negative=overlap). Returns JSON: {delta, axis, mode, object_a, object_b, interpretation}."""
-    return _session.align_check(object_a, object_b, axis=axis, mode=mode)
+    return _resolve_session().align_check(object_a, object_b, axis=axis, mode=mode)
 
 
 @mcp.tool()
 def resolve(object_name: str, selector: str, label: str = "") -> str:
     """Evaluate a selector expression against a named object and return a geometry descriptor. selector is a Python expression suffix applied to the object, e.g. '.faces().filter_by(Axis.Z).last()'. If label is given, the descriptor is stored in session.geometry_refs[label] and appears in session_state(). Returns JSON: {label, ref, object, selector, type, area/length, center, normal (for Face)}. The ref field uses @cad[object#label] format."""
-    return _session.resolve(object_name, selector, label=label)
+    return _resolve_session().resolve(object_name, selector, label=label)
 
 
 @mcp.tool()
 def script(save_to: str = "") -> str:
     """Return a single Python script assembled from all successfully executed code blocks in this session. Prepends 'from build123d import *' if not already present. If save_to is given, writes the script to that path and returns {script_path, blocks}; otherwise returns {script, blocks}. Useful for exporting a reproducible script after an interactive session."""
-    return _session.script(save_to=save_to)
+    return _resolve_session().script(save_to=save_to)
 
 
 @mcp.tool()
 def import_cad_file(path: str, name: str = "") -> str:
     """Import a STEP (.step/.stp) or STL (.stl) file as a named object in the session. path: absolute or relative path to the file. name: name to register the shape under (defaults to the filename stem). The shape becomes both the named object and the current_shape. Returns volume, topology, and bounding box of the imported shape. After importing, use render_view() to visualise the shape, measure() for geometry queries, or shape_compare() to diff against a show() object. Note: STL imports produce a shell (volume=0) rather than a solid — render_view and measure still work, but clearance() and boolean operations require a solid. If you have both the original built shape and an imported copy in session.objects, render the imported one by name (e.g. objects='mypart') to avoid Z-fighting artifacts from two co-located shapes."""
-    return _session.import_cad_file(path, name)
+    return _resolve_session().import_cad_file(path, name)
 
 
 @mcp.tool()
@@ -409,7 +430,7 @@ def repair_hints(error_text: str) -> str:
 @mcp.tool()
 def last_error() -> str:
     """Return details of the last failed execute() call: exception type, message, and (for runtime and syntax errors) line number and a 5-line excerpt around the failing line. Security errors include a message but no line/excerpt. Returns {\"error\": null} if the last execute() succeeded or no execute() has failed yet. Call this immediately after an execute() error to get the exact failing line — much faster than re-reading the submitted code."""
-    return _session.last_error()
+    return _resolve_session().last_error()
 
 
 @mcp.tool()
@@ -592,7 +613,7 @@ def build123d_drafting_cookbook() -> str:
 )
 def build123d_drafting_api() -> str:
     """build123d-drafting-helpers API reference — generated from the installed library."""
-    return _session.drafting_api()
+    return _resolve_session().drafting_api()
 
 
 @mcp.resource(
@@ -614,7 +635,7 @@ def build123d_presentation_cookbook() -> str:
 )
 def build123d_session_state() -> str:
     """Live session state as JSON."""
-    return _session.session_state()
+    return _resolve_session().session_state()
 
 
 @mcp.resource(
@@ -675,7 +696,7 @@ def suggest_view_layout(
     Iso position is approximate (75% of 3-D diagonal as half-extent) — verify
     with render_view() and adjust manually if the iso overlaps a neighbour.
     """
-    return _session.suggest_view_layout(
+    return _resolve_session().suggest_view_layout(
         object_name,
         page_w,
         page_h,

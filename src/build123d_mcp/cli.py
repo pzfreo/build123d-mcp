@@ -135,6 +135,26 @@ Part library file format (Python, any .py file under --library path):
         "operation timeouts. Use only if the server reports 'Worker process "
         "failed to start'. Overrides BUILD123D_IN_PROCESS env var.",
     )
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default=os.environ.get("BUILD123D_TRANSPORT", "stdio"),
+        help="Transport protocol: 'stdio' (default, for MCP clients) or 'http' "
+        "(streamable HTTP/ASGI, for web deployments). Overrides BUILD123D_TRANSPORT env var.",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("BUILD123D_HOST", "127.0.0.1"),
+        help="Host to bind when --transport http (default: 127.0.0.1). "
+        "Overrides BUILD123D_HOST env var.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("BUILD123D_PORT", "8000")),
+        help="Port to bind when --transport http (default: 8000). "
+        "Overrides BUILD123D_PORT env var.",
+    )
     args = parser.parse_args()
 
     if args.library and not os.path.isdir(args.library):
@@ -160,7 +180,12 @@ Part library file format (Python, any .py file under --library path):
         )
     )
 
-    server.mcp.run()
+    if args.transport == "http":
+        import uvicorn
+
+        uvicorn.run(server.http_app(), host=args.host, port=args.port)
+    else:
+        server.mcp.run()
 
 
 if __name__ == "__main__":

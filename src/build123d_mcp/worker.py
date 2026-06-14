@@ -64,11 +64,25 @@ def worker_main(
     exec_timeout: int = 120,
     allow_all_imports: bool = False,
     extra_allowed_imports: tuple[str, ...] = (),
+    memory_limit_mb: int | None = None,
+    cpu_limit_s: int | None = None,
 ) -> None:
     """Entry point run in the worker subprocess.
 
     Loops receiving requests until the parent closes the connection.
     """
+    if memory_limit_mb is not None or cpu_limit_s is not None:
+        try:
+            import resource
+
+            if memory_limit_mb is not None:
+                limit = memory_limit_mb * 1024 * 1024
+                resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+            if cpu_limit_s is not None:
+                resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit_s, cpu_limit_s))
+        except (ImportError, AttributeError):
+            pass  # Windows has no resource module
+
     session, library_index = _build_session(
         library_path, exec_timeout, allow_all_imports, extra_allowed_imports
     )
@@ -291,11 +305,15 @@ class WorkerSession:
         library_path: str = "",
         allow_all_imports: bool = False,
         extra_allowed_imports: tuple[str, ...] = (),
+        memory_limit_mb: int | None = None,
+        cpu_limit_s: int | None = None,
     ) -> None:
         self._exec_timeout = exec_timeout
         self._library_path = library_path
         self._allow_all_imports = allow_all_imports
         self._extra_allowed_imports = tuple(extra_allowed_imports)
+        self._memory_limit_mb = memory_limit_mb
+        self._cpu_limit_s = cpu_limit_s
         self._conn: Any = None
         self._proc: Any = None
         self._start_worker()
@@ -316,6 +334,8 @@ class WorkerSession:
                 self._exec_timeout,
                 self._allow_all_imports,
                 self._extra_allowed_imports,
+                self._memory_limit_mb,
+                self._cpu_limit_s,
             ),
             daemon=True,
         )

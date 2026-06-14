@@ -27,4 +27,4 @@ def test_resource_uses_worker_routing():
     from build123d_mcp import server
 
     src = inspect.getsource(server.build123d_drafting_api)
-    assert "_session.drafting_api()" in src
+    assert "_resolve_session().drafting_api()" in src
