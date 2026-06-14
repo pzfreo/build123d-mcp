@@ -212,6 +212,12 @@ Part library file format (Python, any .py file under --library path):
             session_kwargs["memory_limit_mb"] = args.memory_limit_mb
         if args.cpu_limit_s is not None:
             session_kwargs["cpu_limit_s"] = args.cpu_limit_s
+    elif args.memory_limit_mb is not None or args.cpu_limit_s is not None:
+        print(
+            "WARNING: --memory-limit-mb and --cpu-limit-s are ignored in --in-process mode "
+            "(no worker subprocess to limit).",
+            file=sys.stderr,
+        )
     server.configure(session_cls(**session_kwargs))
 
     if args.transport == "http":
