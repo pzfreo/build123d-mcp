@@ -15,8 +15,8 @@ build123d component. Drawings export to a project `drawings/` output directory.
    for cases the builder cannot express (e.g. a true cut section). Documented at
    the end as a fallback.
 
-Requires `draftwright >= 0.1.0` (the automated drawing engine) and
-`build123d-drafting-helpers >= 0.9.1` (annotation primitives).
+Requires `draftwright >= 0.1.0` (AGPL-3.0, the automated drawing engine) and
+`build123d-drafting-helpers >= 0.9.1` (Apache 2.0, annotation primitives).
 
 ---
 
