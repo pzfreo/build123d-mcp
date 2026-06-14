@@ -104,14 +104,14 @@ wheels = [
 
 [[package]]
 name = "build123d-drafting-helpers"
-version = "0.7.0"
+version = "0.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "build123d" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a7/99/3509d23295b392e1801636dd0d668c1ca8a1abd05b2818c2f4da7e537e79/build123d_drafting_helpers-0.7.0.tar.gz", hash = "sha256:4848d8616ae956a46a6772490bf8175fefdb9078fb3d4156f55a313b06814b13", size = 143574, upload-time = "2026-06-12T15:59:23.273Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5b/7d/25d5149e90728ee01d50c33f3848cb4046643789c6540688c3943114bc0e/build123d_drafting_helpers-0.10.0.tar.gz", hash = "sha256:d0634bfb434cbea0bd2d76bc8cfb23c7d3f99b6e674c01860c2d32c314d28216", size = 106909, upload-time = "2026-06-14T08:52:11.73Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6a/2e/e22f6ffea6881446675d1f407891c506bd1f8872656212ec51b5e4efe28e/build123d_drafting_helpers-0.7.0-py3-none-any.whl", hash = "sha256:d3e1ee39d3db8a945cf12cfde36ffde14f5614df916a6222924f91be60fb9ac3", size = 85349, upload-time = "2026-06-12T15:59:22.123Z" },
+    { url = "https://files.pythonhosted.org/packages/33/f5/8069370d2f813f7d0affa53d04733161bfe5a2ad9a87d0fbe388110d6550/build123d_drafting_helpers-0.10.0-py3-none-any.whl", hash = "sha256:5d5c97cacbc07a7ad4e2379a5fbb1d0d44bf032e4d1b0515abf558ecbb5bc2d9", size = 60270, upload-time = "2026-06-14T08:52:10.55Z" },
 ]
 
 [[package]]
@@ -128,6 +128,11 @@ dependencies = [
     { name = "resvg-py" },
 ]
 
+[package.optional-dependencies]
+http = [
+    { name = "uvicorn" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "mypy" },
@@ -142,11 +147,13 @@ requires-dist = [
     { name = "augura", specifier = ">=0.1.3" },
     { name = "bd-warehouse" },
     { name = "build123d", specifier = ">=0.10,<0.11" },
-    { name = "build123d-drafting-helpers", specifier = ">=0.7.0" },
+    { name = "build123d-drafting-helpers", specifier = ">=0.10.0" },
     { name = "defusedxml", specifier = ">=0.7.1" },
-    { name = "mcp" },
+    { name = "mcp", specifier = ">=1.9" },
     { name = "resvg-py" },
+    { name = "uvicorn", marker = "extra == 'http'" },
 ]
+provides-extras = ["http"]
 
 [package.metadata.requires-dev]
 dev = [
