@@ -57,6 +57,18 @@ def _gate_report(shape) -> dict:
         else:
             reasons.append("no solid body — the current shape is 2D/open geometry, not a solid")
 
+    # Non-fatal advisories: things that pass the watertight-manifold gate but
+    # still hurt the geometric score. Disjoint solids are each watertight, so a
+    # mesh scorer accepts them — but a single-part task expects ONE body, and the
+    # extra components tank the topology (component-count) score. Almost always an
+    # un-fused result. (Intentional assembly exports via '*' will see this too.)
+    warnings: list[str] = []
+    if n_solids > 1:
+        warnings.append(
+            f"{n_solids} disjoint solid bodies — a single-part task expects one fused "
+            "solid; fuse them (Part() + ... or a.fuse(b)) or the topology score suffers"
+        )
+
     passes = brep_valid and is_manifold and volume > _EPS and n_solids >= 1
     return {
         "passes_gate": passes,
@@ -64,6 +76,7 @@ def _gate_report(shape) -> dict:
         "volume": volume,
         "is_manifold": is_manifold,
         "brep_valid": brep_valid,
+        "warnings": warnings,
         "reasons": reasons,
     }
 
@@ -99,4 +112,6 @@ def validate(session, object_name: str = "") -> str:
     summary = f"Validity gate: {verdict}"
     if report["reasons"]:
         summary += " — " + "; ".join(report["reasons"])
+    if report["warnings"]:
+        summary += " (warning: " + "; ".join(report["warnings"]) + ")"
     return summary + "\n" + json.dumps(report, indent=2)

@@ -67,6 +67,24 @@ def test_degenerate_result_fails(session):
     assert any("volume" in r or "solid" in r for r in report["reasons"])
 
 
+def test_multi_body_passes_with_advisory(session):
+    """Two disjoint solids are each watertight (gate passes), but a single-part
+    task wants one body — surface a non-fatal advisory, not a FAIL."""
+    execute_code(
+        session,
+        "a = Box(10, 10, 10)\n"
+        "b = Box(10, 10, 10).move(Location((30, 0, 0)))\n"
+        "show(Compound([a, b]), 'two')",
+    )
+    report = _gate_report(session.objects["two"])
+    assert report["n_solids"] == 2
+    assert report["passes_gate"] is True  # disjoint closed solids are still watertight
+    assert any("disjoint" in w for w in report["warnings"])
+    out = validate(session, "two")
+    assert out.startswith("Validity gate: PASS")
+    assert "warning" in out and "disjoint" in out
+
+
 def test_validate_unknown_object_reports_error(session):
     out = validate(session, "nope")
     assert "error" in out and "nope" in out
