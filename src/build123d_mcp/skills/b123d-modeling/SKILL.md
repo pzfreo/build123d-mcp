@@ -111,7 +111,14 @@ The ceiling can be raised with `--exec-timeout N` or `BUILD123D_EXEC_TIMEOUT=N`
 ## Step 6 — Finish
 
 1. Final `measure()` against the spec: envelope, volume sanity, hole inventory.
-2. `export("part.step", "step", object_name="part")` — STEP for CAD interchange,
+2. **`validate("part")` before exporting.** A STEP/STL that is not a watertight,
+   manifold, single solid is rejected outright by CAD scorers and downstream
+   tooling (CADGenBench scores it zero) — no matter how close the geometry is.
+   A `FAIL` here almost always means the current shape is a leftover 2D sketch,
+   an open shell, an un-fused compound (`Part() + ...`), or a degenerate boolean
+   result; fix it and re-validate until it passes. `export()` re-runs this gate
+   and warns, but catch it here rather than shipping a zero.
+3. `export("part.step", "step", object_name="part")` — STEP for CAD interchange,
    STL for printing. If the project slices with
    [estampo](https://github.com/estampo/estampo) (`estampo.toml` present),
    add/update the `[[parts]]` entry for the exported file and run `estampo run`
@@ -130,14 +137,14 @@ The ceiling can be raised with `--exec-timeout N` or `BUILD123D_EXEC_TIMEOUT=N`
    The fragment sets `enable_support`, `brim_type`, and advisory
    `[slicer.overrides]` comments — review and merge it into the `[[parts]]`
    entry rather than pasting blindly (see estampo's skill).
-3. Unless the user opts out, save a clean regeneration script to
+4. Unless the user opts out, save a clean regeneration script to
    `scripts/<part>.py`: the parameter block, the build steps, and the export
    call. Follow the project's existing script layout, and pick a non-colliding
    name if one exists. The part should live in version control as code, not
    only as a STEP artifact.
-4. If the part will be FDM printed, run `analyze_printability("part")` and
+5. If the part will be FDM printed, run `analyze_printability("part")` and
    report overhangs / thin walls / bed-fit findings.
-5. For an engineering drawing of the finished part, switch to the b123d-drawing
+6. For an engineering drawing of the finished part, switch to the b123d-drawing
    skill (or the `build123d://skill/drawing` resource).
 
 ---

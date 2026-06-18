@@ -147,6 +147,17 @@ Prefer `measure()` over `render_view()` for verifying geometry — numbers are u
 
 ---
 
+### `validate`
+Check whether a shape would pass a CAD validity gate before exporting it. The gate mirrors what CAD scorers and downstream tools require — a well-formed (BRepCheck), watertight, manifold solid with non-zero volume.
+
+**Input:** `object_name` (string, default `""`) — named object from `show()`; empty = `current_shape`
+
+**Returns:** a `PASS`/`FAIL` line plus JSON: `passes_gate`, `n_solids`, `volume`, `is_manifold`, `brep_valid`, and `reasons` (actionable failure causes).
+
+A `FAIL` means a STEP/STL export would be rejected outright (a CAD scorer like CADGenBench scores it zero) — typically a leftover 2D sketch or open shell as the current shape, an un-fused compound, or a degenerate boolean result. Run this immediately before `export()` on any part you intend to submit or hand off; `export()` re-runs the gate and warns on a 3D export that would fail.
+
+---
+
 ### `clearance`
 Spatial relationship between two named shapes — distance, containment, and overlap in one call.
 

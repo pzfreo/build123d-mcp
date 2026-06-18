@@ -532,6 +532,10 @@ class WorkerSession:
     def measure(self, object_name: str = "", density: float = 0.0, material: str = "") -> str:
         raise NotImplementedError
 
+    @_op(_tool(f"{_T}.validate:validate"), _GEOMETRY_TIMEOUT)
+    def validate(self, object_name: str = "") -> str:
+        raise NotImplementedError
+
     @_op(_tool(f"{_T}.measure:clearance"), _GEOMETRY_TIMEOUT)
     def clearance(self, object_a: str, object_b: str) -> str:
         raise NotImplementedError

@@ -145,6 +145,19 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
     # sanity check that the right, non-degenerate object landed in the file (#241).
     sanity = _sanity_line(shape)
     suffix = f"\n{sanity}" if sanity else ""
+    # For 3D solids, run the validity gate: a CAD scorer rejects a non-watertight
+    # / non-manifold / non-solid STEP or STL outright (score zero), so flag it at
+    # the last possible moment rather than letting an invalid artifact ship.
+    if not is_2d:
+        from build123d_mcp.tools.validate import _gate_report
+
+        report = _gate_report(shape)
+        if not report["passes_gate"]:
+            suffix += (
+                "\n⚠ VALIDITY GATE FAIL — a CAD scorer would reject this file (score zero): "
+                + "; ".join(report["reasons"])
+                + ". Fix the solid and re-export (run validate() for detail)."
+            )
     if len(exported) == 1:
         return f"Exported to {exported[0]}{suffix}"
     return "Exported to:\n" + "\n".join(exported) + suffix

@@ -608,6 +608,7 @@ def test_mcp_lists_all_tools():
         "execute",
         "render_view",
         "measure",
+        "validate",
         "export",
         "reset",
         "save_snapshot",

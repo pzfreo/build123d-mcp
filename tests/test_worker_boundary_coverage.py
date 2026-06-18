@@ -106,6 +106,11 @@ def _measure(ws, tmp_path):
     assert "error" not in r and r["volume"] > 0
 
 
+def _validate(ws, tmp_path):
+    r = ws.validate("a")
+    assert "PASS" in r  # 'a' is a seeded unit box → valid solid
+
+
 def _clearance(ws, tmp_path):
     r = json.loads(ws.clearance("a", "b"))
     assert "error" not in r and "status" in r
@@ -226,6 +231,7 @@ def _render_view(ws, tmp_path):
 # op name -> check function. The op name MUST match the dispatch/proxy op string.
 SESSION_STATEFUL_TOOLS = {
     "measure": _measure,
+    "validate": _validate,
     "clearance": _clearance,
     "shape_compare": _shape_compare,
     "align_check": _align_check,
