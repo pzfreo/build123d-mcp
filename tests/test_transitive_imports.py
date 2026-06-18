@@ -54,6 +54,19 @@ def test_nonexistent_module_is_blocked():
     assert _is_transitively_safe("no_such_module_xyz_abc_999") is False
 
 
+def test_draftwright_is_allowlisted():
+    """draftwright (the AGPL drawing engine spun out of build123d-drafting-helpers,
+    #270) is a deliberate bring-your-own dependency: not installed by this Apache
+    server, but permitted in the sandbox so users who install it can
+    `from draftwright import make_drawing` without --allow-imports. The membership
+    check must short-circuit before the transitive find_spec, so the import passes
+    even when draftwright is absent."""
+    assert _sec._is_root_allowed("draftwright") is True
+    # check_ast validates the name against the allowlist without importing it,
+    # so this does not require draftwright to be installed.
+    _sec.check_ast("from draftwright import make_drawing")
+
+
 def test_safe_package_allowed(tmp_path, monkeypatch):
     pkg = _make_pkg(
         tmp_path,
