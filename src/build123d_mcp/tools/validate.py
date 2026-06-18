@@ -33,10 +33,15 @@ def _gate_report(shape) -> dict:
         volume = round(float(shape.volume), 4)
     except Exception:
         volume = 0.0
-    try:
-        is_manifold = bool(shape.is_manifold)
-    except Exception:
-        is_manifold = False
+    # build123d's `is_manifold` false-negates on closed solids imported from STEP
+    # (verified on NIST CAD models — a single closed shell with zero open edges
+    # still reports is_manifold=False), so it is NOT a reliable gate. The
+    # authoritative test is the edge-face map: a watertight, manifold solid has
+    # every non-degenerate edge shared by exactly two faces. An open shell leaves
+    # boundary edges with one face; a non-manifold junction leaves an edge with
+    # three or more. Reported separately as `open_edges` / `nonmanifold_edges`.
+    open_edges, nonmanifold_edges, bad_edges_ok = _edge_defects(shape)
+    watertight_manifold = bad_edges_ok and open_edges == 0 and nonmanifold_edges == 0
     try:
         brep_valid = bool(BRepCheck_Analyzer(shape.wrapped).IsValid())
     except Exception:
@@ -47,15 +52,14 @@ def _gate_report(shape) -> dict:
         reasons.append("B-rep is not well-formed (BRepCheck failed)")
     if volume <= _EPS:
         reasons.append("zero/degenerate volume")
-    if not is_manifold:
-        reasons.append("not a closed manifold — open shell, 2D sketch, or non-manifold edges")
-    if n_solids == 0:
-        if is_manifold and volume > _EPS:
-            reasons.append(
-                "closed surface but no solid body — wrap the faces in Solid() before export"
-            )
-        else:
-            reasons.append("no solid body — the current shape is 2D/open geometry, not a solid")
+    if open_edges:
+        reasons.append(f"{open_edges} open edge(s) — not watertight (open shell or unsewn faces)")
+    if nonmanifold_edges:
+        reasons.append(f"{nonmanifold_edges} non-manifold edge(s) — edges shared by 3+ faces")
+    if n_solids == 0 and not open_edges and not nonmanifold_edges:
+        reasons.append("closed surface but no solid body — wrap the faces in Solid() before export")
+    elif n_solids == 0:
+        reasons.append("no solid body — the current shape is 2D/open geometry, not a solid")
 
     # Non-fatal advisories: things that pass the watertight-manifold gate but
     # still hurt the geometric score. Disjoint solids are each watertight, so a
@@ -69,16 +73,50 @@ def _gate_report(shape) -> dict:
             "solid; fuse them (Part() + ... or a.fuse(b)) or the topology score suffers"
         )
 
-    passes = brep_valid and is_manifold and volume > _EPS and n_solids >= 1
+    passes = brep_valid and watertight_manifold and volume > _EPS and n_solids >= 1
     return {
         "passes_gate": passes,
         "n_solids": n_solids,
         "volume": volume,
-        "is_manifold": is_manifold,
+        "watertight_manifold": watertight_manifold,
+        "open_edges": open_edges,
+        "nonmanifold_edges": nonmanifold_edges,
         "brep_valid": brep_valid,
         "warnings": warnings,
         "reasons": reasons,
     }
+
+
+def _edge_defects(shape) -> tuple[int, int, bool]:
+    """Count open and non-manifold edges via the edge→face map.
+
+    A watertight, manifold B-rep has every non-degenerate (non-seam) edge shared
+    by exactly two faces. Returns (open_edges, nonmanifold_edges, ok) where
+    ``ok`` is False if the map could not be built (then the caller treats the
+    shape as failing rather than silently passing).
+    """
+    try:
+        from OCP.BRep import BRep_Tool
+        from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
+        from OCP.TopExp import TopExp
+        from OCP.TopoDS import TopoDS
+        from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
+
+        m = TopTools_IndexedDataMapOfShapeListOfShape()
+        TopExp.MapShapesAndAncestors_s(shape.wrapped, TopAbs_EDGE, TopAbs_FACE, m)
+        open_edges = nonmanifold_edges = 0
+        for i in range(1, m.Extent() + 1):
+            edge = TopoDS.Edge_s(m.FindKey(i))
+            if BRep_Tool.Degenerated_s(edge):  # seam/pole edges are not boundaries
+                continue
+            faces = m.FindFromIndex(i).Extent()
+            if faces < 2:
+                open_edges += 1
+            elif faces > 2:
+                nonmanifold_edges += 1
+        return open_edges, nonmanifold_edges, True
+    except Exception:
+        return 0, 0, False
 
 
 def _resolve_shape(session, object_name: str):

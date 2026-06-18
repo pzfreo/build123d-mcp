@@ -31,7 +31,9 @@ def test_solid_box_passes(session):
     report = json.loads(out.split("\n", 1)[1])
     assert report["passes_gate"] is True
     assert report["n_solids"] == 1
-    assert report["is_manifold"] is True
+    assert report["watertight_manifold"] is True
+    assert report["open_edges"] == 0
+    assert report["nonmanifold_edges"] == 0
     assert report["brep_valid"] is True
     assert report["reasons"] == []
 
@@ -47,11 +49,29 @@ def test_2d_sketch_fails(session):
 
 
 def test_open_shell_fails(session):
-    # Five of a box's six faces — an open (non-watertight) shell.
+    # Five of a box's six faces — an open (non-watertight) shell with boundary
+    # edges that belong to only one face.
     execute_code(session, "b = Box(10, 10, 10)\nshow(Shell(b.faces()[:5]), 'open')")
     report = _gate_report(session.objects["open"])
     assert report["passes_gate"] is False
-    assert report["is_manifold"] is False
+    assert report["open_edges"] > 0
+    assert report["watertight_manifold"] is False
+
+
+def test_closed_solid_with_unreliable_is_manifold_passes():
+    """Regression for the gate's reliance on build123d.is_manifold (#276): an
+    imported closed solid can report is_manifold=False while being watertight
+    (zero open/non-manifold edges). The edge-defect test must pass it where the
+    old is_manifold check would false-FAIL. Synthesized here as a fused solid;
+    the real-world trigger was NIST CAD model imports."""
+    from build123d import Box, Cylinder, Pos
+
+    part = Box(20, 20, 10) - Pos(0, 0, 0) * Cylinder(4, 10)
+    report = _gate_report(part)
+    assert report["open_edges"] == 0
+    assert report["nonmanifold_edges"] == 0
+    assert report["watertight_manifold"] is True
+    assert report["passes_gate"] is True
 
 
 def test_degenerate_result_fails(session):
