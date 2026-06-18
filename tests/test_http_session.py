@@ -72,15 +72,21 @@ def test_concurrent_requests_isolated_no_crosstalk():
     state = _set_singleton(singleton)
     sessions = {"a": object(), "b": object()}
     seen: dict[str, object] = {}
+    errors: dict[str, BaseException] = {}
+    # The barrier forces both requests to set their var BEFORE either reads.
+    # That ordering is what gives this test teeth: a plain module global would
+    # be overwritten by the second setter, so both reads would return the same
+    # value and the assertions below would fail. A ContextVar keeps them apart.
     both_set = threading.Barrier(2)
 
     def handle(key: str) -> None:
         def run() -> None:
-            server._session_var.set(sessions[key])
-            # Both requests have set their var before either reads, so a leak
-            # would surface as a wrong/observed value here.
-            both_set.wait(timeout=5)
-            seen[key] = server._resolve_session()
+            try:
+                server._session_var.set(sessions[key])
+                both_set.wait(timeout=10)
+                seen[key] = server._resolve_session()
+            except BaseException as exc:  # surface thread failures, incl. barrier timeout
+                errors[key] = exc
 
         # copy_context() models the ASGI server running each request in its own
         # context; the var set inside never escapes to the base context.
@@ -91,8 +97,10 @@ def test_concurrent_requests_isolated_no_crosstalk():
         for t in threads:
             t.start()
         for t in threads:
-            t.join(timeout=10)
+            t.join(timeout=30)
 
+        assert not any(t.is_alive() for t in threads), "request thread hung"
+        assert not errors, f"request thread(s) errored: {errors}"
         assert seen["a"] is sessions["a"]
         assert seen["b"] is sessions["b"]
         # The per-request vars never touched the base context's resolution.
@@ -109,10 +117,13 @@ def test_http_app_is_mountable_asgi():
     from starlette.routing import Mount
 
     app = server.http_app()
-    assert callable(app)  # ASGI app is callable (scope, receive, send)
+    # A real ASGI app, not just any callable — Mount would accept anything.
+    assert isinstance(app, Starlette)
 
     parent = Starlette(routes=[Mount("/mcp", app=app)])
-    assert any(getattr(r, "path", None) == "/mcp" for r in parent.routes)
+    mount = next((r for r in parent.routes if getattr(r, "path", None) == "/mcp"), None)
+    assert mount is not None
+    assert mount.app is app  # the FastMCP app is what got mounted
 
 
 def test_fastmcp_is_stateless_http():
