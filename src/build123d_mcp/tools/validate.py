@@ -46,6 +46,14 @@ def _gate_report(shape) -> dict:
         brep_valid = bool(BRepCheck_Analyzer(shape.wrapped).IsValid())
     except Exception:
         brep_valid = False
+    # Mesh-level non-manifold check, mirroring how a CAD scorer validates
+    # (tessellate → check the mesh is manifold). Catches self-touching /
+    # coincident-face defects and non-manifold vertices that are valid B-reps
+    # the edge-face map above does not see — the dominant invalid-but-watertight
+    # failure mode observed on CADGenBench (a single solid whose mesh has an edge
+    # shared by 4 triangles, or a pinch-point vertex).
+    mesh_nm_edges, mesh_nm_verts, mesh_ok = _mesh_defects(shape)
+    mesh_nonmanifold = mesh_ok and (mesh_nm_edges > 0 or mesh_nm_verts > 0)
 
     reasons: list[str] = []
     if not brep_valid:
@@ -56,6 +64,17 @@ def _gate_report(shape) -> dict:
         reasons.append(f"{open_edges} open edge(s) — not watertight (open shell or unsewn faces)")
     if nonmanifold_edges:
         reasons.append(f"{nonmanifold_edges} non-manifold edge(s) — edges shared by 3+ faces")
+    if mesh_nm_edges:
+        reasons.append(
+            f"{mesh_nm_edges} mesh non-manifold edge(s) — faces meet >2-ways "
+            "(self-touch / coincident faces); a CAD scorer rejects this even though "
+            "it looks watertight"
+        )
+    if mesh_nm_verts:
+        reasons.append(
+            f"{mesh_nm_verts} non-manifold vertex/vertices — surface sheets meet at a "
+            "point (pinch); separate the touching features"
+        )
     if n_solids == 0 and not open_edges and not nonmanifold_edges:
         reasons.append("closed surface but no solid body — wrap the faces in Solid() before export")
     elif n_solids == 0:
@@ -73,7 +92,13 @@ def _gate_report(shape) -> dict:
             "solid; fuse them (Part() + ... or a.fuse(b)) or the topology score suffers"
         )
 
-    passes = brep_valid and watertight_manifold and volume > _EPS and n_solids >= 1
+    passes = (
+        brep_valid
+        and watertight_manifold
+        and not mesh_nonmanifold
+        and volume > _EPS
+        and n_solids >= 1
+    )
     return {
         "passes_gate": passes,
         "n_solids": n_solids,
@@ -81,6 +106,8 @@ def _gate_report(shape) -> dict:
         "watertight_manifold": watertight_manifold,
         "open_edges": open_edges,
         "nonmanifold_edges": nonmanifold_edges,
+        "mesh_nonmanifold_edges": mesh_nm_edges,
+        "mesh_nonmanifold_vertices": mesh_nm_verts,
         "brep_valid": brep_valid,
         "warnings": warnings,
         "reasons": reasons,
@@ -117,6 +144,74 @@ def _edge_defects(shape) -> tuple[int, int, bool]:
         return open_edges, nonmanifold_edges, True
     except Exception:
         return 0, 0, False
+
+
+def _mesh_defects(shape) -> tuple[int, int, bool]:
+    """Tessellate and count mesh-level non-manifold edges and vertices.
+
+    Mirrors how a CAD scorer validates (B-rep → mesh → manifold check), catching
+    self-touching / coincident-face defects and pinch-point vertices that pass
+    BRepCheck and the edge-face map. OCP meshes each face independently, so
+    coincident vertices are welded by rounded coordinate before counting; this
+    was verified to give zero false positives on curved and real CAD geometry.
+    Returns (nonmanifold_edges, nonmanifold_vertices, ok).
+    """
+    try:
+        import math
+        from collections import Counter, defaultdict
+
+        bb = shape.bounding_box()
+        diag = math.dist((bb.min.X, bb.min.Y, bb.min.Z), (bb.max.X, bb.max.Y, bb.max.Z))
+        if diag <= 0:
+            return 0, 0, False
+        verts, tris = shape.tessellate(max(diag * 1e-3, 1e-4))
+        if not verts or not tris:
+            return 0, 0, False
+
+        q = diag * 1e-5  # weld tolerance: merge per-face samples on shared edges
+        remap: list[int] = []
+        keys: dict = {}
+        for v in verts:
+            k = (round(v.X / q), round(v.Y / q), round(v.Z / q))
+            remap.append(keys.setdefault(k, len(keys)))
+
+        edge_count: Counter = Counter()
+        links: dict = defaultdict(list)
+        for t in tris:
+            a, b, c = remap[t[0]], remap[t[1]], remap[t[2]]
+            if len({a, b, c}) < 3:
+                continue  # degenerate triangle after welding
+            for e in ((a, b), (b, c), (a, c)):
+                edge_count[tuple(sorted(e))] += 1
+            links[a].append((b, c))
+            links[b].append((a, c))
+            links[c].append((a, b))
+
+        nm_edges = sum(1 for n in edge_count.values() if n > 2)
+        # A vertex is non-manifold if its incident triangles (their opposite
+        # "link" edges) do not form a single connected component.
+        nm_verts = sum(1 for link in links.values() if _link_components(link) > 1)
+        return nm_edges, nm_verts, True
+    except Exception:
+        return 0, 0, False
+
+
+def _link_components(link_edges: list) -> int:
+    """Number of connected components among a vertex's link edges (union-find)."""
+    parent: dict = {}
+
+    def find(x: int) -> int:
+        parent.setdefault(x, x)
+        root = x
+        while parent[root] != root:
+            root = parent[root]
+        while parent[x] != root:
+            parent[x], x = root, parent[x]
+        return root
+
+    for p, r in link_edges:
+        parent[find(p)] = find(r)
+    return len({find(x) for x in parent})
 
 
 def _resolve_shape(session, object_name: str):

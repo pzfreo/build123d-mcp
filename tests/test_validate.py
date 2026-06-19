@@ -34,8 +34,47 @@ def test_solid_box_passes(session):
     assert report["watertight_manifold"] is True
     assert report["open_edges"] == 0
     assert report["nonmanifold_edges"] == 0
+    assert report["mesh_nonmanifold_edges"] == 0
+    assert report["mesh_nonmanifold_vertices"] == 0
     assert report["brep_valid"] is True
     assert report["reasons"] == []
+
+
+def test_curved_solid_no_mesh_false_positive(session):
+    """The mesh non-manifold check must not false-positive on clean curved
+    geometry (the per-face tessellation is welded first). A cylinder with a bore
+    passes with zero mesh defects."""
+    execute_code(session, "show(Cylinder(8, 20) - Cylinder(3, 20), 'tube')")
+    report = _gate_report(session.objects["tube"])
+    assert report["mesh_nonmanifold_edges"] == 0
+    assert report["mesh_nonmanifold_vertices"] == 0
+    assert report["passes_gate"] is True
+
+
+def test_mesh_nonmanifold_edge_fails(session):
+    """Two solids meeting along a shared edge tessellate to a mesh edge shared by
+    >2 triangles — the dominant invalid-but-watertight CADGenBench failure mode."""
+    execute_code(
+        session,
+        "show(Box(10, 10, 10) + Pos(10, 10, 0) * Box(10, 10, 10), 'edge_touch')",
+    )
+    report = _gate_report(session.objects["edge_touch"])
+    assert report["mesh_nonmanifold_edges"] > 0
+    assert report["passes_gate"] is False
+    assert any("mesh non-manifold edge" in r for r in report["reasons"])
+
+
+def test_mesh_nonmanifold_vertex_fails(session):
+    """Two solids meeting at a single corner vertex (pinch point) — fixture 146's
+    class; caught only by the mesh vertex check, not the edge-face map."""
+    execute_code(
+        session,
+        "show(Box(10, 10, 10) + Pos(10, 10, 10) * Box(10, 10, 10), 'vtx_touch')",
+    )
+    report = _gate_report(session.objects["vtx_touch"])
+    assert report["mesh_nonmanifold_vertices"] > 0
+    assert report["passes_gate"] is False
+    assert any("non-manifold vertex" in r for r in report["reasons"])
 
 
 def test_2d_sketch_fails(session):
