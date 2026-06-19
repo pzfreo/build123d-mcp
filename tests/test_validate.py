@@ -49,6 +49,25 @@ def test_curved_solid_no_mesh_false_positive(session):
     assert report["passes_gate"] is True
 
 
+def test_free_annotation_edges_ignored(session):
+    """A clean solid carrying free wire edges (PMI annotation curves from an
+    imported STEP, or stray construction geometry) must still PASS — free edges
+    have no incident face and are not open boundaries. Regression for the gate
+    false-FAILing clean NIST solids whose AP203 file carried dozens of annotation
+    edges."""
+    execute_code(
+        session,
+        "from build123d import Edge, Compound\n"
+        "solid = Box(20, 20, 20)\n"
+        "wire1 = Edge.make_line((40, 0, 0), (60, 0, 0))\n"
+        "wire2 = Edge.make_line((0, 40, 0), (0, 60, 0))\n"
+        "show(Compound(children=[solid, wire1, wire2]), 'annotated')",
+    )
+    report = _gate_report(session.objects["annotated"])
+    assert report["open_edges"] == 0
+    assert report["passes_gate"] is True
+
+
 def test_mesh_nonmanifold_edge_fails(session):
     """Two solids meeting along a shared edge tessellate to a mesh edge shared by
     >2 triangles — the dominant invalid-but-watertight CADGenBench failure mode."""

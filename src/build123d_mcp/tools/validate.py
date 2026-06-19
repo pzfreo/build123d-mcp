@@ -114,6 +114,13 @@ def _edge_defects(shape) -> tuple[int, int, bool]:
     by exactly two faces. Returns (open_edges, nonmanifold_edges, ok) where
     ``ok`` is False if the map could not be built (then the caller treats the
     shape as failing rather than silently passing).
+
+    Edges with NO incident face are free wires — annotation/PMI curves (leader
+    and dimension lines carried by an imported STEP) or stray construction
+    geometry — not shell boundaries, so they are skipped. Counting them as open
+    edges false-FAILed clean solids imported from PMI-annotated STEP (verified on
+    the NIST CAD models, where the solid is watertight but the file carries dozens
+    of free annotation edges). Only a one-face edge is a genuine open boundary.
     """
     try:
         from OCP.BRep import BRep_Tool
@@ -130,7 +137,9 @@ def _edge_defects(shape) -> tuple[int, int, bool]:
             if BRep_Tool.Degenerated_s(edge):  # seam/pole edges are not boundaries
                 continue
             faces = m.FindFromIndex(i).Extent()
-            if faces < 2:
+            if faces == 0:
+                continue  # free wire / PMI annotation curve, not a shell boundary
+            if faces == 1:
                 open_edges += 1
             elif faces > 2:
                 nonmanifold_edges += 1
