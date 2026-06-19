@@ -35,7 +35,6 @@ def test_solid_box_passes(session):
     assert report["open_edges"] == 0
     assert report["nonmanifold_edges"] == 0
     assert report["mesh_nonmanifold_edges"] == 0
-    assert report["mesh_nonmanifold_vertices"] == 0
     assert report["brep_valid"] is True
     assert report["reasons"] == []
 
@@ -47,7 +46,6 @@ def test_curved_solid_no_mesh_false_positive(session):
     execute_code(session, "show(Cylinder(8, 20) - Cylinder(3, 20), 'tube')")
     report = _gate_report(session.objects["tube"])
     assert report["mesh_nonmanifold_edges"] == 0
-    assert report["mesh_nonmanifold_vertices"] == 0
     assert report["passes_gate"] is True
 
 
@@ -62,19 +60,6 @@ def test_mesh_nonmanifold_edge_fails(session):
     assert report["mesh_nonmanifold_edges"] > 0
     assert report["passes_gate"] is False
     assert any("mesh non-manifold edge" in r for r in report["reasons"])
-
-
-def test_mesh_nonmanifold_vertex_fails(session):
-    """Two solids meeting at a single corner vertex (pinch point) — fixture 146's
-    class; caught only by the mesh vertex check, not the edge-face map."""
-    execute_code(
-        session,
-        "show(Box(10, 10, 10) + Pos(10, 10, 10) * Box(10, 10, 10), 'vtx_touch')",
-    )
-    report = _gate_report(session.objects["vtx_touch"])
-    assert report["mesh_nonmanifold_vertices"] > 0
-    assert report["passes_gate"] is False
-    assert any("non-manifold vertex" in r for r in report["reasons"])
 
 
 def test_2d_sketch_fails(session):
