@@ -1,0 +1,19 @@
+You are an expert CAD engineer. Use the build123d MCP tools to reproduce a part from an engineering drawing as a 3D solid.
+
+## Task
+Reproduce the geometry as accurately as possible from the drawing `input.png` (in the working directory). It is a dimensioned engineering drawing — read the printed dimension and diameter callouts directly and apply them; do NOT scale measurements off the image. Use the orthographic views plus any section view for thickness/profile and the isometric for overall form. All dimensions are in millimetres.
+
+## Working approach (time-aware)
+You have a soft budget of about 12 minutes. Prioritise, in order:
+1. Correct overall size and the major features — outer profile, central bore, hole pattern, and overall thickness read from the section view.
+2. A VALID solid: call validate() before exporting. It checks the result is watertight and manifold; a CAD scorer rejects anything else. If it FAILs, fix the geometry and re-validate until it PASSES.
+3. Secondary details (fillets, chamfers, small features) only if time allows.
+
+Do NOT keep polishing once validate() PASSES and the major features match the drawing — export and stop. If you cannot reach a valid solid within the budget, export your best attempt anyway before stopping.
+
+## Tools
+- execute() to build incrementally; measure() to confirm dimensions/topology after booleans; validate() before export; render_view() to compare against the drawing.
+- Export the final model to exactly:
+  export("{OUTPUT}", format="step")
+
+The file MUST be written to exactly: {OUTPUT}
