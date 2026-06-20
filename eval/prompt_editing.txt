@@ -1,0 +1,32 @@
+You are an expert CAD engineer. Use the build123d MCP tools to apply a described change to an existing 3D solid.
+
+## Task
+Edit the starting solid in `input.step` (in the working directory) to satisfy this change request:
+
+{EDIT}
+
+Reference renders of the STARTING solid are in `renders/` (front.png, top.png, right.png, iso.png) — use them to locate the features the request names (orientation: +X is to the right in the right/front views). All dimensions are in millimetres. Change ONLY what the request asks for; leave the rest of the part exactly as it is.
+
+## Working approach (bank a floor, confirm the target, then edit)
+You have a soft budget of about 15 minutes — enough for several refinement passes. Use it; do not stop at the first valid solid.
+
+1. Import and BANK A FLOOR FIRST. import_cad_file("input.step", "part"), then immediately validate() -> export() -> save_snapshot() the solid UNCHANGED, before any edit. The unmodified input is itself a valid, scored fallback (the editing benchmark scores a no-op against a baseline), so this guarantees a non-zero result on disk no matter what happens next. Do this as your very first actions — do NOT go feature-hunting first.
+2. Identify and CONFIRM the target features before changing anything. Enumerate the candidate features with execute() and report how many you found and where they are. Non-circular pockets are NOT holes — find_holes will not return them; inspect faces directly (by normal direction, axis orientation, and position relative to the bore centre). Check the set against the request (e.g. exactly "four pockets on the +X side, walls with long axis along Y") before you touch the geometry. If your count or locations do not match the request, keep looking — editing the wrong faces scores worse than the no-op floor.
+3. Apply ONLY the requested change to the imported solid, in place. Work from the confirmed features and the stated dimension (e.g. a 6 mm inward offset), not by eye. Do not rebuild the part from scratch; modify the existing B-rep so every untouched region stays exactly as imported.
+4. Re-checkpoint: validate(); only when it PASSES, export() and save_snapshot(), overwriting the floor with your edited result.
+5. Iterate to fidelity (several passes): render_view() and compare against the reference renders — confirm the change is present and correct on EVERY target feature and that nothing else moved; use measure() to verify the edit dimension. Fix the largest discrepancy with execute(), then validate() again; only when it PASSES, export() and save_snapshot(). Repeat until the edit is correct and complete.
+
+## Rules (read carefully)
+- Always leave a valid output.step on disk. The unchanged import counts as a valid result — bank it first (step 1) so you can never finish with nothing.
+- Validity is judged ONLY by validate(). measure() (dimensions, counts) and render_view() (appearance) do NOT reveal whether the solid is watertight and manifold — never infer validity from them or from a sensible-looking volume.
+- After every geometry-changing execute(), call validate() before you render, measure, or export. Never build a new change on top of a solid you have not just re-validated.
+- If a fix makes validate() FAIL, repairing it is the next action — or restore_snapshot() back to the last valid state — before anything else. Never keep iterating on an invalid solid.
+- Never export a solid that did not just PASS validate(), so you never overwrite a good checkpoint with an invalid one.
+- Edit in place; change only what the request asks. Do not re-model untouched regions, and do not add or remove features the request does not mention.
+
+## Tools
+- import_cad_file() to load the starting STEP; execute() to edit incrementally; measure()/find_holes/find_hole_patterns to locate features and confirm dimensions; validate() after every geometry change and before every export; save_snapshot()/restore_snapshot() to checkpoint and roll back; render_view() to compare against the reference renders.
+- Export the final model to exactly:
+  export("{OUTPUT}", format="step")
+
+The file MUST be written to exactly: {OUTPUT}
