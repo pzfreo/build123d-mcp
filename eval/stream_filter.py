@@ -59,15 +59,24 @@ for raw in sys.stdin:
         for b in ev.get("message", {}).get("content", []):
             if b.get("type") == "tool_result":
                 c = b.get("content", "")
-                txt = c if isinstance(c, str) else " ".join(
-                    x.get("text", "") for x in c if isinstance(x, dict)
+                txt = (
+                    c
+                    if isinstance(c, str)
+                    else " ".join(x.get("text", "") for x in c if isinstance(x, dict))
                 )
                 txt = txt.replace("\n", " ").strip()
                 low = txt.lower()
                 key = any(
                     k in low
-                    for k in ("validity gate", "exported", "gate fail", "error",
-                              "warning", "non-manifold", "open edge")
+                    for k in (
+                        "validity gate",
+                        "exported",
+                        "gate fail",
+                        "error",
+                        "warning",
+                        "non-manifold",
+                        "open edge",
+                    )
                 )
                 emit(f"{stamp()}   <- {txt[:160]}", key=key)
     elif t == "result":

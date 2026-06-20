@@ -56,9 +56,7 @@ def shape_score(out_path, gt_path):
 
     def mesh(path):
         v, f = solid(path).tessellate(0.2)
-        return trimesh.Trimesh(
-            vertices=np.array([(p.X, p.Y, p.Z) for p in v]), faces=np.array(f)
-        )
+        return trimesh.Trimesh(vertices=np.array([(p.X, p.Y, p.Z) for p in v]), faces=np.array(f))
 
     def rotations():
         mats = []
