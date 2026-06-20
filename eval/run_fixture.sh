@@ -50,7 +50,7 @@ claude -p "$(cat prompt.txt)" \
   --strict-mcp-config \
   --dangerously-skip-permissions \
   --disable-slash-commands \
-  --allowedTools "mcp__build123d__execute,mcp__build123d__render_view,mcp__build123d__measure,mcp__build123d__validate,mcp__build123d__export,mcp__build123d__import_step" \
+  --allowedTools "mcp__build123d__execute,mcp__build123d__render_view,mcp__build123d__measure,mcp__build123d__validate,mcp__build123d__export,mcp__build123d__import_cad_file" \
   > stream.jsonl 2>&1
 
 echo
