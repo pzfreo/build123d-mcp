@@ -151,7 +151,10 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
     if not is_2d:
         from build123d_mcp.tools.validate import _gate_report
 
-        report = _gate_report(shape)
+        # Export is the authoritative gate (it decides if the written file ships),
+        # and runs once, so use the accurate topology-stitch mesh check here even
+        # though it is slower than the fast check interactive validate() uses.
+        report = _gate_report(shape, exact=True)
         if not report["passes_gate"]:
             suffix += (
                 "\n⚠ VALIDITY GATE FAIL — a CAD scorer would reject this file (score zero): "

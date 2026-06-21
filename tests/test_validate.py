@@ -81,6 +81,29 @@ def test_mesh_nonmanifold_edge_fails(session):
     assert any("mesh non-manifold edge" in r for r in report["reasons"])
 
 
+def test_mesh_exact_curved_no_false_positive(session):
+    """The accurate topology-stitch mesh check (used at export) must not
+    false-positive on clean curved geometry — it is tolerance-free, so unlike the
+    fast coordinate weld it cannot invent a non-manifold edge from rounding."""
+    execute_code(session, "show(Cylinder(8, 20) - Cylinder(3, 20), 'tube')")
+    report = _gate_report(session.objects["tube"], exact=True)
+    assert report["mesh_nonmanifold_edges"] == 0
+    assert report["passes_gate"] is True
+
+
+def test_mesh_exact_nonmanifold_edge_fails(session):
+    """The accurate mesh check detects the edge-touch non-manifold: the fused
+    shared edge stitches the four incident faces into a mesh edge shared by >2
+    triangles."""
+    execute_code(
+        session,
+        "show(Box(10, 10, 10) + Pos(10, 10, 0) * Box(10, 10, 10), 'edge_touch')",
+    )
+    report = _gate_report(session.objects["edge_touch"], exact=True)
+    assert report["mesh_nonmanifold_edges"] > 0
+    assert report["passes_gate"] is False
+
+
 def test_2d_sketch_fails(session):
     execute_code(session, "show(Rectangle(5, 5), 'sk')")
     out = validate(session, "sk")
@@ -171,7 +194,10 @@ def test_export_3d_warns_when_gate_fails(session, tmp_path, monkeypatch):
     monkeypatch.setattr(
         v,
         "_gate_report",
-        lambda shape: {"passes_gate": False, "reasons": ["injected non-manifold solid"]},
+        lambda shape, exact=False: {
+            "passes_gate": False,
+            "reasons": ["injected non-manifold solid"],
+        },
     )
     out = export_file(session, "out", "step", object_name="part")
     assert os.path.exists("out.step")  # the file is still written

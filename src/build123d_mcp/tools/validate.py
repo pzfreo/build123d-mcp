@@ -17,11 +17,17 @@ import json
 _EPS = 1e-9
 
 
-def _gate_report(shape) -> dict:
+def _gate_report(shape, exact: bool = False) -> dict:
     """Return the validity-gate verdict for a shape as a plain dict.
 
     Reused by the export tool so a 3D export can warn when the written solid
     would fail the gate.
+
+    ``exact`` selects the mesh non-manifold check: the default fast coordinate-weld
+    (_mesh_defects, sub-second, used for interactive validate()) or the accurate
+    topology-stitch (_mesh_defects_exact, slower, used at export where shipping an
+    invalid solid actually costs). The exact check is tolerance-free, so it avoids
+    the weld's occasional false positives and false negatives.
     """
     from OCP.BRepCheck import BRepCheck_Analyzer
 
@@ -51,7 +57,7 @@ def _gate_report(shape) -> dict:
     # coincident-face defects that are valid B-reps the edge-face map above does
     # not see — the dominant invalid-but-watertight failure mode observed on
     # CADGenBench (a single solid whose mesh has an edge shared by 4 triangles).
-    mesh_nm_edges, mesh_ok = _mesh_defects(shape)
+    mesh_nm_edges, mesh_ok = _mesh_defects_exact(shape) if exact else _mesh_defects(shape)
     mesh_nonmanifold = mesh_ok and mesh_nm_edges > 0
 
     reasons: list[str] = []
@@ -194,6 +200,203 @@ def _mesh_defects(shape) -> tuple[int, bool]:
                 edge_count[tuple(sorted(e))] += 1
 
         return sum(1 for n in edge_count.values() if n > 2), True
+    except Exception:
+        return 0, False
+
+
+def _mesh_defects_exact(shape) -> tuple[int, bool]:
+    """Accurate mesh non-manifold count via a topology-stitched tessellation.
+
+    Builds one conformal boundary mesh from the per-face OCC triangulations by
+    TOPOLOGY rather than by coordinate proximity: each shared edge's
+    PolygonOnTriangulation gives equal-length node-index lists in the two
+    adjacent faces, merged by index (union-find); nodes resolving to the same
+    BREP vertex are merged too (closing fillet/cone/pole apices). Winding is made
+    globally consistent first (REVERSED faces flipped), then opposite-winding
+    flap pairs from degenerate folds are cancelled. Finally counts undirected
+    edges shared by >2 triangles.
+
+    Being tolerance-free, it has neither the false positives nor the false
+    negatives that ``_mesh_defects``'s coordinate weld produces at the rounding
+    boundary (see #281) — it matches the mesh gate a CAD scorer applies. It is
+    slower (per-edge OCC introspection: ~0.5-2s typical, more on large imported
+    B-reps), so callers use it where correctness matters most (export) rather
+    than on every interactive validate(). Returns (nonmanifold_edges, ok);
+    ok=False if the mesh could not be built (the caller then does not gate on it).
+    """
+    try:
+        import math
+        from collections import defaultdict
+
+        import numpy as np
+        from OCP.BRep import BRep_Tool
+        from OCP.BRepMesh import BRepMesh_IncrementalMesh
+        from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_REVERSED, TopAbs_VERTEX
+        from OCP.TopExp import TopExp
+        from OCP.TopLoc import TopLoc_Location
+        from OCP.TopoDS import TopoDS
+        from OCP.TopTools import (
+            TopTools_IndexedDataMapOfShapeListOfShape,
+            TopTools_IndexedMapOfShape,
+        )
+
+        bb = shape.bounding_box()
+        diag = math.dist((bb.min.X, bb.min.Y, bb.min.Z), (bb.max.X, bb.max.Y, bb.max.Z))
+        if diag <= 0:
+            return 0, False
+        # Deflection relative to part scale, clamped — matches the scorer.
+        deflection = min(0.5, max(0.005, diag * 1e-3))
+        occ = shape.wrapped
+        BRepMesh_IncrementalMesh(occ, deflection, False, 0.5, True)
+
+        faces = TopTools_IndexedMapOfShape()
+        TopExp.MapShapes_s(occ, TopAbs_FACE, faces)
+        if faces.Size() == 0:
+            return 0, False
+
+        # 1. Lay every face's triangulation into one global node/triangle list,
+        #    flipping winding for REVERSED faces so orientation is consistent.
+        vertices: list = []
+        triangles: list = []
+        face_base: dict = {}
+        face_tri: dict = {}
+        for fi in range(1, faces.Size() + 1):
+            face = TopoDS.Face_s(faces.FindKey(fi))
+            loc = TopLoc_Location()
+            tri = BRep_Tool.Triangulation_s(face, loc)
+            if tri is None:
+                return 0, False
+            trsf = loc.Transformation()
+            base = len(vertices)
+            face_base[fi] = base
+            face_tri[fi] = (tri, loc)
+            for i in range(1, tri.NbNodes() + 1):
+                p = tri.Node(i).Transformed(trsf)
+                vertices.append((p.X(), p.Y(), p.Z()))
+            reversed_face = face.Orientation() == TopAbs_REVERSED
+            for i in range(1, tri.NbTriangles() + 1):
+                n1, n2, n3 = tri.Triangle(i).Get()
+                a, b, c = base + n1 - 1, base + n2 - 1, base + n3 - 1
+                if reversed_face:
+                    a, b = b, a
+                triangles.append((a, b, c))
+        if not triangles:
+            return 0, False
+
+        parent = list(range(len(vertices)))
+
+        def find(x: int) -> int:
+            root = x
+            while parent[root] != root:
+                root = parent[root]
+            while parent[x] != root:
+                parent[x], x = root, parent[x]
+            return root
+
+        def union(x: int, y: int) -> None:
+            rx, ry = find(x), find(y)
+            if rx != ry:
+                parent[max(rx, ry)] = min(rx, ry)
+
+        verts = np.asarray(vertices, dtype=np.float64)
+        vmap = TopTools_IndexedMapOfShape()
+        TopExp.MapShapes_s(occ, TopAbs_VERTEX, vmap)
+        edge_faces = TopTools_IndexedDataMapOfShapeListOfShape()
+        TopExp.MapShapesAndAncestors_s(occ, TopAbs_EDGE, TopAbs_FACE, edge_faces)
+
+        # 2. Merge shared-edge nodes by index, and collect per-BREP-vertex
+        #    endpoints for the degenerate-edge merge in step 3.
+        vertex_nodes: dict = defaultdict(list)
+        for ei in range(1, edge_faces.Extent() + 1):
+            edge = TopoDS.Edge_s(edge_faces.FindKey(ei))
+            node_lists = []
+            for adj in edge_faces.FindFromIndex(ei):
+                fi = faces.FindIndex(adj)
+                if fi == 0 or fi not in face_tri:
+                    continue
+                tri, loc = face_tri[fi]
+                poly = BRep_Tool.PolygonOnTriangulation_s(edge, tri, loc)
+                if poly is None:
+                    continue
+                arr = np.fromiter(poly.Nodes(), dtype=np.int64, count=poly.NbNodes()) + (
+                    face_base[fi] - 1
+                )
+                node_lists.append(arr)
+            if not node_lists:
+                continue
+            ref = node_lists[0]
+            ref_pts = verts[ref]
+            for other in node_lists[1:]:
+                if other.shape[0] != ref.shape[0]:
+                    continue  # cannot index-stitch a length mismatch
+                op = verts[other]
+                fwd = float(np.abs(ref_pts - op).max())
+                rev = float(np.abs(ref_pts - op[::-1]).max())
+                seq = other if fwd <= rev else other[::-1]
+                for u, v in zip(ref.tolist(), seq.tolist()):
+                    union(u, v)
+            v_first = vmap.FindIndex(TopExp.FirstVertex_s(edge))
+            v_last = vmap.FindIndex(TopExp.LastVertex_s(edge))
+            for arr in node_lists:
+                if v_first:
+                    vertex_nodes[v_first].append(int(arr[0]))
+                if v_last:
+                    vertex_nodes[v_last].append(int(arr[-1]))
+        for nodes in vertex_nodes.values():
+            base_node = nodes[0]
+            for n in nodes[1:]:
+                union(base_node, n)
+
+        # 3. Relabel to representatives and drop triangles that collapsed.
+        roots = np.array([find(i) for i in range(len(vertices))], dtype=np.int64)
+        uniq, inv = np.unique(roots, return_inverse=True)
+        mf = inv[np.asarray(triangles, dtype=np.int64)]
+        keep = (mf[:, 0] != mf[:, 1]) & (mf[:, 1] != mf[:, 2]) & (mf[:, 0] != mf[:, 2])
+        mf = mf[keep]
+        if mf.shape[0] == 0:
+            return 0, True
+
+        # 4. Cancel opposite-winding flap pairs (a degenerate fold meshes to a
+        #    triangle and its mirror; same 3 nodes, opposite parity). Same-winding
+        #    duplicates are a real coincident-face overlap and are kept.
+        srt = np.sort(mf, axis=1)
+
+        def _even(t: tuple, s: tuple) -> bool:
+            a, b, c = t
+            return (a, b, c) in ((s[0], s[1], s[2]), (s[1], s[2], s[0]), (s[2], s[0], s[1]))
+
+        groups: dict = defaultdict(lambda: [0, 0])
+        parity: list = []
+        for i in range(mf.shape[0]):
+            s = (int(srt[i, 0]), int(srt[i, 1]), int(srt[i, 2]))
+            t = (int(mf[i, 0]), int(mf[i, 1]), int(mf[i, 2]))
+            is_even = _even(t, s)
+            parity.append(is_even)
+            groups[s][0 if is_even else 1] += 1
+        cancel = {s: min(ev, od) for s, (ev, od) in groups.items()}
+        seen_even: dict = defaultdict(int)
+        seen_odd: dict = defaultdict(int)
+        keep2 = np.ones(mf.shape[0], dtype=bool)
+        for i in range(mf.shape[0]):
+            s = (int(srt[i, 0]), int(srt[i, 1]), int(srt[i, 2]))
+            if parity[i]:
+                if seen_even[s] < cancel[s]:
+                    seen_even[s] += 1
+                    keep2[i] = False
+            elif seen_odd[s] < cancel[s]:
+                seen_odd[s] += 1
+                keep2[i] = False
+        mf = mf[keep2]
+        if mf.shape[0] == 0:
+            return 0, True
+
+        # 5. Count undirected edges shared by >2 triangles.
+        n = int(uniq.shape[0])
+        e = mf[:, [0, 1, 1, 2, 0, 2]].reshape(-1, 2)
+        e = np.sort(e, axis=1)
+        keys = e[:, 0].astype(np.int64) * (n + 1) + e[:, 1]
+        _, counts = np.unique(keys, return_counts=True)
+        return int((counts > 2).sum()), True
     except Exception:
         return 0, False
 
