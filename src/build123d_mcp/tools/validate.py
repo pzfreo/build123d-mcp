@@ -16,6 +16,14 @@ import json
 
 _EPS = 1e-9
 
+# Triangle-count budgets for the accurate (slow) topology-stitch mesh check.
+# Above the budget the gate falls back to the fast coordinate-weld check.
+# Inline validate() is called often, so it only runs the exact check when cheap;
+# export() is authoritative and runs once, so it gets a generous budget that
+# still bounds the worst case (the stitch is ~0.3 ms/triangle).
+_EXACT_INLINE_MAX_TRIS = 10000
+_EXACT_EXPORT_MAX_TRIS = 80000
+
 
 def _gate_report(shape, exact: bool = False) -> dict:
     """Return the validity-gate verdict for a shape as a plain dict.
@@ -57,7 +65,15 @@ def _gate_report(shape, exact: bool = False) -> dict:
     # coincident-face defects that are valid B-reps the edge-face map above does
     # not see — the dominant invalid-but-watertight failure mode observed on
     # CADGenBench (a single solid whose mesh has an edge shared by 4 triangles).
-    mesh_nm_edges, mesh_ok = _mesh_defects_exact(shape) if exact else _mesh_defects(shape)
+    # Prefer the accurate topology-stitch, bounded by triangle count (generous at
+    # export, small inline); above the budget — or if the exact build fails — fall
+    # back to the fast coordinate-weld check. mesh_check records which ran.
+    _cap = _EXACT_EXPORT_MAX_TRIS if exact else _EXACT_INLINE_MAX_TRIS
+    mesh_nm_edges, mesh_ok = _mesh_defects_exact(shape, max_triangles=_cap)
+    mesh_check = "exact"
+    if not mesh_ok:
+        mesh_nm_edges, mesh_ok = _mesh_defects(shape)
+        mesh_check = "fast"
     mesh_nonmanifold = mesh_ok and mesh_nm_edges > 0
 
     reasons: list[str] = []
@@ -107,6 +123,7 @@ def _gate_report(shape, exact: bool = False) -> dict:
         "open_edges": open_edges,
         "nonmanifold_edges": nonmanifold_edges,
         "mesh_nonmanifold_edges": mesh_nm_edges,
+        "mesh_check": mesh_check,
         "brep_valid": brep_valid,
         "warnings": warnings,
         "reasons": reasons,
@@ -204,7 +221,7 @@ def _mesh_defects(shape) -> tuple[int, bool]:
         return 0, False
 
 
-def _mesh_defects_exact(shape) -> tuple[int, bool]:
+def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, bool]:
     """Accurate mesh non-manifold count via a topology-stitched tessellation.
 
     Builds one conformal boundary mesh from the per-face OCC triangulations by
@@ -221,8 +238,11 @@ def _mesh_defects_exact(shape) -> tuple[int, bool]:
     boundary (see #281) — it matches the mesh gate a CAD scorer applies. It is
     slower (per-edge OCC introspection: ~0.5-2s typical, more on large imported
     B-reps), so callers use it where correctness matters most (export) rather
-    than on every interactive validate(). Returns (nonmanifold_edges, ok);
-    ok=False if the mesh could not be built (the caller then does not gate on it).
+    than on every interactive validate(). ``max_triangles`` bounds that cost: if
+    the tessellation exceeds it, return ok=False *before* the slow stitch so the
+    caller can fall back to the fast check. Returns (nonmanifold_edges, ok);
+    ok=False if the mesh could not be built or was over budget (the caller then
+    does not gate on it / falls back).
     """
     try:
         import math
@@ -281,6 +301,10 @@ def _mesh_defects_exact(shape) -> tuple[int, bool]:
                     a, b = b, a
                 triangles.append((a, b, c))
         if not triangles:
+            return 0, False
+        if max_triangles is not None and len(triangles) > max_triangles:
+            # Over the perf budget; bail before the slow stitch so the caller
+            # falls back to the fast check rather than hanging.
             return 0, False
 
         parent = list(range(len(vertices)))
