@@ -29,9 +29,13 @@ def main():
         print(f"fixture {fid} not found in {REPO}")
         sys.exit(1)
     dest.mkdir(parents=True, exist_ok=True)
-    for f in src.iterdir():
-        (dest / f.name).write_bytes(f.read_bytes())
-        print("fetched", dest / f.name)
+    for f in src.rglob("*"):
+        if f.is_dir():
+            continue
+        out = dest / f.relative_to(src)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(f.read_bytes())
+        print("fetched", out)
 
 
 if __name__ == "__main__":

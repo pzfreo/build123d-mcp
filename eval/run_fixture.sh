@@ -30,13 +30,24 @@ cp "$FIX"/input.png  "$WORK"/ 2>/dev/null || true
 cp "$FIX"/input.step "$WORK"/ 2>/dev/null || true
 
 OUT="$WORK/output.step"
-sed "s|{OUTPUT}|$OUT|g" "$HERE/prompt_generation.txt" > "$WORK/prompt.txt"
+if [[ -f "$FIX/edit_description.txt" ]]; then
+  # editing fixture: bring along the change request + reference renders, and
+  # build the editing prompt (literal substitution — the edit text is arbitrary).
+  cp "$FIX/edit_description.txt" "$WORK"/ 2>/dev/null || true
+  cp -R "$FIX/renders" "$WORK"/ 2>/dev/null || true
+  python3 -c "import sys,pathlib; t=pathlib.Path(sys.argv[1]).read_text(); print(t.replace('{EDIT}', pathlib.Path(sys.argv[2]).read_text().strip()).replace('{OUTPUT}', sys.argv[3]), end='')" \
+    "$HERE/prompt_editing.txt" "$FIX/edit_description.txt" "$OUT" > "$WORK/prompt.txt"
+  TASK="editing"
+else
+  sed "s|{OUTPUT}|$OUT|g" "$HERE/prompt_generation.txt" > "$WORK/prompt.txt"
+  TASK="generation"
+fi
 
 cat > "$WORK/mcp_config.json" <<JSON
 {"mcpServers":{"build123d":{"command":"uvx","args":["--python","3.12","$MCP_SPEC"]}}}
 JSON
 
-echo "fixture: $FIX"
+echo "fixture: $FIX  ($TASK)"
 echo "work:    $WORK"
 echo "model:   $MODEL    mcp: $MCP_SPEC"
 echo "live:    tail -n0 -f $WORK/stream.jsonl | python3 $HERE/stream_filter.py $WORK"
@@ -50,7 +61,7 @@ claude -p "$(cat prompt.txt)" \
   --strict-mcp-config \
   --dangerously-skip-permissions \
   --disable-slash-commands \
-  --allowedTools "mcp__build123d__execute,mcp__build123d__render_view,mcp__build123d__measure,mcp__build123d__validate,mcp__build123d__export,mcp__build123d__import_cad_file,mcp__build123d__save_snapshot,mcp__build123d__restore_snapshot" \
+  --allowedTools "mcp__build123d__execute,mcp__build123d__render_view,mcp__build123d__measure,mcp__build123d__validate,mcp__build123d__export,mcp__build123d__import_cad_file,mcp__build123d__save_snapshot,mcp__build123d__restore_snapshot,mcp__build123d__find_holes,mcp__build123d__find_hole_patterns" \
   > stream.jsonl 2>&1
 
 echo
