@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.53 — 2026-06-22
+
+### Fixed
+
+- **Export gate validates the written-and-reimported STEP, not the in-memory shape.** `export()`'s validity gate ran on the in-memory shape, but a CAD scorer re-imports the written file — and serialization can degrade a shape that passed in memory (drop a solid, break BRep validity), giving a false PASS while shipping an invalid file. Verified on the sweep corpus: a shape with a solid that passed the gate re-imported as zero solids; another valid-in-memory BRep was invalid in the file — both shipped with a clean gate. The gate now re-imports the just-written STEP and validates that artifact, warning if it can't be re-imported. (#284)
+
 ## v0.3.52 — 2026-06-21
 
 ### Fixed
