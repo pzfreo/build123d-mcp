@@ -255,9 +255,10 @@ def test_export_3d_warns_when_gate_fails(session, tmp_path, monkeypatch):
     monkeypatch.setattr(
         v,
         "_gate_report",
-        lambda shape, exact=False: {
+        lambda shape, exact=False, mesh_override=None: {
             "passes_gate": False,
             "reasons": ["injected non-manifold solid"],
+            "mesh_check": "exact-subprocess",
         },
     )
     out = export_file(session, "out", "step", object_name="part")

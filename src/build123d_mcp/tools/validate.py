@@ -158,7 +158,10 @@ def _gate_report(shape, exact: bool = False, mesh_override: tuple | None = None)
         # part too large to mesh within the in-process budget). Bounded by a hard
         # subprocess timeout there, so it can run the full check without skipping.
         mesh_nm_edges, mesh_open_edges, mesh_untri_faces, mesh_ok = mesh_override
-        mesh_check = "exact-subprocess"
+        # ok=False means the out-of-process check timed out / couldn't determine —
+        # mark it "skipped" so the "mesh validity not verified" warning fires and the
+        # caller doesn't report false confidence on an unchecked part.
+        mesh_check = "exact-subprocess" if mesh_ok else "skipped"
     else:
         _cap = _EXACT_EXPORT_MAX_TRIS if exact else _EXACT_INLINE_MAX_TRIS
         _mesh_deadline = time.monotonic() + _GATE_MESH_BUDGET_S
