@@ -151,16 +151,34 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
     if not is_2d:
         from build123d_mcp.tools.validate import _gate_report
 
-        # Export is the authoritative gate (it decides if the written file ships),
-        # and runs once, so use the accurate topology-stitch mesh check here even
-        # though it is slower than the fast check interactive validate() uses.
-        report = _gate_report(shape, exact=True)
-        if not report["passes_gate"]:
+        # Gate the WRITTEN-AND-REIMPORTED STEP, not the in-memory shape. A CAD
+        # scorer re-imports the file, and serialization can degrade a shape that
+        # passed in memory (drop a solid, break BRep validity) — so validating the
+        # in-memory object gives a false PASS while shipping an invalid file. Re-
+        # import what we just wrote and gate that; it is the authoritative artifact
+        # (export runs once, so the extra import + exact mesh check is fine).
+        step_path = next((p for p in exported if p.lower().endswith((".step", ".stp"))), None)
+        gate_shape = shape
+        if step_path is not None:
+            try:
+                from build123d import import_step
+
+                gate_shape = import_step(step_path)
+            except Exception:
+                gate_shape = None  # not even loadable — a scorer would reject it
+        if gate_shape is None:
             suffix += (
-                "\n⚠ VALIDITY GATE FAIL — a CAD scorer would reject this file (score zero): "
-                + "; ".join(report["reasons"])
-                + ". Fix the solid and re-export (run validate() for detail)."
+                "\n⚠ VALIDITY GATE FAIL — the written STEP could not be re-imported; "
+                "a CAD scorer would reject this file (score zero). Fix the solid and re-export."
             )
+        else:
+            report = _gate_report(gate_shape, exact=True)
+            if not report["passes_gate"]:
+                suffix += (
+                    "\n⚠ VALIDITY GATE FAIL — a CAD scorer would reject this file (score zero): "
+                    + "; ".join(report["reasons"])
+                    + ". Fix the solid and re-export (run validate() for detail)."
+                )
     if len(exported) == 1:
         return f"Exported to {exported[0]}{suffix}"
     return "Exported to:\n" + "\n".join(exported) + suffix

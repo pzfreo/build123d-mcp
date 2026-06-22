@@ -246,4 +246,38 @@ def test_export_3d_valid_no_warning(session, tmp_path, monkeypatch):
     execute_code(session, "show(Box(10, 10, 10), 'part')")
     out = export_file(session, "out", "step", object_name="part")
     assert os.path.exists("out.step")
-    assert "VALIDITY GATE FAIL" not in out
+    assert "VALIDITY GATE FAIL" not in out  # a real box round-trips valid
+
+
+def test_export_gate_validates_reimported_file_not_memory(session, tmp_path, monkeypatch):
+    """Regression for #284: export() must gate the written-and-reimported STEP, not
+    the in-memory shape. A valid in-memory solid whose written file degrades on
+    serialization must still trigger the warning. Simulated by patching import_step
+    to return an invalid (open-shell) shape — under the old in-memory gate this
+    box would pass clean."""
+    import build123d
+
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "show(Box(10, 10, 10), 'part')")
+    bad = build123d.Shell(build123d.Box(10, 10, 10).faces()[:5])  # 0 solids, open -> invalid
+    monkeypatch.setattr(build123d, "import_step", lambda _p: bad)
+    out = export_file(session, "out", "step", object_name="part")
+    assert os.path.exists("out.step")  # file is still written
+    assert "VALIDITY GATE FAIL" in out  # gate caught the (degraded) re-imported file
+
+
+def test_export_gate_warns_when_reimport_fails(session, tmp_path, monkeypatch):
+    """If the written STEP can't even be re-imported, a scorer would reject it —
+    the gate must warn rather than silently pass."""
+    import build123d
+
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "show(Box(10, 10, 10), 'part')")
+
+    def boom(_p):
+        raise RuntimeError("corrupt STEP")
+
+    monkeypatch.setattr(build123d, "import_step", boom)
+    out = export_file(session, "out", "step", object_name="part")
+    assert "VALIDITY GATE FAIL" in out
+    assert "could not be re-imported" in out
