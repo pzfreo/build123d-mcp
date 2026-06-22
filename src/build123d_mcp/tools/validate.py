@@ -73,6 +73,34 @@ def _edge_incidence_counts(mf, n_nodes: int):
     return counts
 
 
+def _edge_face_adjacency(occ, fmap, emap):
+    """Map each edge index (in ``emap``) to the list of incident face indices.
+
+    Equivalent to ``MapShapesAndAncestors_s(EDGE, FACE)`` + iterating each edge's
+    ancestor list, but built by walking faces' edges with ``TopExp_Explorer``
+    instead. The ancestor-list path returns a ``TopTools_ListOfShape`` whose
+    Python-side iteration is pathologically slow (tens of seconds for a few
+    thousand edges on a large B-rep — the dominant cost of the stitch); explorer
+    traversal builds the identical adjacency at C speed. Face order within a
+    list is irrelevant: the merge that consumes it is symmetric union, so the
+    connected components — and thus the verdict — are unchanged.
+    """
+    from collections import defaultdict
+
+    from OCP.TopAbs import TopAbs_EDGE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    adj: dict = defaultdict(list)
+    for fi in range(1, fmap.Size() + 1):
+        f = TopoDS.Face_s(fmap.FindKey(fi))
+        exp = TopExp_Explorer(f, TopAbs_EDGE)
+        while exp.More():
+            adj[emap.FindIndex(exp.Current())].append(fi)
+            exp.Next()
+    return adj
+
+
 def _run_mesh_gate_subprocess(step_path: str, timeout: float):
     """Run the exact mesh check on a written STEP in a separate process, hard-
     bounded by ``timeout`` seconds (the only way to bound the un-interruptible OCC
@@ -411,10 +439,7 @@ def _mesh_defects_exact(
         from OCP.TopExp import TopExp, TopExp_Explorer
         from OCP.TopLoc import TopLoc_Location
         from OCP.TopoDS import TopoDS
-        from OCP.TopTools import (
-            TopTools_IndexedDataMapOfShapeListOfShape,
-            TopTools_IndexedMapOfShape,
-        )
+        from OCP.TopTools import TopTools_IndexedMapOfShape
 
         bb = shape.bounding_box()
         diag = math.dist((bb.min.X, bb.min.Y, bb.min.Z), (bb.max.X, bb.max.Y, bb.max.Z))
@@ -434,6 +459,13 @@ def _mesh_defects_exact(
         # with a coordinate-weld backstop, then counts undirected edges incident
         # to a single triangle. Tolerance-free per stitch; coordinate weld is only
         # a tiny-fraction-of-diagonal backstop so distinct surfaces never merge.
+        # With no time deadline (the export subprocess path, bounded instead by a
+        # hard subprocess kill) the finest rung is affordable now that the stitch
+        # is fast, so lift the triangle ceiling and let the /32 rung actually run —
+        # this is what lets a large part's defect be detected. The in-process path
+        # keeps the ceiling (its un-interruptible BRepMesh calls must stay bounded).
+        _ladder_ceil = float("inf") if _open_deadline == float("inf") else _OPEN_LADDER_MAX_TRIS
+
         def _open_pass(defl: float) -> tuple[int, int]:
             BRepMesh_IncrementalMesh(occ, defl, False, 0.5, True)
             fmap = TopTools_IndexedMapOfShape()
@@ -465,13 +497,13 @@ def _mesh_defects_exact(
                 # Bail mid-build as soon as the soup blows the ceiling or the
                 # budget — before paying the rest of the O(triangles) append +
                 # the stitch — so a single huge rung can't run the gate long.
-                if len(T) > _OPEN_LADDER_MAX_TRIS or time.monotonic() > _open_deadline:
+                if len(T) > _ladder_ceil or time.monotonic() > _open_deadline:
                     return -1, len(T)
             if not T:
                 return 0, 0
             Va = np.asarray(V, dtype=np.float64)
             Ta = np.asarray(T, dtype=np.int64)
-            if Ta.shape[0] > _OPEN_LADDER_MAX_TRIS or time.monotonic() > _open_deadline:
+            if Ta.shape[0] > _ladder_ceil or time.monotonic() > _open_deadline:
                 # Too large / out of time to stitch within the gate's budget.
                 # Signal UNDETERMINED (-1) BEFORE paying the O(triangles) stitch,
                 # so the ladder defers to the fast check rather than risk the
@@ -510,19 +542,19 @@ def _mesh_defects_exact(
             # call dominates the pass, so extract each polygon ONCE here and reuse
             # its endpoints for the vertex merge below rather than re-walking every
             # edge a second time.
-            ef = TopTools_IndexedDataMapOfShapeListOfShape()
-            TopExp.MapShapesAndAncestors_s(occ, TopAbs_EDGE, TopAbs_FACE, ef)
+            emap = TopTools_IndexedMapOfShape()
+            TopExp.MapShapes_s(occ, TopAbs_EDGE, emap)
+            eadj = _edge_face_adjacency(occ, fmap, emap)
             vm = TopTools_IndexedMapOfShape()
             TopExp.MapShapes_s(occ, TopAbs_VERTEX, vm)
             vnodes: dict = defaultdict(list)
-            for ei in range(1, ef.Extent() + 1):
+            for ei in range(1, emap.Size() + 1):
                 if time.monotonic() > _open_deadline:
                     return -1, len(T)  # stitch over budget — undetermined
-                edge = TopoDS.Edge_s(ef.FindKey(ei))
+                edge = TopoDS.Edge_s(emap.FindKey(ei))
                 nls = []
-                for adj in ef.FindFromIndex(ei):
-                    fi = fmap.FindIndex(adj)
-                    if fi == 0 or fi not in ftri:
+                for fi in eadj.get(ei, ()):
+                    if fi not in ftri:
                         continue
                     tri, loc, _ = ftri[fi]
                     poly = BRep_Tool.PolygonOnTriangulation_s(edge, tri, loc)
@@ -699,24 +731,24 @@ def _mesh_defects_exact(
         verts = np.asarray(vertices, dtype=np.float64)
         vmap = TopTools_IndexedMapOfShape()
         TopExp.MapShapes_s(occ, TopAbs_VERTEX, vmap)
-        edge_faces = TopTools_IndexedDataMapOfShapeListOfShape()
-        TopExp.MapShapesAndAncestors_s(occ, TopAbs_EDGE, TopAbs_FACE, edge_faces)
+        emap = TopTools_IndexedMapOfShape()
+        TopExp.MapShapes_s(occ, TopAbs_EDGE, emap)
+        edge_adj = _edge_face_adjacency(occ, faces, emap)
 
         # 2. Merge shared-edge nodes by index, and collect per-BREP-vertex
         #    endpoints for the degenerate-edge merge in step 3.
         vertex_nodes: dict = defaultdict(list)
-        for ei in range(1, edge_faces.Extent() + 1):
+        for ei in range(1, emap.Size() + 1):
             if time.monotonic() > _open_deadline:
                 # The per-edge stitch is over the gate budget (a very large/complex
                 # part — few edges but expensive OCC calls each); defer to the fast
                 # check rather than approach the worker op-timeout. Bounds total
                 # gate wall-clock to ~the budget.
                 return 0, 0, 0, False
-            edge = TopoDS.Edge_s(edge_faces.FindKey(ei))
+            edge = TopoDS.Edge_s(emap.FindKey(ei))
             node_lists = []
-            for adj in edge_faces.FindFromIndex(ei):
-                fi = faces.FindIndex(adj)
-                if fi == 0 or fi not in face_tri:
+            for fi in edge_adj.get(ei, ()):
+                if fi not in face_tri:
                     continue
                 tri, loc = face_tri[fi]
                 poly = BRep_Tool.PolygonOnTriangulation_s(edge, tri, loc)
