@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.56
+
+### Fixed
+
+- **Export gate now mesh-checks large/complex parts instead of skipping them.** v0.3.55's mesh check is wall-clock-bounded and returns `mesh_check="skipped"` (B-rep checks only) when a part is too large to tessellate-and-stitch in-process within the worker timeout — so a big invalid part could ship its mesh defect undetected. The dominant cost is OCC `BRepMesh`, an un-interruptible native call an in-process budget can't stop. `export()` now, *only when the in-process check skips*, retries the mesh check in a **separate process bounded by a hard `subprocess` timeout** (sized from `--exec-timeout`): a large part gets a generous budget and is actually checked, an over-budget part is killed cleanly (the worker is never blocked), and small exports pay no subprocess cost. Catches real defects on parts the in-process gate had skipped. (Very large parts whose closedness needs the finest tessellation rung still exceed even the out-of-process budget — that remaining tail needs a vectorized stitch, tracked in #294.) (#294)
+
 ## v0.3.55
 
 ### Fixed

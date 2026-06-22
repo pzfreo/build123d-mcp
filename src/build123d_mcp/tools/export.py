@@ -173,6 +173,18 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
             )
         else:
             report = _gate_report(gate_shape, exact=True)
+            # If the part was too large to mesh within the in-process budget, the
+            # mesh check was skipped (B-rep only). Retry it out-of-process with a
+            # hard timeout derived from the op budget, so large parts are actually
+            # checked instead of silently shipping a mesh defect. Only on skip, so
+            # normal exports pay no subprocess cost.
+            if report.get("mesh_check") == "skipped" and step_path is not None:
+                from build123d_mcp.tools.validate import _run_mesh_gate_subprocess
+
+                _budget = max(60, getattr(session, "exec_timeout", 120))
+                _mesh = _run_mesh_gate_subprocess(step_path, timeout=_budget - 10)
+                if _mesh is not None:
+                    report = _gate_report(gate_shape, exact=True, mesh_override=_mesh)
             if not report["passes_gate"]:
                 suffix += (
                     "\n⚠ VALIDITY GATE FAIL — a CAD scorer would reject this file (score zero): "

@@ -73,7 +73,40 @@ def _edge_incidence_counts(mf, n_nodes: int):
     return counts
 
 
-def _gate_report(shape, exact: bool = False) -> dict:
+def _run_mesh_gate_subprocess(step_path: str, timeout: float):
+    """Run the exact mesh check on a written STEP in a separate process, hard-
+    bounded by ``timeout`` seconds (the only way to bound the un-interruptible OCC
+    tessellation without risking the worker). Returns ``(nm, open, untri, ok)`` or
+    ``None`` if the subprocess timed out (was killed), errored, or its result
+    could not be parsed — ``None`` means UNDETERMINED, so the caller keeps its
+    safe in-process verdict rather than inventing one.
+    """
+    import json
+    import subprocess
+    import sys
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "build123d_mcp._gate_subprocess", step_path],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    for line in reversed(proc.stdout.splitlines()):
+        if line.startswith("GATE_RESULT:"):
+            try:
+                d = json.loads(line[len("GATE_RESULT:") :])
+            except ValueError:
+                return None
+            if "error" in d:
+                return None
+            return int(d["nm"]), int(d["open"]), int(d["untri"]), bool(d["ok"])
+    return None
+
+
+def _gate_report(shape, exact: bool = False, mesh_override: tuple | None = None) -> dict:
     """Return the validity-gate verdict for a shape as a plain dict.
 
     Reused by the export tool so a 3D export can warn when the written solid
@@ -120,21 +153,28 @@ def _gate_report(shape, exact: bool = False) -> dict:
     # so the whole mesh analysis is bounded (not additive) and can never approach
     # the worker op-timeout. If both are over budget, the mesh check is skipped and
     # the gate relies on the B-rep checks above (never a false FAIL).
-    _cap = _EXACT_EXPORT_MAX_TRIS if exact else _EXACT_INLINE_MAX_TRIS
-    _mesh_deadline = time.monotonic() + _GATE_MESH_BUDGET_S
-    mesh_nm_edges, mesh_open_edges, mesh_untri_faces, mesh_ok = _mesh_defects_exact(
-        shape, max_triangles=_cap, deadline=_mesh_deadline
-    )
-    mesh_check = "exact"
-    if not mesh_ok:
-        # Exact check over budget / unbuildable — fall back to the fast
-        # non-manifold-only check (no open-edge / face-tessellation analysis),
-        # under the SAME deadline.
-        mesh_nm_edges, mesh_ok = _mesh_defects(shape, deadline=_mesh_deadline)
-        mesh_open_edges = mesh_untri_faces = 0
-        mesh_check = "fast" if mesh_ok else "skipped"
+    if mesh_override is not None:
+        # Mesh results computed out-of-process (export's subprocess retry for a
+        # part too large to mesh within the in-process budget). Bounded by a hard
+        # subprocess timeout there, so it can run the full check without skipping.
+        mesh_nm_edges, mesh_open_edges, mesh_untri_faces, mesh_ok = mesh_override
+        mesh_check = "exact-subprocess"
+    else:
+        _cap = _EXACT_EXPORT_MAX_TRIS if exact else _EXACT_INLINE_MAX_TRIS
+        _mesh_deadline = time.monotonic() + _GATE_MESH_BUDGET_S
+        mesh_nm_edges, mesh_open_edges, mesh_untri_faces, mesh_ok = _mesh_defects_exact(
+            shape, max_triangles=_cap, deadline=_mesh_deadline
+        )
+        mesh_check = "exact"
         if not mesh_ok:
-            mesh_nm_edges = 0  # neither check could run in budget — defer to B-rep
+            # Exact check over budget / unbuildable — fall back to the fast
+            # non-manifold-only check (no open-edge / face-tessellation analysis),
+            # under the SAME deadline.
+            mesh_nm_edges, mesh_ok = _mesh_defects(shape, deadline=_mesh_deadline)
+            mesh_open_edges = mesh_untri_faces = 0
+            mesh_check = "fast" if mesh_ok else "skipped"
+            if not mesh_ok:
+                mesh_nm_edges = 0  # neither check could run in budget — defer to B-rep
     mesh_nonmanifold = mesh_ok and mesh_nm_edges > 0
     mesh_open = mesh_ok and mesh_open_edges > 0
     mesh_incomplete = mesh_ok and mesh_untri_faces > 0
@@ -572,9 +612,11 @@ def _mesh_defects_exact(
                 return -1
             if open0 == 0:
                 return 0
-            if ntris0 > _LADDER_BASE_MAX_TRIS:
-                # Open at base, but too large to refine within budget — defer to
-                # the fast check rather than run the expensive finer rungs.
+            if ntris0 > _LADDER_BASE_MAX_TRIS and _open_deadline != float("inf"):
+                # Open at base, but too large to refine within the in-process time
+                # budget — defer rather than run the expensive finer rungs. Skipped
+                # when there is no time deadline (the export subprocess path, bounded
+                # by a hard kill instead), so large parts ARE laddered out-of-process.
                 return -1
             for d in (4, 16, 32):
                 if time.monotonic() > _open_deadline:
@@ -714,7 +756,10 @@ def _mesh_defects_exact(
         mf = mf[keep]
         if mf.shape[0] == 0:
             _ov = _open_ladder()
-            return (0, 0, 0, False) if _ov < 0 else (0, _ov, untriangulated, True)
+            if _ov >= 0:
+                return 0, _ov, untriangulated, True
+            # open undetermined — a face that failed to tessellate is still a defect
+            return (0, 0, untriangulated, True) if untriangulated else (0, 0, 0, False)
 
         # 4. Cancel opposite-winding flap pairs (a degenerate fold meshes to a
         #    triangle and its mirror; same 3 nodes, opposite parity). Same-winding
@@ -749,7 +794,10 @@ def _mesh_defects_exact(
         mf = mf[keep2]
         if mf.shape[0] == 0:
             _ov = _open_ladder()
-            return (0, 0, 0, False) if _ov < 0 else (0, _ov, untriangulated, True)
+            if _ov >= 0:
+                return 0, _ov, untriangulated, True
+            # open undetermined — a face that failed to tessellate is still a defect
+            return (0, 0, untriangulated, True) if untriangulated else (0, 0, 0, False)
 
         # 5. Non-manifold count from the index-stitched mesh: undirected edges
         #    shared by >2 triangles. (Closedness/open edges come from the
@@ -760,7 +808,13 @@ def _mesh_defects_exact(
         counts = _edge_incidence_counts(mf, n)
         nm_edges = int((counts > 2).sum())
         _ov = _open_ladder()
-        return (0, 0, 0, False) if _ov < 0 else (nm_edges, _ov, untriangulated, True)
+        if _ov >= 0:
+            return nm_edges, _ov, untriangulated, True
+        # open undetermined — a non-manifold or untriangulated face is still a
+        # definite defect, independent of the open-edge ladder
+        if nm_edges or untriangulated:
+            return nm_edges, 0, untriangulated, True
+        return 0, 0, 0, False
     except Exception:
         return 0, 0, 0, False
 
