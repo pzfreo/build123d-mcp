@@ -269,6 +269,30 @@ For **GitHub Copilot** with MCP support, add to `.vscode/mcp.json` in your works
 }
 ```
 
+### Codex CLI / Antigravity / Copilot / Cline (AGENTS.md)
+
+These agents read project guidance from `AGENTS.md`. Add the server to your agent's MCP config with the same launch command as the clients above:
+
+```
+command: uv
+args:    ["tool", "run", "--python", "3.12", "build123d-mcp@latest"]
+```
+
+Then install the workflow guidance into `AGENTS.md` so the agent follows the build → `validate()` → `export()` loop:
+
+```
+install_skill(target="agents-md", skill="modeling")   # 3D modeling from a spec / drawing
+install_skill(target="agents-md", skill="drawing")    # engineering drawings from geometry
+```
+
+(`install_skill` also supports `target="claude"`, `"cursor"`, and `"windsurf"`.)
+
+### HTTP transport (advanced)
+
+By default the server runs over **stdio** — one isolated session per client process. With `--transport http` it serves streamable-HTTP for web/embedded deployments.
+
+> ⚠️ **HTTP mode uses one shared CAD session for every request** unless your host installs middleware that sets a per-request `WorkerSession` on the `_session_var` contextvar (see `http_app()`). Do **not** expose HTTP mode to more than one user without that middleware — they would all read and mutate the same session state.
+
 ---
 
 ## System prompt

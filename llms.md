@@ -7,7 +7,7 @@ build123d-mcp is an MCP server that wraps the [build123d](https://github.com/gum
 This server enforces a Python-level sandbox on every `execute()` call. Three layers run before your code:
 
 1. **Import allowlist** — only `build123d`, `bd_warehouse`, `math`, `numpy`, `inspect`, the safe stdlib subset (collections, itertools, functools, copy, typing, dataclasses, enum, re, json, base64, hashlib, …), and curated geometric OCP submodules are importable. Filesystem (`os`, `pathlib`, `shutil`), networking (`socket`, `urllib`, `requests`), and shell access (`subprocess`) are blocked. The full allowlist is in the error message of any blocked import.
-2. **Restricted builtins** — `open`, `eval`, `exec`, `compile`, `breakpoint`, `input`, and the introspection helpers `getattr`/`vars`/`hasattr` are removed (the last three because string arguments would let you bypass the dunder-attribute block).
+2. **Restricted builtins** — `open`, `eval`, `exec`, `compile`, `breakpoint`, `input`, and the introspection helpers `getattr`/`vars` are removed (string arguments to them would bypass the dunder-attribute block). `hasattr` and `dir()` are **allowed**: `hasattr` returns only a bool so it cannot extract `__class__`/`__subclasses__`, and `dir()` only lists names already in scope. (Run with `--no-sandbox` in a trusted environment to lift all of these.)
 3. **Execution timeout** — wall-clock limit (default 120 s).
 
 If a script truly needs an extra package (e.g. `scipy.optimize` to size a parametric part), the server operator can extend the allowlist via `--allow-imports scipy,pandas` — the LLM doesn't control this, but a blocked-import error message names the attempted module so the user can decide whether to add it.
