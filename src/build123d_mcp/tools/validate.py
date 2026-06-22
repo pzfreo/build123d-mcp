@@ -35,15 +35,17 @@ _EXACT_EXPORT_MAX_TRIS = 80000
 # pays for it.
 _OPEN_LADDER_MAX_TRIS = 400000
 
-# Wall-clock budget for the whole open-edge ladder. The stitch is pure-Python
-# O(triangles), so a very large open part could otherwise run the gate past the
-# worker op-timeout — which KILLS the worker and loses the session (far worse
-# than a missed defect). When the budget (or the triangle ceiling) is hit before
-# the ladder can prove the part open, the check returns "undetermined" and the
-# caller falls back to the fast check. Crucially this degrades to a (possible)
-# missed open-defect, NEVER to a false FAIL of a valid part: a valid part that
-# times out still passes via the fast check.
-_GATE_OPEN_TIME_BUDGET_S = 45.0
+# Wall-clock budget for the WHOLE mesh analysis — the exact (stitch + ladder)
+# check AND the fast fallback share one deadline, so their cost is not additive.
+# The OCC tessellation/stitch is pure-Python O(triangles); without this a very
+# large part could run the gate past the worker op-timeout, which KILLS the
+# worker and loses the session (far worse than a missed defect). Kept comfortably
+# under the minimum export op budget (60s, minus the STEP re-import) so the gate
+# can never approach the timeout regardless of --exec-timeout. When the budget
+# (or a triangle ceiling) is hit, the mesh check returns "undetermined" and the
+# gate relies on the (cheap) B-rep checks. This degrades to a possibly-missed
+# mesh defect on a huge part, NEVER to a false FAIL of a valid part.
+_GATE_MESH_BUDGET_S = 35.0
 
 # If the BASE mesh already has more triangles than this AND shows open edges, the
 # part is too complex to refine through the finer ladder rungs within the gate's
@@ -51,6 +53,24 @@ _GATE_OPEN_TIME_BUDGET_S = 45.0
 # Such a part is deferred to the fast check (UNDETERMINED), never failed. A genuine
 # small/moderate open part still ladders and is caught; only large parts degrade.
 _LADDER_BASE_MAX_TRIS = 40000
+
+
+def _edge_incidence_counts(mf, n_nodes: int):
+    """Per-undirected-edge triangle-incidence counts for a merged triangle array.
+
+    ``mf`` is an (M, 3) int array of triangles over ``n_nodes`` merged nodes.
+    Returns the incidence count of each distinct undirected edge: a clean closed
+    orientable 2-manifold has every edge incident to exactly 2 triangles, so
+    ``(counts == 1)`` are open (boundary) edges and ``(counts > 2)`` are
+    non-manifold edges. Shared so the open-edge and non-manifold counts use one
+    tested code path.
+    """
+    import numpy as np
+
+    e = np.sort(mf[:, [0, 1, 1, 2, 0, 2]].reshape(-1, 2), axis=1)
+    keys = e[:, 0].astype(np.int64) * (n_nodes + 1) + e[:, 1]
+    _, counts = np.unique(keys, return_counts=True)
+    return counts
 
 
 def _gate_report(shape, exact: bool = False) -> dict:
@@ -96,17 +116,25 @@ def _gate_report(shape, exact: bool = False) -> dict:
     # Prefer the accurate topology-stitch, bounded by triangle count (generous at
     # export, small inline); above the budget — or if the exact build fails — fall
     # back to the fast coordinate-weld check. mesh_check records which ran.
+    # The exact stitch+ladder and the fast fallback SHARE one wall-clock deadline,
+    # so the whole mesh analysis is bounded (not additive) and can never approach
+    # the worker op-timeout. If both are over budget, the mesh check is skipped and
+    # the gate relies on the B-rep checks above (never a false FAIL).
     _cap = _EXACT_EXPORT_MAX_TRIS if exact else _EXACT_INLINE_MAX_TRIS
+    _mesh_deadline = time.monotonic() + _GATE_MESH_BUDGET_S
     mesh_nm_edges, mesh_open_edges, mesh_untri_faces, mesh_ok = _mesh_defects_exact(
-        shape, max_triangles=_cap
+        shape, max_triangles=_cap, deadline=_mesh_deadline
     )
     mesh_check = "exact"
     if not mesh_ok:
-        # Fast fallback (over budget / unbuildable stitch) covers non-manifold
-        # only — no open-edge or face-tessellation analysis.
-        mesh_nm_edges, mesh_ok = _mesh_defects(shape)
+        # Exact check over budget / unbuildable — fall back to the fast
+        # non-manifold-only check (no open-edge / face-tessellation analysis),
+        # under the SAME deadline.
+        mesh_nm_edges, mesh_ok = _mesh_defects(shape, deadline=_mesh_deadline)
         mesh_open_edges = mesh_untri_faces = 0
-        mesh_check = "fast"
+        mesh_check = "fast" if mesh_ok else "skipped"
+        if not mesh_ok:
+            mesh_nm_edges = 0  # neither check could run in budget — defer to B-rep
     mesh_nonmanifold = mesh_ok and mesh_nm_edges > 0
     mesh_open = mesh_ok and mesh_open_edges > 0
     mesh_incomplete = mesh_ok and mesh_untri_faces > 0
@@ -152,6 +180,12 @@ def _gate_report(shape, exact: bool = False) -> dict:
         warnings.append(
             f"{n_solids} disjoint solid bodies — a single-part task expects one fused "
             "solid; fuse them (Part() + ... or a.fuse(b)) or the topology score suffers"
+        )
+    if mesh_check == "skipped":
+        warnings.append(
+            "mesh-level validity not verified — this shape is too large to tessellate "
+            "and stitch within the gate's time budget, so only the B-rep checks ran; a "
+            "mesh non-manifold / non-closure defect (if any) would not be caught here"
         )
 
     passes = (
@@ -221,7 +255,7 @@ def _edge_defects(shape) -> tuple[int, int, bool]:
         return 0, 0, False
 
 
-def _mesh_defects(shape) -> tuple[int, bool]:
+def _mesh_defects(shape, deadline: float | None = None) -> tuple[int, bool]:
     """Tessellate and count mesh-level non-manifold edges (shared by >2 triangles).
 
     Mirrors how a CAD scorer validates (B-rep → mesh → manifold check), catching
@@ -243,6 +277,12 @@ def _mesh_defects(shape) -> tuple[int, bool]:
         import math
         from collections import Counter
 
+        # Check the shared deadline BEFORE tessellating: shape.tessellate() is an
+        # un-interruptible OCC call (tens of seconds on a large part), so if the
+        # exact attempt already spent the budget, bail here rather than blow it.
+        if deadline is not None and time.monotonic() > deadline:
+            return 0, False
+
         bb = shape.bounding_box()
         diag = math.dist((bb.min.X, bb.min.Y, bb.min.Z), (bb.max.X, bb.max.Y, bb.max.Z))
         if diag <= 0:
@@ -251,12 +291,21 @@ def _mesh_defects(shape) -> tuple[int, bool]:
         if not verts or not tris:
             return 0, False
 
+        # Pure-Python welds/counts below are O(verts+tris); on a very large part
+        # they can run long, so honour the shared gate deadline and bail (ok=False)
+        # rather than let the fast fallback push the gate past the worker timeout.
+        if deadline is not None and time.monotonic() > deadline:
+            return 0, False
+
         q = diag * 1e-5  # weld tolerance: merge per-face samples on shared edges
         remap: list[int] = []
         keys: dict = {}
         for v in verts:
             k = (round(v.X / q), round(v.Y / q), round(v.Z / q))
             remap.append(keys.setdefault(k, len(keys)))
+
+        if deadline is not None and time.monotonic() > deadline:
+            return 0, False
 
         edge_count: Counter = Counter()
         for t in tris:
@@ -271,7 +320,9 @@ def _mesh_defects(shape) -> tuple[int, bool]:
         return 0, False
 
 
-def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, int, int, bool]:
+def _mesh_defects_exact(
+    shape, max_triangles: int | None = None, deadline: float | None = None
+) -> tuple[int, int, int, bool]:
     """Accurate mesh non-manifold count via a topology-stitched tessellation.
 
     Builds one conformal boundary mesh from the per-face OCC triangulations by
@@ -328,7 +379,9 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, i
             return 0, 0, 0, False
         # Deflection relative to part scale, clamped — matches the scorer.
         deflection = min(0.5, max(0.005, diag * 1e-3))
-        _open_deadline = time.monotonic() + _GATE_OPEN_TIME_BUDGET_S
+        _open_deadline = (
+            deadline if deadline is not None else time.monotonic() + _GATE_MESH_BUDGET_S
+        )
         occ = shape.wrapped
 
         # --- open-edge (closedness) via seam-aware conformal stitch ladder ---
@@ -497,9 +550,7 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, i
                 (mfo[:, 0] != mfo[:, 1]) & (mfo[:, 1] != mfo[:, 2]) & (mfo[:, 0] != mfo[:, 2])
             ]
             nn = int(inv.max()) + 1
-            eo = np.sort(mfo[:, [0, 1, 1, 2, 0, 2]].reshape(-1, 2), axis=1)
-            ko = eo[:, 0].astype(np.int64) * (nn + 1) + eo[:, 1]
-            _, co = np.unique(ko, return_counts=True)
+            co = _edge_incidence_counts(mfo, nn)
             return int((co == 1).sum()), int(Ta.shape[0])
 
         def _open_ladder() -> int:
@@ -706,10 +757,7 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, i
         #    leaves valid seams/poles spuriously open, so it must not drive the
         #    open-edge count.)
         n = int(uniq.shape[0])
-        e = mf[:, [0, 1, 1, 2, 0, 2]].reshape(-1, 2)
-        e = np.sort(e, axis=1)
-        keys = e[:, 0].astype(np.int64) * (n + 1) + e[:, 1]
-        _, counts = np.unique(keys, return_counts=True)
+        counts = _edge_incidence_counts(mf, n)
         nm_edges = int((counts > 2).sum())
         _ov = _open_ladder()
         return (0, 0, 0, False) if _ov < 0 else (nm_edges, _ov, untriangulated, True)

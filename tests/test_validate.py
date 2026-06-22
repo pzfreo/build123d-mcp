@@ -306,3 +306,44 @@ def test_export_gate_warns_when_reimport_fails(session, tmp_path, monkeypatch):
     out = export_file(session, "out", "step", object_name="part")
     assert "VALIDITY GATE FAIL" in out
     assert "could not be re-imported" in out
+
+
+# --- edge-incidence detection logic (the open / non-manifold core of the gate) ---
+# Deterministic unit tests of the counter that drives mesh_open_edges and
+# mesh_nonmanifold_edges, so a regression in that detection is caught in CI even
+# without a large geometric fixture (the full OCC stitch + ladder is validated
+# against the CADGenBench corpus out-of-band).
+
+
+def test_edge_incidence_closed_tetrahedron():
+    import numpy as np
+
+    from build123d_mcp.tools.validate import _edge_incidence_counts
+
+    # Closed 2-manifold: 4 triangles, every edge incident to exactly 2.
+    mf = np.array([[0, 1, 2], [0, 1, 3], [1, 2, 3], [0, 2, 3]], dtype=np.int64)
+    counts = _edge_incidence_counts(mf, 4)
+    assert int((counts == 1).sum()) == 0  # no open edges
+    assert int((counts > 2).sum()) == 0  # no non-manifold edges
+
+
+def test_edge_incidence_open_mesh():
+    import numpy as np
+
+    from build123d_mcp.tools.validate import _edge_incidence_counts
+
+    # Drop one face of the tetrahedron — the boundary is now open.
+    mf = np.array([[0, 1, 2], [0, 1, 3], [1, 2, 3]], dtype=np.int64)
+    counts = _edge_incidence_counts(mf, 4)
+    assert int((counts == 1).sum()) > 0  # open (1-incident) edges detected
+
+
+def test_edge_incidence_nonmanifold_edge():
+    import numpy as np
+
+    from build123d_mcp.tools.validate import _edge_incidence_counts
+
+    # Edge (0, 1) shared by three triangles — non-manifold.
+    mf = np.array([[0, 1, 2], [0, 1, 3], [0, 1, 4]], dtype=np.int64)
+    counts = _edge_incidence_counts(mf, 5)
+    assert int((counts > 2).sum()) > 0
