@@ -118,6 +118,15 @@ Part library file format (Python, any .py file under --library path):
         "Overrides BUILD123D_ALLOW_IMPORTS env var.",
     )
     parser.add_argument(
+        "--no-sandbox",
+        action="store_true",
+        default=os.environ.get("BUILD123D_NO_SANDBOX", "").lower() in ("1", "true", "yes"),
+        help="Disable ALL execute() sandbox layers: the AST check is skipped and user "
+        "code runs with unrestricted builtins (open/eval/exec/__import__ available). "
+        "DANGEROUS — for trusted, isolated environments only (e.g. a benchmark harness). "
+        "Implies --allow-all-imports. Overrides BUILD123D_NO_SANDBOX env var.",
+    )
+    parser.add_argument(
         "--exec-timeout",
         metavar="SECONDS",
         type=int,
@@ -192,9 +201,11 @@ Part library file format (Python, any .py file under --library path):
 
     extra_imports = tuple(m.strip() for m in args.allow_imports.split(",") if m.strip())
 
-    if args.allow_all_imports or extra_imports:
+    if args.allow_all_imports or extra_imports or args.no_sandbox:
         import build123d_mcp.security as _sec
 
+        if args.no_sandbox:
+            _sec.DISABLE_SANDBOX = True
         if args.allow_all_imports:
             _sec.ALLOW_ALL_IMPORTS = True
         if extra_imports:
@@ -206,6 +217,7 @@ Part library file format (Python, any .py file under --library path):
         "allow_all_imports": args.allow_all_imports,
         "extra_allowed_imports": extra_imports,
         "exec_timeout": args.exec_timeout,
+        "no_sandbox": args.no_sandbox,
     }
     if not args.in_process:
         if args.memory_limit_mb is not None:

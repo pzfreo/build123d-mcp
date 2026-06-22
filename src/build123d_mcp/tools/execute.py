@@ -34,6 +34,11 @@ _SUGGESTED_FIXES = {
         "That import is not in the allowlist; "
         "use only build123d, math, numpy, or other permitted modules."
     ),
+    "call_blocked": (
+        "That builtin/attribute is blocked by the sandbox (getattr, vars, eval, exec, "
+        "open, explicit dunders); hasattr() and dir() are allowed. Probe attributes with "
+        "hasattr/try-except/isinstance, or run the server with --no-sandbox if trusted."
+    ),
     "unknown": (
         "Review the full error message and traceback for clues; "
         "call last_error() for the line number and excerpt."
@@ -58,6 +63,8 @@ def _classify_from_error_string(error_result: str) -> dict:
         cls = "fillet_fail"
     elif "ExecutionTimeout" in msg:
         cls = "timeout"
+    elif ("Call to" in msg or "dunder attribute" in msg) and "not allowed" in msg:
+        cls = "call_blocked"
     elif "not allowed" in msg:
         cls = "import_blocked"
     else:

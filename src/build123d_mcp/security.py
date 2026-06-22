@@ -160,6 +160,12 @@ OCP_ALLOWLIST = frozenset(
 # When True, import checks are skipped entirely.  Set via --allow-all-imports.
 ALLOW_ALL_IMPORTS: bool = False
 
+# When True, ALL sandbox layers are disabled: the AST check is skipped and the
+# exec namespace gets unrestricted builtins (open/eval/exec/__import__).  Set via
+# --no-sandbox / BUILD123D_NO_SANDBOX. For trusted environments only (e.g. an
+# isolated benchmark harness); never expose to untrusted input.
+DISABLE_SANDBOX: bool = False
+
 # Extra root modules added to the allowlist by the user, on top of IMPORT_ALLOWLIST.
 # Set via --allow-imports. Each entry is a top-level module name; submodules of an
 # allowed root are permitted (e.g. allowing "scipy" lets "scipy.optimize" through).
@@ -315,12 +321,13 @@ _BLOCKED_BUILTINS = frozenset(
         "open",
         "breakpoint",
         "input",
-        # getattr/vars/hasattr can bypass the dunder-attribute AST block via string arguments
+        # getattr/vars can bypass the dunder-attribute AST block via string arguments
         # (e.g. getattr(obj, '__class__')). dir() is safe: it only enumerates names already
         # in scope; dunder attribute *access* is still blocked at the AST level.
+        # hasattr is permitted: it returns only a bool and cannot *return* an object,
+        # so it can't be used to reach __class__/__subclasses__ (issue #265).
         "getattr",
         "vars",
-        "hasattr",
     }
 )
 
@@ -339,11 +346,10 @@ _BLOCKED_CALL_NAMES = frozenset(
         "open",
         "breakpoint",
         "input",
-        # Same rationale as _BLOCKED_BUILTINS: getattr/vars/hasattr bypass the dunder check
-        # via string arguments. dir() allowed.
+        # Same rationale as _BLOCKED_BUILTINS: getattr/vars bypass the dunder check
+        # via string arguments. dir() and hasattr (bool-only, issue #265) allowed.
         "getattr",
         "vars",
-        "hasattr",
     }
 )
 
@@ -359,6 +365,8 @@ def check_ast(code: str) -> None:
     Catches the most common injection patterns before exec() is ever called.
     Syntax errors are left for exec() to report with better messages.
     """
+    if DISABLE_SANDBOX:
+        return
     try:
         tree = ast.parse(code)
     except SyntaxError:
@@ -433,6 +441,9 @@ def make_restricted_builtins() -> dict[str, Any]:
     import builtins
 
     safe = vars(builtins).copy()
+
+    if DISABLE_SANDBOX:
+        return safe  # unrestricted: open/eval/exec/__import__ all available
 
     for name in _BLOCKED_BUILTINS:
         safe.pop(name, None)

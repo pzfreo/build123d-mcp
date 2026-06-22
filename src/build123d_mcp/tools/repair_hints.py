@@ -52,7 +52,15 @@ _HINTS: list[tuple[list[str], str]] = [
         "or include it in this snippet.",
     ),
     (
-        [r"ImportError", r"SecurityError", r"not allowed.*import", r"import.*not allowed"],
+        [r"Call to '.*' is not allowed", r"Access to dunder attribute .* is not allowed"],
+        "Blocked by the execute() sandbox — this is a call/attribute block, NOT an import. "
+        "getattr, vars, eval, exec, compile, open and explicit dunder access are blocked; "
+        "hasattr() and dir() ARE allowed. Probe attributes with hasattr/try-except/isinstance "
+        "and use operators or syntax instead of explicit dunders. In a trusted environment the "
+        "server can run with --no-sandbox / BUILD123D_NO_SANDBOX=1 to lift all sandbox layers.",
+    ),
+    (
+        [r"ImportError", r"Import of .* is not allowed", r"not allowed.*import", r"import.*not allowed"],
         "Import blocked. Allowed modules include: build123d, bd_warehouse, math, numpy, "
         "json, re, collections, itertools, functools, copy, typing, dataclasses, enum, "
         "and most OCP geometry sub-modules (OCP.gp, OCP.BRepGProp, OCP.TopExp, etc.). "

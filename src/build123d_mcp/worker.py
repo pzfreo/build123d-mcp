@@ -33,15 +33,18 @@ def _build_session(
     exec_timeout: int,
     allow_all_imports: bool,
     extra_allowed_imports: tuple[str, ...],
+    no_sandbox: bool = False,
 ) -> tuple[Any, Any]:
     """Apply security overrides and build the Session (+ optional library index).
 
     Shared by worker_main (subprocess mode) and InProcessSession so a future
     setup step cannot be added to one mode and forgotten in the other.
     """
-    if allow_all_imports or extra_allowed_imports:
+    if allow_all_imports or extra_allowed_imports or no_sandbox:
         import build123d_mcp.security as _sec
 
+        if no_sandbox:
+            _sec.DISABLE_SANDBOX = True
         if allow_all_imports:
             _sec.ALLOW_ALL_IMPORTS = True
         if extra_allowed_imports:
@@ -66,6 +69,7 @@ def worker_main(
     extra_allowed_imports: tuple[str, ...] = (),
     memory_limit_mb: int | None = None,
     cpu_limit_s: int | None = None,
+    no_sandbox: bool = False,
 ) -> None:
     """Entry point run in the worker subprocess.
 
@@ -111,7 +115,7 @@ def worker_main(
             return
 
     session, library_index = _build_session(
-        library_path, exec_timeout, allow_all_imports, extra_allowed_imports
+        library_path, exec_timeout, allow_all_imports, extra_allowed_imports, no_sandbox
     )
 
     conn.send({"ready": True})
@@ -334,6 +338,7 @@ class WorkerSession:
         extra_allowed_imports: tuple[str, ...] = (),
         memory_limit_mb: int | None = None,
         cpu_limit_s: int | None = None,
+        no_sandbox: bool = False,
     ) -> None:
         self._exec_timeout = exec_timeout
         self._library_path = library_path
@@ -341,6 +346,7 @@ class WorkerSession:
         self._extra_allowed_imports = tuple(extra_allowed_imports)
         self._memory_limit_mb = memory_limit_mb
         self._cpu_limit_s = cpu_limit_s
+        self._no_sandbox = no_sandbox
         self._conn: Any = None
         self._proc: Any = None
         self._start_worker()
@@ -363,6 +369,7 @@ class WorkerSession:
                 self._extra_allowed_imports,
                 self._memory_limit_mb,
                 self._cpu_limit_s,
+                self._no_sandbox,
             ),
             daemon=True,
         )
@@ -704,6 +711,7 @@ class InProcessSession(WorkerSession):
             self._exec_timeout,
             self._allow_all_imports,
             self._extra_allowed_imports,
+            self._no_sandbox,
         )
 
     def _kill_worker(self) -> None:

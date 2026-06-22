@@ -1,6 +1,15 @@
 # Changelog
 
-## v0.3.53 — 2026-06-22
+## v0.3.54 — 2026-06-22
+
+### Features
+
+- **`--no-sandbox` flag (`BUILD123D_NO_SANDBOX`).** Disables all `execute()` sandbox layers — the AST check is skipped and user code runs with unrestricted builtins (`open`/`eval`/`exec`/`__import__`). For trusted, isolated environments only (e.g. a benchmark harness); never expose to untrusted input. The exec timeout is unaffected (use `--exec-timeout`).
+
+### Fixed
+
+- **`hasattr()` is no longer blocked in `execute()`.** It returns only a `bool` and cannot *return* an object, so — unlike `getattr`/`vars` — it can't reach `__class__`/`__subclasses__` to escape the sandbox. Blocking it forced agents into try/except rewrites for ordinary build123d introspection (e.g. `hasattr(part, 'solids')`). `getattr`/`vars` stay blocked (they remain genuine dunder-bypass vectors; use `--no-sandbox` if you need them). (#265)
+- **Blocked-call errors no longer emit a misleading "Import blocked" hint.** A `Call to 'x' is not allowed` / dunder-access rejection matched the import-error hint rule, telling the agent to fix a nonexistent import. Call/attribute blocks now get a call-specific hint and a distinct `call_blocked` classification. (#265)
 
 ### Fixed
 

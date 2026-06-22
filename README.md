@@ -146,8 +146,11 @@ Two CLI flags let you adjust the import policy without giving up the rest of the
 
 - `--allow-imports scipy,pandas` — extend the allowlist with named modules. Each entry permits the named root and all its submodules. Use for CAD scripts that need extra packages.
 - `--allow-all-imports` — disable the import allowlist entirely. The other layers (restricted builtins for `open`/`eval`/etc, exec timeout, dunder-attribute block) still apply. **Use only in trusted environments or under OS-level isolation** (see below).
+- `--no-sandbox` — disable **all** sandbox layers: the AST check is skipped and user code runs with unrestricted builtins (`open`/`eval`/`exec`/`__import__`). The exec timeout still applies. **Dangerous — for trusted, isolated environments only** (e.g. a benchmark harness); never expose to untrusted input. Implies `--allow-all-imports`.
 
-Both flags also accept their values via env var (`BUILD123D_ALLOW_IMPORTS`, `BUILD123D_ALLOW_ALL_IMPORTS`).
+These flags also accept their values via env var (`BUILD123D_ALLOW_IMPORTS`, `BUILD123D_ALLOW_ALL_IMPORTS`, `BUILD123D_NO_SANDBOX`).
+
+> Note: `hasattr()` and `dir()` are permitted by the default sandbox; `getattr`/`vars`/`eval`/`exec`/`open` and explicit dunder access are blocked. Use `--no-sandbox` if you need the blocked ones.
 
 ### Stronger isolation: OS-level sandboxing
 
