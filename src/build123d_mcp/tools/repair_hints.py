@@ -60,7 +60,12 @@ _HINTS: list[tuple[list[str], str]] = [
         "server can run with --no-sandbox / BUILD123D_NO_SANDBOX=1 to lift all sandbox layers.",
     ),
     (
-        [r"ImportError", r"Import of .* is not allowed", r"not allowed.*import", r"import.*not allowed"],
+        [
+            r"ImportError",
+            r"Import of .* is not allowed",
+            r"not allowed.*import",
+            r"import.*not allowed",
+        ],
         "Import blocked. Allowed modules include: build123d, bd_warehouse, math, numpy, "
         "json, re, collections, itertools, functools, copy, typing, dataclasses, enum, "
         "and most OCP geometry sub-modules (OCP.gp, OCP.BRepGProp, OCP.TopExp, etc.). "
