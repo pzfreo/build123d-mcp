@@ -1,6 +1,10 @@
 # Changelog
 
-## v0.3.54 — 2026-06-22
+## v0.3.55
+
+### Fixed
+
+- **Export validity gate now detects mesh non-closure (open edges) and faces that fail tessellation.** The gate previously verified well-formedness, the B-rep edge-face map, and mesh non-manifold edges, but a solid can be a valid B-rep with a matched edge map yet still tessellate to a boundary that is not watertight — a non-conformal face junction the edge map does not see, or a face OCC cannot mesh at all — which a CAD scorer rejects. The exact (export) mesh check now also reports `mesh_open_edges` (tessellated-boundary open edges) and `untriangulated_faces` (faces that failed to mesh), computed by a seam-aware conformal stitch — per-face triangulations merged by topology across shared edges, periodic seams, and B-rep vertices — run over a deflection ladder (a valid periodic/curved seam that reads open at one tessellation density closes at a finer one, while a genuine gap stays open at every density). The ladder is triangle-count-budgeted with the same fast-check fallback as the non-manifold check.
 
 ### Features
 

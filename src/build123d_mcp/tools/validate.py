@@ -24,6 +24,16 @@ _EPS = 1e-9
 _EXACT_INLINE_MAX_TRIS = 10000
 _EXACT_EXPORT_MAX_TRIS = 80000
 
+# The open-edge deflection ladder refines a SUSPECT part (base mesh shows open
+# edges) up to base/32 to distinguish a valid periodic/curved seam — which only
+# reads as closed at a finer tessellation — from a genuine gap. The finest rung
+# is inherently denser than the base mesh, so the ladder is bounded by its own
+# (larger) triangle ceiling rather than the non-manifold-check budget; below the
+# ceiling a rung's verdict is trusted, above it the rung is skipped. The ladder
+# only runs when the base pass already found open edges, so a clean part never
+# pays for it.
+_OPEN_LADDER_MAX_TRIS = 400000
+
 
 def _gate_report(shape, exact: bool = False) -> dict:
     """Return the validity-gate verdict for a shape as a plain dict.
@@ -69,12 +79,19 @@ def _gate_report(shape, exact: bool = False) -> dict:
     # export, small inline); above the budget — or if the exact build fails — fall
     # back to the fast coordinate-weld check. mesh_check records which ran.
     _cap = _EXACT_EXPORT_MAX_TRIS if exact else _EXACT_INLINE_MAX_TRIS
-    mesh_nm_edges, mesh_ok = _mesh_defects_exact(shape, max_triangles=_cap)
+    mesh_nm_edges, mesh_open_edges, mesh_untri_faces, mesh_ok = _mesh_defects_exact(
+        shape, max_triangles=_cap
+    )
     mesh_check = "exact"
     if not mesh_ok:
+        # Fast fallback (over budget / unbuildable stitch) covers non-manifold
+        # only — no open-edge or face-tessellation analysis.
         mesh_nm_edges, mesh_ok = _mesh_defects(shape)
+        mesh_open_edges = mesh_untri_faces = 0
         mesh_check = "fast"
     mesh_nonmanifold = mesh_ok and mesh_nm_edges > 0
+    mesh_open = mesh_ok and mesh_open_edges > 0
+    mesh_incomplete = mesh_ok and mesh_untri_faces > 0
 
     reasons: list[str] = []
     if not brep_valid:
@@ -90,6 +107,17 @@ def _gate_report(shape, exact: bool = False) -> dict:
             f"{mesh_nm_edges} mesh non-manifold edge(s) — faces meet >2-ways "
             "(self-touch / coincident faces); a CAD scorer rejects this even though "
             "it looks watertight"
+        )
+    if mesh_untri_faces:
+        reasons.append(
+            f"{mesh_untri_faces} face(s) failed to tessellate — the exported boundary "
+            "is incomplete (un-meshable or degenerate face)"
+        )
+    if mesh_open_edges:
+        reasons.append(
+            f"{mesh_open_edges} mesh open edge(s) — the tessellated boundary is not "
+            "closed (non-conformal face junction or unsewn faces) even though the "
+            "B-rep edges look matched"
         )
     if n_solids == 0 and not open_edges and not nonmanifold_edges:
         reasons.append("closed surface but no solid body — wrap the faces in Solid() before export")
@@ -112,6 +140,8 @@ def _gate_report(shape, exact: bool = False) -> dict:
         brep_valid
         and watertight_manifold
         and not mesh_nonmanifold
+        and not mesh_open
+        and not mesh_incomplete
         and volume > _EPS
         and n_solids >= 1
     )
@@ -123,6 +153,8 @@ def _gate_report(shape, exact: bool = False) -> dict:
         "open_edges": open_edges,
         "nonmanifold_edges": nonmanifold_edges,
         "mesh_nonmanifold_edges": mesh_nm_edges,
+        "mesh_open_edges": mesh_open_edges,
+        "untriangulated_faces": mesh_untri_faces,
         "mesh_check": mesh_check,
         "brep_valid": brep_valid,
         "warnings": warnings,
@@ -240,9 +272,20 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, b
     B-reps), so callers use it where correctness matters most (export) rather
     than on every interactive validate(). ``max_triangles`` bounds that cost: if
     the tessellation exceeds it, return ok=False *before* the slow stitch so the
-    caller can fall back to the fast check. Returns (nonmanifold_edges, ok);
-    ok=False if the mesh could not be built or was over budget (the caller then
-    does not gate on it / falls back).
+    caller can fall back to the fast check. Returns
+    (nonmanifold_edges, open_edges, untriangulated_faces, ok); ok=False if the
+    mesh could not be built or was over budget (caller then falls back to the
+    fast check). open_edges>0 means the tessellated boundary is not closed
+    (edges incident to a single triangle); untriangulated_faces>0 means a face
+    failed to mesh, leaving the boundary incomplete.
+
+    The open-edge (closedness) verdict is computed by a separate seam-aware
+    conformal stitch run over a DEFLECTION LADDER: a part is closed iff ANY rung
+    (base, base/4, base/16, base/32) yields zero open edges. Coarser-then-finer
+    tessellation is needed because a single deflection can leave a valid
+    periodic/curved face with a non-conformal seam that only closes at a finer
+    sampling; conversely a genuine gap stays open at every rung. The non-manifold
+    and untriangulated counts come from the base-deflection index-stitch below.
     """
     try:
         import math
@@ -251,8 +294,9 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, b
         import numpy as np
         from OCP.BRep import BRep_Tool
         from OCP.BRepMesh import BRepMesh_IncrementalMesh
+        from OCP.BRepTools import BRepTools
         from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_REVERSED, TopAbs_VERTEX
-        from OCP.TopExp import TopExp
+        from OCP.TopExp import TopExp, TopExp_Explorer
         from OCP.TopLoc import TopLoc_Location
         from OCP.TopoDS import TopoDS
         from OCP.TopTools import (
@@ -263,16 +307,200 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, b
         bb = shape.bounding_box()
         diag = math.dist((bb.min.X, bb.min.Y, bb.min.Z), (bb.max.X, bb.max.Y, bb.max.Z))
         if diag <= 0:
-            return 0, False
+            return 0, 0, 0, False
         # Deflection relative to part scale, clamped — matches the scorer.
         deflection = min(0.5, max(0.005, diag * 1e-3))
         occ = shape.wrapped
+
+        # --- open-edge (closedness) via seam-aware conformal stitch ladder ---
+        # One pass at a given deflection -> (open_edges, n_triangles). Builds a
+        # conformal boundary mesh from the per-face OCC triangulations by topology
+        # (inter-face shared edges, periodic seam edges, BREP-vertex endpoints)
+        # with a coordinate-weld backstop, then counts undirected edges incident
+        # to a single triangle. Tolerance-free per stitch; coordinate weld is only
+        # a tiny-fraction-of-diagonal backstop so distinct surfaces never merge.
+        def _open_pass(defl: float) -> tuple[int, int]:
+            BRepMesh_IncrementalMesh(occ, defl, False, 0.5, True)
+            fmap = TopTools_IndexedMapOfShape()
+            TopExp.MapShapes_s(occ, TopAbs_FACE, fmap)
+            V: list = []
+            T: list = []
+            fbase: dict = {}
+            ftri: dict = {}
+            for fi in range(1, fmap.Size() + 1):
+                f = TopoDS.Face_s(fmap.FindKey(fi))
+                loc = TopLoc_Location()
+                tri = BRep_Tool.Triangulation_s(f, loc)
+                if tri is None:
+                    continue
+                trsf = loc.Transformation()
+                base = len(V)
+                fbase[fi] = base
+                ftri[fi] = (tri, loc, f)
+                for i in range(1, tri.NbNodes() + 1):
+                    p = tri.Node(i).Transformed(trsf)
+                    V.append((p.X(), p.Y(), p.Z()))
+                rev = f.Orientation() == TopAbs_REVERSED
+                for i in range(1, tri.NbTriangles() + 1):
+                    a, b, c = tri.Triangle(i).Get()
+                    a, b, c = base + a - 1, base + b - 1, base + c - 1
+                    if rev:
+                        a, b = b, a
+                    T.append((a, b, c))
+            if not T:
+                return 0, 0
+            Va = np.asarray(V, dtype=np.float64)
+            Ta = np.asarray(T, dtype=np.int64)
+            par = list(range(len(V)))
+
+            def fnd(x: int) -> int:
+                r = x
+                while par[r] != r:
+                    r = par[r]
+                while par[x] != r:
+                    par[x], x = r, par[x]
+                return r
+
+            def uni(a: int, b: int) -> None:
+                ra, rb = fnd(a), fnd(b)
+                if ra != rb:
+                    par[max(ra, rb)] = min(ra, rb)
+
+            def stitch(nls: list) -> None:
+                if len(nls) < 2:
+                    return
+                ref = nls[0]
+                rp = Va[ref]
+                for o in nls[1:]:
+                    if o.shape[0] != ref.shape[0]:
+                        continue
+                    op = Va[o]
+                    seq = o if abs(rp - op).max() <= abs(rp - op[::-1]).max() else o[::-1]
+                    for u, v in zip(ref.tolist(), seq.tolist()):
+                        uni(u, v)
+
+            # (a) inter-face shared edges — and (c) BREP-vertex endpoints, both
+            # driven by the same per-(edge,face) PolygonOnTriangulation. That OCC
+            # call dominates the pass, so extract each polygon ONCE here and reuse
+            # its endpoints for the vertex merge below rather than re-walking every
+            # edge a second time.
+            ef = TopTools_IndexedDataMapOfShapeListOfShape()
+            TopExp.MapShapesAndAncestors_s(occ, TopAbs_EDGE, TopAbs_FACE, ef)
+            vm = TopTools_IndexedMapOfShape()
+            TopExp.MapShapes_s(occ, TopAbs_VERTEX, vm)
+            vnodes: dict = defaultdict(list)
+            for ei in range(1, ef.Extent() + 1):
+                edge = TopoDS.Edge_s(ef.FindKey(ei))
+                nls = []
+                for adj in ef.FindFromIndex(ei):
+                    fi = fmap.FindIndex(adj)
+                    if fi == 0 or fi not in ftri:
+                        continue
+                    tri, loc, _ = ftri[fi]
+                    poly = BRep_Tool.PolygonOnTriangulation_s(edge, tri, loc)
+                    if poly is None:
+                        continue
+                    nls.append(
+                        np.fromiter(poly.Nodes(), dtype=np.int64, count=poly.NbNodes())
+                        + (fbase[fi] - 1)
+                    )
+                stitch(nls)
+                if nls:
+                    vf = vm.FindIndex(TopExp.FirstVertex_s(edge))
+                    vl = vm.FindIndex(TopExp.LastVertex_s(edge))
+                    for arr in nls:
+                        if vf:
+                            vnodes[vf].append(int(arr[0]))
+                        if vl:
+                            vnodes[vl].append(int(arr[-1]))
+            # (b) periodic SEAM edges (edge appears twice on the same face)
+            for fi, (tri, loc, f) in ftri.items():
+                smap = TopTools_IndexedMapOfShape()
+                polys: dict = defaultdict(list)
+                exp = TopExp_Explorer(f, TopAbs_EDGE)
+                while exp.More():
+                    e = TopoDS.Edge_s(exp.Current())
+                    if BRepTools.IsReallyClosed_s(e, f):
+                        idx = smap.Add(e)
+                        poly = BRep_Tool.PolygonOnTriangulation_s(e, tri, loc)
+                        if poly is not None:
+                            polys[idx].append(
+                                np.fromiter(poly.Nodes(), dtype=np.int64, count=poly.NbNodes())
+                                + (fbase[fi] - 1)
+                            )
+                    exp.Next()
+                for idx, lists in polys.items():
+                    seen_seam: set = set()
+                    u: list = []
+                    for a in lists:
+                        kk = a.tobytes()
+                        if kk not in seen_seam:
+                            seen_seam.add(kk)
+                            u.append(a)
+                    if len(u) >= 2:
+                        stitch(u)
+            # (c) BREP-vertex merge — close fillet/cone/pole apices where the
+            # endpoints of the edges meeting at a B-rep vertex map to distinct
+            # tessellation nodes. Endpoints were collected in the loop above.
+            for ns in vnodes.values():
+                for n in ns[1:]:
+                    uni(ns[0], n)
+            # (d) coordinate-weld backstop
+            wdiag = float(np.linalg.norm(Va.max(0) - Va.min(0)))
+            wtol = max(1e-7, 1e-7 * wdiag)
+            q = np.round(Va / wtol).astype(np.int64)
+            _, cinv = np.unique(q, axis=0, return_inverse=True)
+            cinv = np.asarray(cinv).ravel()
+            seen_c: dict = {}
+            for i, r in enumerate(cinv.tolist()):
+                if r in seen_c:
+                    uni(seen_c[r], i)
+                else:
+                    seen_c[r] = i
+            roots = np.array([fnd(i) for i in range(len(V))], dtype=np.int64)
+            _, inv = np.unique(roots, return_inverse=True)
+            inv = np.asarray(inv).ravel()
+            mfo = inv[Ta]
+            mfo = mfo[
+                (mfo[:, 0] != mfo[:, 1]) & (mfo[:, 1] != mfo[:, 2]) & (mfo[:, 0] != mfo[:, 2])
+            ]
+            nn = int(inv.max()) + 1
+            eo = np.sort(mfo[:, [0, 1, 1, 2, 0, 2]].reshape(-1, 2), axis=1)
+            ko = eo[:, 0].astype(np.int64) * (nn + 1) + eo[:, 1]
+            _, co = np.unique(ko, return_counts=True)
+            return int((co == 1).sum()), int(Ta.shape[0])
+
+        def _open_ladder() -> int:
+            # A part is closed iff ANY ladder rung yields zero open edges. A valid
+            # periodic/curved face can leave a non-conformal seam open at one
+            # deflection that closes at a finer one; a genuine gap stays open at
+            # every rung. The base pass shares the base mesh the caller already
+            # built (and budget-checked); the FINER rungs are bounded by the
+            # ladder's own (larger) ceiling — OCC's deflection→triangle scaling is
+            # markedly sub-quadratic for curved B-reps, so a (base/defl)^2
+            # prediction over-skips valid rungs; build the rung and trust a closed
+            # verdict only if it fits the ceiling.
+            open0, _ = _open_pass(deflection)
+            if open0 == 0:
+                return 0
+            for d in (4, 16, 32):
+                openK, ntrisK = _open_pass(deflection / d)
+                if ntrisK > _OPEN_LADDER_MAX_TRIS:
+                    break
+                if openK == 0:
+                    return 0
+            return open0
+
+        # Build the base-deflection mesh for the non-manifold / untriangulated
+        # pass below FIRST. The open-edge ladder (which refines the cached
+        # triangulation, and OCC never coarsens it back) runs LAST so it cannot
+        # inflate this base mesh past the triangle budget.
         BRepMesh_IncrementalMesh(occ, deflection, False, 0.5, True)
 
         faces = TopTools_IndexedMapOfShape()
         TopExp.MapShapes_s(occ, TopAbs_FACE, faces)
         if faces.Size() == 0:
-            return 0, False
+            return 0, 0, 0, False
 
         # 1. Lay every face's triangulation into one global node/triangle list,
         #    flipping winding for REVERSED faces so orientation is consistent.
@@ -280,12 +508,17 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, b
         triangles: list = []
         face_base: dict = {}
         face_tri: dict = {}
+        untriangulated = 0
         for fi in range(1, faces.Size() + 1):
             face = TopoDS.Face_s(faces.FindKey(fi))
             loc = TopLoc_Location()
             tri = BRep_Tool.Triangulation_s(face, loc)
             if tri is None:
-                return 0, False
+                # A face OCC could not tessellate — the exported boundary is
+                # incomplete. A genuine defect, not a reason to bail to the fast
+                # check (which would silently pass it). Count it and continue.
+                untriangulated += 1
+                continue
             trsf = loc.Transformation()
             base = len(vertices)
             face_base[fi] = base
@@ -301,11 +534,12 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, b
                     a, b = b, a
                 triangles.append((a, b, c))
         if not triangles:
-            return 0, False
+            # Nothing meshed: a defect if some faces failed, else un-analysable.
+            return (0, 0, untriangulated, True) if untriangulated else (0, 0, 0, False)
         if max_triangles is not None and len(triangles) > max_triangles:
             # Over the perf budget; bail before the slow stitch so the caller
             # falls back to the fast check rather than hanging.
-            return 0, False
+            return 0, 0, 0, False
 
         parent = list(range(len(vertices)))
 
@@ -378,7 +612,7 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, b
         keep = (mf[:, 0] != mf[:, 1]) & (mf[:, 1] != mf[:, 2]) & (mf[:, 0] != mf[:, 2])
         mf = mf[keep]
         if mf.shape[0] == 0:
-            return 0, True
+            return 0, _open_ladder(), untriangulated, True
 
         # 4. Cancel opposite-winding flap pairs (a degenerate fold meshes to a
         #    triangle and its mirror; same 3 nodes, opposite parity). Same-winding
@@ -412,17 +646,22 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, b
                 keep2[i] = False
         mf = mf[keep2]
         if mf.shape[0] == 0:
-            return 0, True
+            return 0, _open_ladder(), untriangulated, True
 
-        # 5. Count undirected edges shared by >2 triangles.
+        # 5. Non-manifold count from the index-stitched mesh: undirected edges
+        #    shared by >2 triangles. (Closedness/open edges come from the
+        #    deflection-ladder stitch — the precision-tuned index-stitch here
+        #    leaves valid seams/poles spuriously open, so it must not drive the
+        #    open-edge count.)
         n = int(uniq.shape[0])
         e = mf[:, [0, 1, 1, 2, 0, 2]].reshape(-1, 2)
         e = np.sort(e, axis=1)
         keys = e[:, 0].astype(np.int64) * (n + 1) + e[:, 1]
         _, counts = np.unique(keys, return_counts=True)
-        return int((counts > 2).sum()), True
+        nm_edges = int((counts > 2).sum())
+        return nm_edges, _open_ladder(), untriangulated, True
     except Exception:
-        return 0, False
+        return 0, 0, 0, False
 
 
 def _resolve_shape(session, object_name: str):

@@ -91,6 +91,31 @@ def test_mesh_exact_curved_no_false_positive(session):
     assert report["passes_gate"] is True
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        "Box(10, 10, 10)",
+        "Cylinder(5, 20)",
+        "Sphere(8)",
+        "Box(20, 20, 10) - Cylinder(4, 12)",
+        "fillet(Box(10, 10, 10).edges(), 1.5)",
+    ],
+)
+def test_clean_solids_pass_exact_with_zero_open_edges(session, code):
+    """The exact gate's open-edge (closedness) check must report zero open edges
+    on clean solids — including curved/periodic bodies whose tessellated seams a
+    single-deflection coordinate weld false-FAILed. The deflection ladder closes
+    a valid seam at a finer rung; a genuine gap stays open at every rung. The
+    report exposes both new keys regardless of verdict."""
+    execute_code(session, f"show({code}, 'p')")
+    report = _gate_report(session.objects["p"], exact=True)
+    assert "mesh_open_edges" in report
+    assert "untriangulated_faces" in report
+    assert report["mesh_open_edges"] == 0
+    assert report["untriangulated_faces"] == 0
+    assert report["passes_gate"] is True
+
+
 def test_mesh_exact_nonmanifold_edge_fails(session):
     """The accurate mesh check detects the edge-touch non-manifold: the fused
     shared edge stitches the four incident faces into a mesh edge shared by >2
