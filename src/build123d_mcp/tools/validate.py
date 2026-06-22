@@ -13,6 +13,7 @@ real solid body, and non-degenerate volume.
 """
 
 import json
+import time
 
 _EPS = 1e-9
 
@@ -33,6 +34,23 @@ _EXACT_EXPORT_MAX_TRIS = 80000
 # only runs when the base pass already found open edges, so a clean part never
 # pays for it.
 _OPEN_LADDER_MAX_TRIS = 400000
+
+# Wall-clock budget for the whole open-edge ladder. The stitch is pure-Python
+# O(triangles), so a very large open part could otherwise run the gate past the
+# worker op-timeout — which KILLS the worker and loses the session (far worse
+# than a missed defect). When the budget (or the triangle ceiling) is hit before
+# the ladder can prove the part open, the check returns "undetermined" and the
+# caller falls back to the fast check. Crucially this degrades to a (possible)
+# missed open-defect, NEVER to a false FAIL of a valid part: a valid part that
+# times out still passes via the fast check.
+_GATE_OPEN_TIME_BUDGET_S = 45.0
+
+# If the BASE mesh already has more triangles than this AND shows open edges, the
+# part is too complex to refine through the finer ladder rungs within the gate's
+# budget — the finer rungs' (un-interruptible) BRepMesh calls alone would blow it.
+# Such a part is deferred to the fast check (UNDETERMINED), never failed. A genuine
+# small/moderate open part still ladders and is caught; only large parts degrade.
+_LADDER_BASE_MAX_TRIS = 40000
 
 
 def _gate_report(shape, exact: bool = False) -> dict:
@@ -253,7 +271,7 @@ def _mesh_defects(shape) -> tuple[int, bool]:
         return 0, False
 
 
-def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, bool]:
+def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, int, int, bool]:
     """Accurate mesh non-manifold count via a topology-stitched tessellation.
 
     Builds one conformal boundary mesh from the per-face OCC triangulations by
@@ -310,6 +328,7 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, b
             return 0, 0, 0, False
         # Deflection relative to part scale, clamped — matches the scorer.
         deflection = min(0.5, max(0.005, diag * 1e-3))
+        _open_deadline = time.monotonic() + _GATE_OPEN_TIME_BUDGET_S
         occ = shape.wrapped
 
         # --- open-edge (closedness) via seam-aware conformal stitch ladder ---
@@ -347,10 +366,21 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, b
                     if rev:
                         a, b = b, a
                     T.append((a, b, c))
+                # Bail mid-build as soon as the soup blows the ceiling or the
+                # budget — before paying the rest of the O(triangles) append +
+                # the stitch — so a single huge rung can't run the gate long.
+                if len(T) > _OPEN_LADDER_MAX_TRIS or time.monotonic() > _open_deadline:
+                    return -1, len(T)
             if not T:
                 return 0, 0
             Va = np.asarray(V, dtype=np.float64)
             Ta = np.asarray(T, dtype=np.int64)
+            if Ta.shape[0] > _OPEN_LADDER_MAX_TRIS or time.monotonic() > _open_deadline:
+                # Too large / out of time to stitch within the gate's budget.
+                # Signal UNDETERMINED (-1) BEFORE paying the O(triangles) stitch,
+                # so the ladder defers to the fast check rather than risk the
+                # worker op-timeout (session loss) or a wrong verdict.
+                return -1, int(Ta.shape[0])
             par = list(range(len(V)))
 
             def fnd(x: int) -> int:
@@ -390,6 +420,8 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, b
             TopExp.MapShapes_s(occ, TopAbs_VERTEX, vm)
             vnodes: dict = defaultdict(list)
             for ei in range(1, ef.Extent() + 1):
+                if time.monotonic() > _open_deadline:
+                    return -1, len(T)  # stitch over budget — undetermined
                 edge = TopoDS.Edge_s(ef.FindKey(ei))
                 nls = []
                 for adj in ef.FindFromIndex(ei):
@@ -480,16 +512,28 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, b
             # markedly sub-quadratic for curved B-reps, so a (base/defl)^2
             # prediction over-skips valid rungs; build the rung and trust a closed
             # verdict only if it fits the ceiling.
-            open0, _ = _open_pass(deflection)
+            # Returns the open-edge count, or -1 = UNDETERMINED (a rung exceeds the
+            # triangle ceiling or the time budget). -1 must NOT be treated as a
+            # FAIL — the caller falls back to the fast check — so a valid part
+            # whose closing rung we could not afford is never wrongly rejected.
+            open0, ntris0 = _open_pass(deflection)
+            if open0 < 0:
+                return -1
             if open0 == 0:
                 return 0
+            if ntris0 > _LADDER_BASE_MAX_TRIS:
+                # Open at base, but too large to refine within budget — defer to
+                # the fast check rather than run the expensive finer rungs.
+                return -1
             for d in (4, 16, 32):
-                openK, ntrisK = _open_pass(deflection / d)
-                if ntrisK > _OPEN_LADDER_MAX_TRIS:
-                    break
+                if time.monotonic() > _open_deadline:
+                    return -1  # out of budget — do not start another (finer) rung
+                openK, _ = _open_pass(deflection / d)
+                if openK < 0:
+                    return -1  # finer rung too large / out of time — undetermined
                 if openK == 0:
                     return 0
-            return open0
+            return open0  # every rung ran in budget and stayed open → genuine gap
 
         # Build the base-deflection mesh for the non-manifold / untriangulated
         # pass below FIRST. The open-edge ladder (which refines the cached
@@ -566,6 +610,12 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, b
         #    endpoints for the degenerate-edge merge in step 3.
         vertex_nodes: dict = defaultdict(list)
         for ei in range(1, edge_faces.Extent() + 1):
+            if time.monotonic() > _open_deadline:
+                # The per-edge stitch is over the gate budget (a very large/complex
+                # part — few edges but expensive OCC calls each); defer to the fast
+                # check rather than approach the worker op-timeout. Bounds total
+                # gate wall-clock to ~the budget.
+                return 0, 0, 0, False
             edge = TopoDS.Edge_s(edge_faces.FindKey(ei))
             node_lists = []
             for adj in edge_faces.FindFromIndex(ei):
@@ -612,7 +662,8 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, b
         keep = (mf[:, 0] != mf[:, 1]) & (mf[:, 1] != mf[:, 2]) & (mf[:, 0] != mf[:, 2])
         mf = mf[keep]
         if mf.shape[0] == 0:
-            return 0, _open_ladder(), untriangulated, True
+            _ov = _open_ladder()
+            return (0, 0, 0, False) if _ov < 0 else (0, _ov, untriangulated, True)
 
         # 4. Cancel opposite-winding flap pairs (a degenerate fold meshes to a
         #    triangle and its mirror; same 3 nodes, opposite parity). Same-winding
@@ -646,7 +697,8 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, b
                 keep2[i] = False
         mf = mf[keep2]
         if mf.shape[0] == 0:
-            return 0, _open_ladder(), untriangulated, True
+            _ov = _open_ladder()
+            return (0, 0, 0, False) if _ov < 0 else (0, _ov, untriangulated, True)
 
         # 5. Non-manifold count from the index-stitched mesh: undirected edges
         #    shared by >2 triangles. (Closedness/open edges come from the
@@ -659,7 +711,8 @@ def _mesh_defects_exact(shape, max_triangles: int | None = None) -> tuple[int, b
         keys = e[:, 0].astype(np.int64) * (n + 1) + e[:, 1]
         _, counts = np.unique(keys, return_counts=True)
         nm_edges = int((counts > 2).sum())
-        return nm_edges, _open_ladder(), untriangulated, True
+        _ov = _open_ladder()
+        return (0, 0, 0, False) if _ov < 0 else (nm_edges, _ov, untriangulated, True)
     except Exception:
         return 0, 0, 0, False
 

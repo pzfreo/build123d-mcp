@@ -169,6 +169,15 @@ def _load_part_budget(ws: "WorkerSession") -> int:
     return max(_GEOMETRY_TIMEOUT, ws._exec_timeout)
 
 
+def _export_budget(ws: "WorkerSession") -> int:
+    # export() re-imports the written STEP and runs the authoritative validity
+    # gate (the open-edge deflection ladder on a large part can take tens of
+    # seconds — it is internally time-bounded, but give the op real headroom so
+    # the parent never kills the worker mid-gate). Honour --exec-timeout when
+    # larger, like the import/load budgets.
+    return max(_EXPORT_TIMEOUT, ws._exec_timeout)
+
+
 class _OpSpec(NamedTuple):
     """One worker-routed operation.
 
@@ -531,7 +540,7 @@ class WorkerSession:
     ) -> dict:
         raise NotImplementedError
 
-    @_op(_tool(f"{_T}.export:export_file"), _EXPORT_TIMEOUT)
+    @_op(_tool(f"{_T}.export:export_file"), _export_budget)
     def export_file(self, filename: str, format: str = "step", object_name: str = "") -> str:
         raise NotImplementedError
 
