@@ -11,6 +11,8 @@
 - **`hasattr()` is no longer blocked in `execute()`.** It returns only a `bool` and cannot *return* an object, so — unlike `getattr`/`vars` — it can't reach `__class__`/`__subclasses__` to escape the sandbox. Blocking it forced agents into try/except rewrites for ordinary build123d introspection (e.g. `hasattr(part, 'solids')`). `getattr`/`vars` stay blocked (they remain genuine dunder-bypass vectors; use `--no-sandbox` if you need them). (#265)
 - **Blocked-call errors no longer emit a misleading "Import blocked" hint.** A `Call to 'x' is not allowed` / dunder-access rejection matched the import-error hint rule, telling the agent to fix a nonexistent import. Call/attribute blocks now get a call-specific hint and a distinct `call_blocked` classification. (#265)
 
+## v0.3.53 — 2026-06-22
+
 ### Fixed
 
 - **Export gate validates the written-and-reimported STEP, not the in-memory shape.** `export()`'s validity gate ran on the in-memory shape, but a CAD scorer re-imports the written file — and serialization can degrade a shape that passed in memory (drop a solid, break BRep validity), giving a false PASS while shipping an invalid file. Verified on the sweep corpus: a shape with a solid that passed the gate re-imported as zero solids; another valid-in-memory BRep was invalid in the file — both shipped with a clean gate. The gate now re-imports the just-written STEP and validates that artifact, warning if it can't be re-imported. (#284)

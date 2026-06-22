@@ -94,3 +94,32 @@ def test_import_block_classified_as_import_blocked():
 
     c = _classify_from_error_string("Error: SecurityError: Import of 'os' is not allowed.")
     assert c["failure_class"] == "import_blocked"
+
+
+# --- end-to-end through a real spawned worker (locks in the positional plumbing) ---
+# WorkerSession runs in a subprocess, so its DISABLE_SANDBOX is set there and does
+# not leak into this test process. (An InProcessSession would poison global state.)
+
+
+def test_worker_session_no_sandbox_runs_blocked_code():
+    from build123d_mcp.worker import WorkerSession
+
+    s = WorkerSession(exec_timeout=30, no_sandbox=True)
+    try:
+        result = s.execute("import os\nprint('pid', os.getpid())")
+        assert "not allowed" not in result and "SecurityError" not in result, result
+        assert "pid" in result, result
+    finally:
+        s._kill_worker()
+
+
+def test_worker_session_default_blocks_import():
+    """Control: the same code is rejected without no_sandbox — proves the flag is load-bearing."""
+    from build123d_mcp.worker import WorkerSession
+
+    s = WorkerSession(exec_timeout=30)
+    try:
+        result = s.execute("import os")
+        assert "not allowed" in result, result
+    finally:
+        s._kill_worker()

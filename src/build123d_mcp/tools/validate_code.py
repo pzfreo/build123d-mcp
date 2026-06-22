@@ -1,7 +1,7 @@
 import ast
 import json
 
-from build123d_mcp.security import _BLOCKED_CALL_NAMES, IMPORT_ALLOWLIST
+import build123d_mcp.security as _sec
 
 
 def validate_code(code: str) -> str:
@@ -22,24 +22,26 @@ def validate_code(code: str) -> str:
     blocked = []
     warnings = []
 
-    # Security: blocked imports and calls
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                root = alias.name.split(".")[0]
-                if root not in IMPORT_ALLOWLIST:
-                    blocked.append(f"import '{alias.name}' is not allowed")
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                root = node.module.split(".")[0]
-                if root not in IMPORT_ALLOWLIST:
-                    blocked.append(f"import '{node.module}' is not allowed")
-        elif isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id in _BLOCKED_CALL_NAMES:
-                blocked.append(f"call to '{node.func.id}' is not allowed")
-        elif isinstance(node, ast.Attribute):
-            if node.attr.startswith("__") and node.attr.endswith("__"):
-                blocked.append(f"dunder attribute access '{node.attr}' is not allowed")
+    # Security: blocked imports and calls. Skipped entirely under --no-sandbox so
+    # this advisory check agrees with what execute() will actually run.
+    if not _sec.DISABLE_SANDBOX:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    root = alias.name.split(".")[0]
+                    if root not in _sec.IMPORT_ALLOWLIST:
+                        blocked.append(f"import '{alias.name}' is not allowed")
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    root = node.module.split(".")[0]
+                    if root not in _sec.IMPORT_ALLOWLIST:
+                        blocked.append(f"import '{node.module}' is not allowed")
+            elif isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name) and node.func.id in _sec._BLOCKED_CALL_NAMES:
+                    blocked.append(f"call to '{node.func.id}' is not allowed")
+            elif isinstance(node, ast.Attribute):
+                if node.attr.startswith("__") and node.attr.endswith("__"):
+                    blocked.append(f"dunder attribute access '{node.attr}' is not allowed")
 
     # Advisory: no build123d import in this snippet
     has_b3d_import = any(
