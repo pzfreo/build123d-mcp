@@ -21,8 +21,13 @@ classifiers = [
 dependencies = [
     "mcp>=1.9",
     # build123d is pre-1.0 and 0.x minor bumps may break the API.
-    # Soft pin to the tested-against major+minor; bump deliberately.
-    "build123d>=0.10,<0.11",
+    # We test against both 0.10 and 0.11 (CI matrix), so the range spans both.
+    # bump deliberately.
+    "build123d>=0.10,<0.12",
+    # 0.11 switched build123d's OCP dependency to cadquery-ocp-novtk, which no
+    # longer pulls VTK transitively. render.py drives VTK directly, so VTK must
+    # be declared explicitly. Harmless on 0.10 (cadquery-ocp already provides it).
+    "vtk>=9.3",
     "bd_warehouse",
     # SVG → PNG rasterisation for 2D drawing review (render_view path).
     # resvg-py ships pre-built Rust wheels for all platforms with no native
@@ -34,7 +39,7 @@ dependencies = [
     # Import name remains `build123d_drafting` (install name ≠ import name).
     "build123d-drafting-helpers>=0.10.0",
     "defusedxml>=0.7.1",
-    "augura>=0.1.3",
+    "augura>=0.1.5",
 ]
 
 [project.optional-dependencies]

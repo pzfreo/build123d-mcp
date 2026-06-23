@@ -2,6 +2,10 @@
 
 ## v0.3.57
 
+### Changed
+
+- **Support build123d 0.11 (in addition to 0.10).** The dependency range is now `build123d>=0.10,<0.12`, and CI runs the full test suite against both 0.10 and 0.11 on Linux/macOS/Windows. 0.11 switched build123d's OCP backend to `cadquery-ocp-novtk`, which no longer pulls VTK transitively; since `render_view` drives VTK directly, `vtk` is now declared as an explicit dependency (harmless on 0.10, where `cadquery-ocp` already provides it). Also bumps the floor of the bundled `augura` printability analyzer to `>=0.1.5`, the first release that allows build123d 0.11.
+
 ### Fixed
 
 - **Export validity gate now detects non-manifold *vertices*.** The mesh gate checked non-manifold *edges* (shared by >2 faces) and open edges, but missed non-manifold *vertices* — a point where ≥2 surface sheets meet (e.g. two bodies touching corner-to-corner). Such a part is edge-manifold and watertight yet not a 2-manifold surface, which a CAD scorer rejects, so the gate gave a false PASS. The exact check now reports `mesh_nonmanifold_vertices`, computed on a coordinate-welded mesh (seam-safe — so poles/seams of curved solids don't false-positive) by verifying each vertex's incident triangles form a single connected fan. Runs both in-process and in the export subprocess. Caught a real defect (a benchmark cover scored zero by the official gate for exactly this) that previously shipped. (#298)

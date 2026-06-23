@@ -11,6 +11,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        # build123d is pre-1.0; test against both supported minors.
+        build123d: ["0.10.0", "0.11.0"]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -26,19 +28,20 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --upgrade-package "build123d==${{ matrix.build123d }}"
 
+      # Lint/type/format are OS- and version-independent — run once, on the
+      # Linux + newest-build123d leg.
       - name: Type check
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.build123d == '0.11.0'
         run: uv run mypy src/build123d_mcp/
 
-      # Lint + format are OS-independent — run once on Linux (like mypy).
       - name: Lint
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.build123d == '0.11.0'
         run: uv run ruff check .
 
       - name: Format check
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.build123d == '0.11.0'
         run: uv run ruff format --check .
 
       - name: Run tests
