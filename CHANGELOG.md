@@ -5,6 +5,7 @@
 ### Changed
 
 - **Support build123d 0.11 (in addition to 0.10).** The dependency range is now `build123d>=0.10,<0.12`, and CI runs the full test suite against both 0.10 and 0.11 on Linux/macOS/Windows. 0.11 switched build123d's OCP backend to `cadquery-ocp-novtk`, which no longer pulls VTK transitively; since `render_view` drives VTK directly, `vtk` is now declared as an explicit dependency (harmless on 0.10, where `cadquery-ocp` already provides it). Also bumps the floor of the bundled `augura` printability analyzer to `>=0.1.5`, the first release that allows build123d 0.11.
+- **Support Python 3.13 and 3.14.** `requires-python` is now `>=3.11,<3.15`. The previous 3.12 cap was a stale assumption that VTK shipped no cp313 wheels — current `vtk` (9.6.2) ships cp313 and cp314 wheels, so the lock now uses it. CI exercises the full suite (incl. the VTK render path) on 3.12/3.13/3.14 for build123d 0.11; build123d 0.10 stays tested at 3.12 (it caps at <3.14). `--python 3.12` remains the recommended default in the README launch examples.
 
 ### Fixed
 

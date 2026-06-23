@@ -7,7 +7,7 @@ name = "build123d-mcp"
 version = "0.3.57.dev0"
 description = "MCP server wrapping build123d for interactive 3D CAD"
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.11,<3.15"
 license = { file = "LICENSE" }
 authors = [{ name = "Paul Fremantle", email = "pzfreo@gmail.com" }]
 keywords = ["mcp", "build123d", "cad", "3d", "ai"]
@@ -15,6 +15,8 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "License :: OSI Approved :: Apache Software License",
     "Topic :: Scientific/Engineering",
 ]

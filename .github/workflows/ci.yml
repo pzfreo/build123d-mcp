@@ -11,21 +11,26 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.12", "3.13", "3.14"]
         # build123d is pre-1.0; test against both supported minors.
         build123d: ["0.10.0", "0.11.0"]
+        exclude:
+          # 0.10 is the legacy-compat path: test it only at the baseline
+          # Python (3.12). build123d 0.10 also caps at <3.14 regardless.
+          - { build123d: "0.10.0", python: "3.13" }
+          - { build123d: "0.10.0", python: "3.14" }
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v6
 
       # Sets up xvfb on Linux and Mesa3D on Windows (no-op on macOS).
-      # vtk 9.3.1 ships no cp313 wheel, so pin Python below to 3.12.
       - uses: pyvista/setup-headless-display-action@v4
 
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
 
       - name: Install dependencies
         run: uv sync --group dev --upgrade-package "build123d==${{ matrix.build123d }}"
@@ -33,15 +38,15 @@ jobs:
       # Lint/type/format are OS- and version-independent — run once, on the
       # Linux + newest-build123d leg.
       - name: Type check
-        if: runner.os == 'Linux' && matrix.build123d == '0.11.0'
+        if: runner.os == 'Linux' && matrix.build123d == '0.11.0' && matrix.python == '3.12'
         run: uv run mypy src/build123d_mcp/
 
       - name: Lint
-        if: runner.os == 'Linux' && matrix.build123d == '0.11.0'
+        if: runner.os == 'Linux' && matrix.build123d == '0.11.0' && matrix.python == '3.12'
         run: uv run ruff check .
 
       - name: Format check
-        if: runner.os == 'Linux' && matrix.build123d == '0.11.0'
+        if: runner.os == 'Linux' && matrix.build123d == '0.11.0' && matrix.python == '3.12'
         run: uv run ruff format --check .
 
       - name: Run tests
