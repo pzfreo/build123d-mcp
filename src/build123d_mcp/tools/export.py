@@ -197,7 +197,7 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
             report = _gate_report(
                 gate_shape,
                 exact=True,
-                mesh_override=_mesh if _mesh is not None else (0, 0, 0, False),
+                mesh_override=_mesh if _mesh is not None else (0, 0, 0, 0, False),
             )
             if not report["passes_gate"]:
                 suffix += (

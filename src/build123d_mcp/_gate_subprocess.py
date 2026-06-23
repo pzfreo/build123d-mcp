@@ -41,10 +41,13 @@ def main() -> None:
             shape = Compound(children=list(solids))
         # deadline=inf: no in-process time bail — the parent's subprocess timeout
         # bounds us. The triangle ceilings still apply (bound memory).
-        nm, open_edges, untri, ok = _mesh_defects_exact(
+        nm, open_edges, untri, nmv, ok = _mesh_defects_exact(
             shape, max_triangles=_EXACT_EXPORT_MAX_TRIS, deadline=float("inf")
         )
-        print(_MARKER + json.dumps({"nm": nm, "open": open_edges, "untri": untri, "ok": ok}))
+        print(
+            _MARKER
+            + json.dumps({"nm": nm, "open": open_edges, "untri": untri, "nmv": nmv, "ok": ok})
+        )
     except Exception as exc:  # noqa: BLE001 — report and exit cleanly
         print(_MARKER + json.dumps({"error": f"{type(exc).__name__}: {exc}"}))
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.57
+
+### Fixed
+
+- **Export validity gate now detects non-manifold *vertices*.** The mesh gate checked non-manifold *edges* (shared by >2 faces) and open edges, but missed non-manifold *vertices* — a point where ≥2 surface sheets meet (e.g. two bodies touching corner-to-corner). Such a part is edge-manifold and watertight yet not a 2-manifold surface, which a CAD scorer rejects, so the gate gave a false PASS. The exact check now reports `mesh_nonmanifold_vertices`, computed on a coordinate-welded mesh (seam-safe — so poles/seams of curved solids don't false-positive) by verifying each vertex's incident triangles form a single connected fan. Runs both in-process and in the export subprocess. Caught a real defect (a benchmark cover scored zero by the official gate for exactly this) that previously shipped. (#298)
+
 ## v0.3.56
 
 ### Fixed

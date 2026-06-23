@@ -73,6 +73,50 @@ def _edge_incidence_counts(mf, n_nodes: int):
     return counts
 
 
+def _nonmanifold_vertex_count(mf) -> int:
+    """Count non-manifold VERTICES in a merged triangle array.
+
+    A non-manifold vertex is one where two or more surface sheets meet at a single
+    point (e.g. two bodies touching corner-to-corner): the boundary is still
+    edge-manifold and watertight, but it is not a 2-manifold surface, which a CAD
+    scorer rejects (#298). Edge-incidence counts cannot see it — it is purely a
+    vertex-link property.
+
+    ``mf`` is an (M, 3) int array of triangles over coordinate-WELDED nodes (so
+    seams/poles are already merged; the index-stitch under-merges seams and would
+    false-positive here). For each vertex, the 'opposite edge' (a, b) of every
+    incident triangle links its two spokes; a manifold vertex's incident triangles
+    form a single connected fan (one component), a pinch forms two or more.
+    """
+    from collections import defaultdict
+
+    spokes: dict = defaultdict(list)
+    for a, b, c in mf.tolist():
+        spokes[a].append((b, c))
+        spokes[b].append((a, c))
+        spokes[c].append((a, b))
+    nmv = 0
+    for edges in spokes.values():
+        par: dict = {}
+
+        def root(x: int, par: dict = par) -> int:
+            par.setdefault(x, x)
+            r = x
+            while par[r] != r:
+                r = par[r]
+            while par[x] != r:
+                par[x], x = r, par[x]
+            return r
+
+        for a, b in edges:
+            ra, rb = root(a), root(b)
+            if ra != rb:
+                par[ra] = rb
+        if len({root(x) for x in par}) > 1:
+            nmv += 1
+    return nmv
+
+
 def _edge_face_adjacency(occ, fmap, emap):
     """Map each edge index (in ``emap``) to the list of incident face indices.
 
@@ -104,7 +148,7 @@ def _edge_face_adjacency(occ, fmap, emap):
 def _run_mesh_gate_subprocess(step_path: str, timeout: float):
     """Run the exact mesh check on a written STEP in a separate process, hard-
     bounded by ``timeout`` seconds (the only way to bound the un-interruptible OCC
-    tessellation without risking the worker). Returns ``(nm, open, untri, ok)`` or
+    tessellation without risking the worker). Returns ``(nm, open, untri, nmv, ok)`` or
     ``None`` if the subprocess timed out (was killed), errored, or its result
     could not be parsed — ``None`` means UNDETERMINED, so the caller keeps its
     safe in-process verdict rather than inventing one.
@@ -130,7 +174,13 @@ def _run_mesh_gate_subprocess(step_path: str, timeout: float):
                 return None
             if "error" in d:
                 return None
-            return int(d["nm"]), int(d["open"]), int(d["untri"]), bool(d["ok"])
+            return (
+                int(d["nm"]),
+                int(d["open"]),
+                int(d["untri"]),
+                int(d.get("nmv", 0)),
+                bool(d["ok"]),
+            )
     return None
 
 
@@ -185,7 +235,7 @@ def _gate_report(shape, exact: bool = False, mesh_override: tuple | None = None)
         # Mesh results computed out-of-process (export's subprocess retry for a
         # part too large to mesh within the in-process budget). Bounded by a hard
         # subprocess timeout there, so it can run the full check without skipping.
-        mesh_nm_edges, mesh_open_edges, mesh_untri_faces, mesh_ok = mesh_override
+        mesh_nm_edges, mesh_open_edges, mesh_untri_faces, mesh_nmv, mesh_ok = mesh_override
         # ok=False means the out-of-process check timed out / couldn't determine —
         # mark it "skipped" so the "mesh validity not verified" warning fires and the
         # caller doesn't report false confidence on an unchecked part.
@@ -193,7 +243,7 @@ def _gate_report(shape, exact: bool = False, mesh_override: tuple | None = None)
     else:
         _cap = _EXACT_EXPORT_MAX_TRIS if exact else _EXACT_INLINE_MAX_TRIS
         _mesh_deadline = time.monotonic() + _GATE_MESH_BUDGET_S
-        mesh_nm_edges, mesh_open_edges, mesh_untri_faces, mesh_ok = _mesh_defects_exact(
+        mesh_nm_edges, mesh_open_edges, mesh_untri_faces, mesh_nmv, mesh_ok = _mesh_defects_exact(
             shape, max_triangles=_cap, deadline=_mesh_deadline
         )
         mesh_check = "exact"
@@ -202,13 +252,14 @@ def _gate_report(shape, exact: bool = False, mesh_override: tuple | None = None)
             # non-manifold-only check (no open-edge / face-tessellation analysis),
             # under the SAME deadline.
             mesh_nm_edges, mesh_ok = _mesh_defects(shape, deadline=_mesh_deadline)
-            mesh_open_edges = mesh_untri_faces = 0
+            mesh_open_edges = mesh_untri_faces = mesh_nmv = 0
             mesh_check = "fast" if mesh_ok else "skipped"
             if not mesh_ok:
                 mesh_nm_edges = 0  # neither check could run in budget — defer to B-rep
     mesh_nonmanifold = mesh_ok and mesh_nm_edges > 0
     mesh_open = mesh_ok and mesh_open_edges > 0
     mesh_incomplete = mesh_ok and mesh_untri_faces > 0
+    mesh_nmv_flag = mesh_ok and mesh_nmv > 0
 
     reasons: list[str] = []
     if not brep_valid:
@@ -235,6 +286,12 @@ def _gate_report(shape, exact: bool = False, mesh_override: tuple | None = None)
             f"{mesh_open_edges} mesh open edge(s) — the tessellated boundary is not "
             "closed (non-conformal face junction or unsewn faces) even though the "
             "B-rep edges look matched"
+        )
+    if mesh_nmv:
+        reasons.append(
+            f"{mesh_nmv} mesh non-manifold vertex/vertices — ≥2 surface sheets meet at a "
+            "single point (e.g. bodies touching corner-to-corner); edge-manifold and "
+            "watertight but not a 2-manifold surface, which a CAD scorer rejects"
         )
     if n_solids == 0 and not open_edges and not nonmanifold_edges:
         reasons.append("closed surface but no solid body — wrap the faces in Solid() before export")
@@ -265,6 +322,7 @@ def _gate_report(shape, exact: bool = False, mesh_override: tuple | None = None)
         and not mesh_nonmanifold
         and not mesh_open
         and not mesh_incomplete
+        and not mesh_nmv_flag
         and volume > _EPS
         and n_solids >= 1
     )
@@ -276,6 +334,7 @@ def _gate_report(shape, exact: bool = False, mesh_override: tuple | None = None)
         "open_edges": open_edges,
         "nonmanifold_edges": nonmanifold_edges,
         "mesh_nonmanifold_edges": mesh_nm_edges,
+        "mesh_nonmanifold_vertices": mesh_nmv,
         "mesh_open_edges": mesh_open_edges,
         "untriangulated_faces": mesh_untri_faces,
         "mesh_check": mesh_check,
@@ -393,7 +452,7 @@ def _mesh_defects(shape, deadline: float | None = None) -> tuple[int, bool]:
 
 def _mesh_defects_exact(
     shape, max_triangles: int | None = None, deadline: float | None = None
-) -> tuple[int, int, int, bool]:
+) -> tuple[int, int, int, int, bool]:
     """Accurate mesh non-manifold count via a topology-stitched tessellation.
 
     Builds one conformal boundary mesh from the per-face OCC triangulations by
@@ -444,7 +503,7 @@ def _mesh_defects_exact(
         bb = shape.bounding_box()
         diag = math.dist((bb.min.X, bb.min.Y, bb.min.Z), (bb.max.X, bb.max.Y, bb.max.Z))
         if diag <= 0:
-            return 0, 0, 0, False
+            return 0, 0, 0, 0, False
         # Deflection relative to part scale, clamped — matches the scorer.
         deflection = min(0.5, max(0.005, diag * 1e-3))
         _open_deadline = (
@@ -672,7 +731,7 @@ def _mesh_defects_exact(
         faces = TopTools_IndexedMapOfShape()
         TopExp.MapShapes_s(occ, TopAbs_FACE, faces)
         if faces.Size() == 0:
-            return 0, 0, 0, False
+            return 0, 0, 0, 0, False
 
         # 1. Lay every face's triangulation into one global node/triangle list,
         #    flipping winding for REVERSED faces so orientation is consistent.
@@ -707,11 +766,11 @@ def _mesh_defects_exact(
                 triangles.append((a, b, c))
         if not triangles:
             # Nothing meshed: a defect if some faces failed, else un-analysable.
-            return (0, 0, untriangulated, True) if untriangulated else (0, 0, 0, False)
+            return (0, 0, untriangulated, 0, True) if untriangulated else (0, 0, 0, 0, False)
         if max_triangles is not None and len(triangles) > max_triangles:
             # Over the perf budget; bail before the slow stitch so the caller
             # falls back to the fast check rather than hanging.
-            return 0, 0, 0, False
+            return 0, 0, 0, 0, False
 
         parent = list(range(len(vertices)))
 
@@ -729,6 +788,27 @@ def _mesh_defects_exact(
                 parent[max(rx, ry)] = min(rx, ry)
 
         verts = np.asarray(vertices, dtype=np.float64)
+        # --- non-manifold VERTICES (#298) ---
+        # Detected on a coordinate-WELDED copy of the base soup (seam-safe; the
+        # index-stitch below under-merges seams and would false-positive). A vertex
+        # where >=2 surface sheets meet at a single point is edge-manifold and
+        # watertight yet not a 2-manifold surface — a CAD scorer rejects it, and the
+        # edge-incidence counts cannot see it. Computed once here; reported by all
+        # post-stitch returns.
+        try:
+            _wd = float(np.linalg.norm(verts.max(0) - verts.min(0)))
+            _wtol = max(1e-7, 1e-7 * _wd)
+            _, _wi = np.unique(
+                np.round(verts / _wtol).astype(np.int64), axis=0, return_inverse=True
+            )
+            _wi = np.asarray(_wi).ravel()
+            _wmf = _wi[np.asarray(triangles, dtype=np.int64)]
+            _wmf = _wmf[
+                (_wmf[:, 0] != _wmf[:, 1]) & (_wmf[:, 1] != _wmf[:, 2]) & (_wmf[:, 0] != _wmf[:, 2])
+            ]
+            nmv = _nonmanifold_vertex_count(_wmf)
+        except Exception:
+            nmv = 0
         vmap = TopTools_IndexedMapOfShape()
         TopExp.MapShapes_s(occ, TopAbs_VERTEX, vmap)
         emap = TopTools_IndexedMapOfShape()
@@ -744,7 +824,7 @@ def _mesh_defects_exact(
                 # part — few edges but expensive OCC calls each); defer to the fast
                 # check rather than approach the worker op-timeout. Bounds total
                 # gate wall-clock to ~the budget.
-                return 0, 0, 0, False
+                return 0, 0, 0, 0, False
             edge = TopoDS.Edge_s(emap.FindKey(ei))
             node_lists = []
             for fi in edge_adj.get(ei, ()):
@@ -792,9 +872,14 @@ def _mesh_defects_exact(
         if mf.shape[0] == 0:
             _ov = _open_ladder()
             if _ov >= 0:
-                return 0, _ov, untriangulated, True
-            # open undetermined — a face that failed to tessellate is still a defect
-            return (0, 0, untriangulated, True) if untriangulated else (0, 0, 0, False)
+                return 0, _ov, untriangulated, nmv, True
+            # open undetermined — a face that failed to tessellate (or a pinch
+            # vertex) is still a definite defect
+            return (
+                (0, 0, untriangulated, nmv, True)
+                if (untriangulated or nmv)
+                else (0, 0, 0, 0, False)
+            )
 
         # 4. Cancel opposite-winding flap pairs (a degenerate fold meshes to a
         #    triangle and its mirror; same 3 nodes, opposite parity). Same-winding
@@ -830,9 +915,14 @@ def _mesh_defects_exact(
         if mf.shape[0] == 0:
             _ov = _open_ladder()
             if _ov >= 0:
-                return 0, _ov, untriangulated, True
-            # open undetermined — a face that failed to tessellate is still a defect
-            return (0, 0, untriangulated, True) if untriangulated else (0, 0, 0, False)
+                return 0, _ov, untriangulated, nmv, True
+            # open undetermined — a face that failed to tessellate (or a pinch
+            # vertex) is still a definite defect
+            return (
+                (0, 0, untriangulated, nmv, True)
+                if (untriangulated or nmv)
+                else (0, 0, 0, 0, False)
+            )
 
         # 5. Non-manifold count from the index-stitched mesh: undirected edges
         #    shared by >2 triangles. (Closedness/open edges come from the
@@ -844,14 +934,14 @@ def _mesh_defects_exact(
         nm_edges = int((counts > 2).sum())
         _ov = _open_ladder()
         if _ov >= 0:
-            return nm_edges, _ov, untriangulated, True
-        # open undetermined — a non-manifold or untriangulated face is still a
-        # definite defect, independent of the open-edge ladder
-        if nm_edges or untriangulated:
-            return nm_edges, 0, untriangulated, True
-        return 0, 0, 0, False
+            return nm_edges, _ov, untriangulated, nmv, True
+        # open undetermined — a non-manifold, untriangulated, or non-manifold-vertex
+        # defect is still definite, independent of the open-edge ladder
+        if nm_edges or untriangulated or nmv:
+            return nm_edges, 0, untriangulated, nmv, True
+        return 0, 0, 0, 0, False
     except Exception:
-        return 0, 0, 0, False
+        return 0, 0, 0, 0, False
 
 
 def _resolve_shape(session, object_name: str):

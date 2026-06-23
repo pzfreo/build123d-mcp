@@ -350,6 +350,39 @@ def test_edge_incidence_nonmanifold_edge():
     assert int((counts > 2).sum()) > 0
 
 
+def test_nonmanifold_vertex_bowtie():
+    import numpy as np
+
+    from build123d_mcp.tools.validate import _nonmanifold_vertex_count
+
+    # Two triangles meeting only at vertex 0 — two surface sheets pinched at a
+    # point. Edge-manifold (no edge shared >2 ways) but a non-manifold vertex.
+    mf = np.array([[0, 1, 2], [0, 3, 4]], dtype=np.int64)
+    assert _nonmanifold_vertex_count(mf) == 1
+
+
+def test_nonmanifold_vertex_closed_tetra():
+    import numpy as np
+
+    from build123d_mcp.tools.validate import _nonmanifold_vertex_count
+
+    # Closed 2-manifold: every vertex's incident triangles form one fan.
+    mf = np.array([[0, 1, 2], [0, 1, 3], [1, 2, 3], [0, 2, 3]], dtype=np.int64)
+    assert _nonmanifold_vertex_count(mf) == 0
+
+
+def test_mesh_defects_exact_no_false_nm_vertex_on_clean_solids():
+    from build123d import Box, Sphere
+
+    from build123d_mcp.tools.validate import _mesh_defects_exact
+
+    # The vertex check runs on a coordinate-welded mesh, so poles/seams of a
+    # sphere must not register as pinches (#298 regression guard).
+    for shape in (Box(10, 10, 10), Sphere(8)):
+        nm_e, open_e, untri, nmv, ok = _mesh_defects_exact(shape)
+        assert ok and nmv == 0
+
+
 # --- out-of-process mesh gate (export retry for parts too large to mesh in-budget) ---
 
 
@@ -360,8 +393,8 @@ def test_mesh_gate_subprocess_valid_step(tmp_path):
 
     p = tmp_path / "box.step"
     export_step(Box(10, 10, 10), str(p))
-    # A clean solid: 0 non-manifold, 0 open, 0 untriangulated, ok=True.
-    assert _run_mesh_gate_subprocess(str(p), timeout=120) == (0, 0, 0, True)
+    # A clean solid: 0 nm-edge, 0 open, 0 untriangulated, 0 nm-vertex, ok=True.
+    assert _run_mesh_gate_subprocess(str(p), timeout=120) == (0, 0, 0, 0, True)
 
 
 def test_mesh_gate_subprocess_timeout_returns_none(tmp_path):
