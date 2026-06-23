@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.58
+
+### Added
+
+- **Quick reference now advertises build123d 0.11 features (version-gated).** The `build123d://quickref` resource gains a "New in 0.11" section — `ConvexPolyhedron` (solid convex hull), `BSpline` (exact spline edge from control points + knots), and `ConstrainedArcs`/`ConstrainedLines` (constraint-solved sketch geometry), plus pointers to single-line engraving fonts, conic-section arcs, and broader intersection support. The section (and its runnable examples) is shown and tested **only when the installed build123d is ≥ 0.11**, so 0.10 sessions never see APIs they can't call. Gating keys off the version already reported in the resource banner.
+
 ## v0.3.57
 
 ### Changed

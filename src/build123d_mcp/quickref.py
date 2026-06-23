@@ -14,6 +14,7 @@ from dataclasses import dataclass
 class Section:
     text: str
     label: str | None = None  # None = prose only, not tested
+    min_version: str | None = None  # gate to build123d >= this version (e.g. "0.11")
 
 
 SECTIONS: list[Section] = [
@@ -311,6 +312,61 @@ show(result, "part_unchanged_by_private")""",
     ),
     Section(
         text="""\
+## New in build123d 0.11
+The features in this block are only available when this environment runs
+build123d 0.11 or newer (check the version in the banner above).""",
+        min_version="0.11",
+    ),
+    Section(
+        label="convexpolyhedron",
+        min_version="0.11",
+        text="""\
+## ConvexPolyhedron — solid convex hull of a point set (0.11+)
+# Use for: wrapping a cloud of points into a solid, simplified collision/clearance
+# bodies, quick "envelope" shapes.
+from build123d import *
+result = ConvexPolyhedron([(0, 0, 0), (20, 0, 0), (0, 20, 0), (0, 0, 20), (6, 6, 6)])
+show(result, "hull")""",
+    ),
+    Section(
+        label="bspline",
+        min_version="0.11",
+        text="""\
+## BSpline — exact spline edge from control points + knots (0.11+)
+# Use for: precise freeform curves where Spline (interpolating through points) is
+# not exact enough. The result is an Edge — sweep/extrude/revolve it into a face
+# or solid as needed.
+from build123d import *
+result = BSpline([(0, 0), (5, 8), (10, 0)], knots=[0, 0, 0, 1, 1, 1], degree=2)
+show(result, "spline_edge")""",
+    ),
+    Section(
+        label="constrainedarcs",
+        min_version="0.11",
+        text="""\
+## ConstrainedArcs / ConstrainedLines — sketch geometry solved against other geometry (0.11+)
+# Use for: arcs/lines defined by tangency or constraints to existing edges, the way
+# a parametric sketcher solves them. The result is a Curve of one or more Edges —
+# pick the one you want with .edges() plus a selector.
+from build123d import *
+l4 = PolarLine((0, 0), 4, 60)
+l5 = PolarLine((0, 0), 4, 40)
+a3 = CenterArc((0, 0), 4, 0, 90)
+result = ConstrainedArcs(l4, l5, a3, sagitta=Sagitta.BOTH).edges().sort_by(Edge.length)[0]
+show(result, "constrained_arc")""",
+    ),
+    Section(
+        text="""\
+## Also new in 0.11 (see build123d's docs/CHANGELOG for details)
+- Single-line / engraving fonts via FontManager — single-stroke text for CNC/laser,
+  where filled glyphs are wrong (needs a single-line font file installed).
+- ParabolicCenterArc / HyperbolicCenterArc — conic-section arcs.
+- Broader, more robust intersection support (the `&` operator) across 1D/2D/3D and
+  composite shapes.""",
+        min_version="0.11",
+    ),
+    Section(
+        text="""\
 ## MCP server conventions
 - Name the final shape 'result' OR call show() — both trigger current_shape auto-detection
 - show(shape, "name")      registers object, prints vol + face count as immediate confirmation
@@ -347,10 +403,41 @@ def _build123d_version_banner() -> str:
     )
 
 
+def _version_tuple(v: str) -> tuple[int, ...]:
+    """Leading numeric components of a version string, e.g. '0.11.0rc1' -> (0, 11, 0)."""
+    out: list[int] = []
+    for part in v.split("."):
+        digits = ""
+        for ch in part:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if not digits:
+            break
+        out.append(int(digits))
+    return tuple(out)
+
+
+def _section_enabled(s: Section) -> bool:
+    """True unless the section is gated to a build123d version newer than the one
+    installed. Unknown/uninstalled build123d hides gated sections (safe default)."""
+    if s.min_version is None:
+        return True
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        installed = _version_tuple(version("build123d"))
+    except PackageNotFoundError:
+        return False
+    return installed >= _version_tuple(s.min_version)
+
+
 def build_quickref_text() -> str:
-    return _build123d_version_banner() + "\n\n" + "\n\n".join(s.text for s in SECTIONS)
+    sections = (s.text for s in SECTIONS if _section_enabled(s))
+    return _build123d_version_banner() + "\n\n" + "\n\n".join(sections)
 
 
 RUNNABLE_EXAMPLES: list[tuple[str, str]] = [
-    (s.label, s.text) for s in SECTIONS if s.label is not None
+    (s.label, s.text) for s in SECTIONS if s.label is not None and _section_enabled(s)
 ]
