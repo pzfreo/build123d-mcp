@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.58
+
+### Features
+
+- **`recover()` tool — heal an invalid solid, or fail without touching the geometry.** When `validate()` FAILs and hand-coded `ShapeFix`/sewing in `execute()` can't clear the defect (e.g. an unorientable or un-meshable BSpline face, often inherited from a malformed imported STEP), `recover()` runs a heal ladder — `ShapeFix` → **defeature** the BRepCheck-invalid faces (remove them, neighbours close the gap) → **drop + sew** the bad faces over a tolerance ladder — and keeps the first variant that passes the *exact* gate. Crucially, a heal is accepted only if it also leaves the volume and bounding box essentially unchanged (≤1% each): a heal that distorts the part is refused, so `recover()` either returns a faithful valid solid (re-registered) or fails and leaves the original geometry untouched — it never hands back a mangled solid that merely happens to be watertight. Requires a single solid (a multi-solid shape is refused rather than guessing which body to heal). Validated end-to-end against a benchmark editing fixture whose input STEP carried an unorientable face the standard heals could not clear: defeature recovers it at +0.005% volume.
+
 ## v0.3.57
 
 ### Fixed

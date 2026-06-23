@@ -123,6 +123,12 @@ def validate(object_name: str = "") -> str:
 
 
 @mcp.tool()
+def recover(object_name: str = "", store_as: str = "") -> str:
+    """Heal an invalid solid so it passes the validity gate, when validate() FAILs and ShapeFix/sewing in execute() cannot clear the defect (e.g. an unorientable or un-meshable BSpline face, often inherited from a malformed imported STEP). Runs a heal ladder — ShapeFix → defeature the BRepCheck-invalid faces (remove them, neighbours close the gap) → drop the bad faces and sew over a tolerance ladder — and keeps the first variant that passes the exact gate. A heal is accepted ONLY if it also leaves the volume and bounding box essentially unchanged: a heal that distorts the part is refused, so recover() either returns a faithful valid solid or fails without touching the geometry — it never hands back a mangled solid that merely happens to be watertight. On PASS it re-registers the healed solid (and reports the method + volume/bbox delta so you can confirm an in-progress edit survived); on FAIL the original is left untouched and the defect is likely intrinsic — inspect it with measure()/render and rebuild the region in execute(). object_name: named object from show() (default: current shape). store_as: name to register the healed solid under (default: overwrite object_name / current shape)."""
+    return _resolve_session().recover(object_name, store_as)
+
+
+@mcp.tool()
 def clearance(object_a: str, object_b: str) -> str:
     """Spatial relationship between two named shapes. Returns JSON with `clearance` (mm), `status` (one of: apart, touching, containing, interpenetrating), `containment` (a_in_b, b_in_a, or neither), and `intersection_volume` / `a_volume_outside_b` / `b_volume_outside_a` for overlap quantification. Reads `clearance` differently per status: apart=gap, containing=wall thickness from inner surface to outer hull (use this to verify a pocket fits inside a plate), touching=0, interpenetrating=0 (check intersection_volume + a_volume_outside_b for the wall-piercing case). object_a, object_b: names from show()."""
     return _resolve_session().clearance(object_a, object_b)
