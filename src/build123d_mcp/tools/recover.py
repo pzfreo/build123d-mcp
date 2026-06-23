@@ -1,66 +1,52 @@
-"""``recover()``: heal an invalid solid so it passes the validity gate.
+"""``recover()``: heal an invalid solid so it passes the validity gate, or fail
+without touching the geometry.
 
 The agent's hand-coded ``ShapeFix``/sew often cannot clear an unorientable or
 un-meshable face (e.g. a defect inherited from a malformed imported STEP). This
-tool runs a heal ladder and keeps the first variant that passes the *exact*
-validity gate, re-registering it:
+tool runs a small heal ladder — ``ShapeFix_Shape`` then **defeature** the
+BRepCheck-invalid faces (remove them, neighbours extend to close the gap) — and
+keeps the first variant that passes the *exact* gate on the written-and-
+reimported STEP (the authoritative artifact, not the in-memory shape).
 
-1. ``ShapeFix_Shape`` — cheap, reorient/fix in place (what the agent already does).
-2. **Defeature** the BRepCheck-invalid faces — remove them and let neighbours
-   extend to close the gap (fixes unorientable patches a sew cannot).
-3. **Drop + sew** the invalid faces over a tolerance ladder, rebuild the solid,
-   ``ShapeFix_Solid`` — bridges a thin invalid sliver the defeature cannot remove.
+Two safety properties, both required:
 
-A heal is accepted only if it passes the gate AND leaves the volume and bounding
-box essentially unchanged: a heal that distorts the part is a fake recovery, so
-it is refused and the original geometry is left untouched. recover() therefore
-either returns a faithful valid solid or fails honestly — it never hands back a
-mangled solid that merely happens to be watertight. A candidate is only sent
-through the expensive mesh gate once it is BRepCheck-clean, so the ladder stays
-cheap on the common no-op rungs.
+* **It cannot kill the session.** Defeaturing a large solid is an un-interruptible
+  native OCC call that can run for minutes; run in-process it would block the
+  worker past its op budget and the parent would SIGKILL it, losing all session
+  state. So the heal runs OUT OF PROCESS, hard-bounded by the time left in the op
+  budget (mirroring how export bounds its mesh gate). If it overruns it is killed
+  and recover() returns FAIL — the session is untouched.
+* **It never distorts the geometry.** A heal is accepted only if it passes the
+  gate AND every bounding-box face moves less than ``max(1 mm, 1% of the
+  diagonal)`` — bbox, not volume, because an invalid solid's signed volume is
+  unreliable (a reversed face halves it). Anything that moves the envelope more
+  than a defective sliver is refused. So recover() either returns a faithful
+  valid solid or fails and leaves the original exactly as it was.
+
+The actual healing + gating runs in :mod:`build123d_mcp._recover_subprocess`;
+this module is the in-worker orchestrator that bounds it and re-registers the
+result.
 """
 
 import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
 
-from build123d import Solid
-from OCP.Bnd import Bnd_Box
-from OCP.BRepAlgoAPI import BRepAlgoAPI_Defeaturing
-from OCP.BRepBndLib import BRepBndLib
-from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeSolid, BRepBuilderAPI_Sewing
 from OCP.BRepCheck import BRepCheck_Analyzer
-from OCP.BRepGProp import BRepGProp
-from OCP.GProp import GProp_GProps
-from OCP.ShapeFix import ShapeFix_Shape, ShapeFix_Solid
-from OCP.TopAbs import TopAbs_FACE, TopAbs_SHELL, TopAbs_SOLID
+from OCP.TopAbs import TopAbs_FACE, TopAbs_SOLID
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS
-from OCP.TopTools import TopTools_ListOfShape
 
-from build123d_mcp.tools.validate import _gate_report, _resolve_shape
+from build123d_mcp.tools.validate import _resolve_shape
 
-_SEW_TOLS = (0.1, 0.3, 0.6, 1.0, 1.5)
-
-# A heal that clears the gate but moved the geometry is NOT a heal — it would
-# fool the caller into thinking a part was recovered when it was actually
-# mangled. Accept a candidate only if both the volume and the bounding-box
-# diagonal are within these (small) fractional tolerances of the original.
-_MAX_VOL_FRAC = 0.01  # 1% volume change
-_MAX_BBOX_FRAC = 0.01  # 1% bbox-diagonal change — loose enough to allow removing
-# a protruding defective sliver (which legitimately shrinks the envelope a little)
-# but tight enough to reject a heal that drops a real face and bridges a gap.
-
-
-def _vol(s):
-    g = GProp_GProps()
-    BRepGProp.VolumeProperties_s(s, g)
-    return g.Mass()
-
-
-def _bbox_diag(s):
-    b = Bnd_Box()
-    BRepBndLib.Add_s(s, b)
-    x0, y0, z0, x1, y1, z1 = b.Get()
-    return ((x1 - x0) ** 2 + (y1 - y0) ** 2 + (z1 - z0) ** 2) ** 0.5
+# Margin (s) reserved below the op budget for the in-process work that brackets
+# the subprocess (writing the input STEP, reimporting the output, teardown) plus
+# the parent's poll granularity — so the worker total stays under its op-timeout.
+_MARGIN_S = 15
+_MIN_SUBPROC_S = 10
 
 
 def _solids(shp):
@@ -70,16 +56,6 @@ def _solids(shp):
         out.append(TopoDS.Solid_s(e.Current()))
         e.Next()
     return out
-
-
-def _first_solid(shp):
-    solids = _solids(shp)
-    return solids[0] if solids else shp
-
-
-def _first_shell(shp):
-    e = TopExp_Explorer(shp, TopAbs_SHELL)
-    return TopoDS.Shell_s(e.Current()) if e.More() else None
 
 
 def _invalid_faces(s):
@@ -94,75 +70,25 @@ def _invalid_faces(s):
     return out
 
 
-def _shapefix(s):
-    fx = ShapeFix_Shape(s)
-    fx.Perform()
-    return _first_solid(fx.Shape())
-
-
-def _defeature(s):
-    bad = _invalid_faces(s)
-    if not bad:
-        return None
-    df = BRepAlgoAPI_Defeaturing()
-    df.SetShape(s)
-    faces = TopTools_ListOfShape()
-    for f in bad:
-        faces.Append(f)
-    df.AddFacesToRemove(faces)
-    df.Build()
-    return _first_solid(df.Shape()) if df.IsDone() else None
-
-
-def _dropsew(s, tol):
-    bad = {f.TShape() for f in _invalid_faces(s)}
-    if not bad:
-        return None
-    sew = BRepBuilderAPI_Sewing(tol)
-    e = TopExp_Explorer(s, TopAbs_FACE)
-    while e.More():
-        f = TopoDS.Face_s(e.Current())
-        if f.TShape() not in bad:
-            sew.Add(f)
-        e.Next()
-    sew.Perform()
-    shell = _first_shell(sew.SewedShape())
-    if shell is None:
-        return None
-    sol = BRepBuilderAPI_MakeSolid(shell).Solid()
-    fs = ShapeFix_Solid(sol)
-    fs.Perform()
-    return fs.Solid()
-
-
-def _ladder(src_solid):
-    """(name, thunk) heals, cheapest / most geometry-preserving first."""
-    yield "shapefix", lambda: _shapefix(src_solid())
-    yield "defeature", lambda: _defeature(src_solid())
-    for tol in _SEW_TOLS:
-        yield f"dropsew_tol_{tol}", (lambda t: lambda: _dropsew(src_solid(), t))(tol)
-
-
 def recover(session, object_name: str = "", store_as: str = "") -> str:
-    """Heal an invalid solid so it passes the validity gate, and re-register it.
+    """Heal an invalid solid so it passes the validity gate, or fail untouched.
 
-    Runs a heal ladder (ShapeFix → defeature invalid faces → drop+sew ladder) and
-    keeps the first variant that passes the exact gate AND leaves the volume and
-    bbox essentially unchanged; a distorting heal is refused so the geometry is
-    never silently mangled. Requires a single solid. object_name: named object
-    from show() (default: current shape). store_as: name to register the healed
-    solid under (default: overwrite object_name / the current shape). Reports the
-    method that worked, the volume/bbox change (so you can confirm an edit
-    survived), and every rung tried.
+    Runs ShapeFix → defeature OUT OF PROCESS (hard-bounded by the op budget so it
+    can never block the worker) and keeps the first variant that passes the exact
+    gate on the reimported STEP AND preserves the bounding box. On PASS the healed
+    solid is re-registered; on FAIL (or timeout) the original is left exactly as
+    it was. Requires a single solid. object_name: named object from show()
+    (default: current shape). store_as: name to register the healed solid under
+    (default: overwrite object_name / update the current shape).
     """
+    t0 = time.monotonic()
     shape, err = _resolve_shape(session, object_name)
     if err is not None:
         return err
 
-    # recover heals one solid: it measures volume/bbox preservation and re-gates
-    # against that single body. A multi-solid shape is ambiguous (healing one body
-    # while silently dropping another would look like a recovery), so refuse it
-    # rather than guess — fuse or separate the bodies first.
+    # recover heals one solid: it preserves the bbox of and re-gates a single body.
+    # A multi-solid shape is ambiguous (healing one while dropping another would
+    # look like a recovery), so refuse it rather than guess.
     solids = _solids(shape.wrapped)
     if len(solids) != 1:
         return json.dumps(
@@ -173,70 +99,85 @@ def recover(session, object_name: str = "", store_as: str = "") -> str:
             }
         )
 
-    src = solids[0]
-    v0 = _vol(src)
-    diag0 = _bbox_diag(src)
+    budget = max(60, getattr(session, "exec_timeout", 120))
+    work = tempfile.mkdtemp(prefix="b123d_recover_")
+    in_step = os.path.join(work, "in.step")
+    out_step = os.path.join(work, "out.step")
+    try:
+        from build123d import Solid, export_step
 
-    rep0 = _gate_report(Solid(src), exact=True)
-    if rep0["passes_gate"]:
-        return "Recovery: PASS — already valid, no recovery needed.\n" + json.dumps(rep0, indent=2)
+        export_step(Solid(solids[0]), in_step)
 
-    attempts = []
-    for name, thunk in _ladder(lambda: _first_solid(shape.wrapped)):
-        try:
-            cand = thunk()
-        except Exception as exc:  # noqa: BLE001 - record and keep trying
-            attempts.append({"method": name, "result": f"error: {repr(exc)[:120]}"})
-            continue
-        if cand is None:
-            attempts.append({"method": name, "result": "no-op"})
-            continue
-        if _invalid_faces(cand):
-            attempts.append({"method": name, "result": "BRepCheck still invalid"})
-            continue
-        rep = _gate_report(Solid(cand), exact=True)
-        if not rep["passes_gate"]:
-            attempts.append({"method": name, "result": "still fails gate", "reasons": rep["reasons"]})
-            continue
-        # Passed the gate — but only accept it if the geometry didn't move. A heal
-        # that distorts the part is a fake recovery: refuse it rather than hand
-        # back a mangled solid that merely happens to be watertight.
-        dv = (_vol(cand) - v0) / v0 if v0 else 0.0
-        dd = (_bbox_diag(cand) - diag0) / diag0 if diag0 else 0.0
-        if abs(dv) > _MAX_VOL_FRAC or abs(dd) > _MAX_BBOX_FRAC:
-            attempts.append(
-                {
-                    "method": name,
-                    "result": "rejected — alters geometry",
-                    "volume_delta_pct": round(dv * 100, 3),
-                    "bbox_delta_pct": round(dd * 100, 3),
-                }
+        remaining = budget - (time.monotonic() - t0) - _MARGIN_S
+        if remaining < _MIN_SUBPROC_S:
+            return (
+                "Recovery: FAIL — not enough of the op budget left to heal safely; "
+                "geometry untouched. Retry on a fresh op or raise --exec-timeout.\n"
+                + json.dumps({"recovered": False, "reason": "insufficient_budget"})
             )
-            continue
-        healed = Solid(cand)
-        dest = store_as or object_name or "recovered"
-        session.objects[dest] = healed
-        session.current_shape = healed
-        out = {
-            "recovered": True,
-            "method": name,
-            "stored_as": dest,
-            "volume_before": round(v0, 2),
-            "volume_after": round(_vol(cand), 2),
-            "volume_delta_pct": round(dv * 100, 3),
-            "bbox_delta_pct": round(dd * 100, 3),
-            "attempts": attempts,
-            "gate": rep,
-        }
-        return (
-            f"Recovery: PASS via {name} (Δvol {dv * 100:+.3f}%, Δbbox {dd * 100:+.3f}%). "
-            f"Stored as '{dest}'.\n" + json.dumps(out, indent=2)
-        )
 
-    out = {"recovered": False, "invalid_faces": len(_invalid_faces(src)), "attempts": attempts}
-    return (
-        "Recovery: FAIL — no geometry-preserving heal cleared the gate; the original shape is "
-        "left untouched. The defect may be intrinsic (e.g. a self-intersecting input face); "
-        "inspect it with measure()/render and fix it in execute(), or rebuild the region.\n"
-        + json.dumps(out, indent=2)
-    )
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "build123d_mcp._recover_subprocess", in_step, out_step],
+                capture_output=True,
+                text=True,
+                timeout=remaining,
+            )
+        except subprocess.TimeoutExpired:
+            return (
+                "Recovery: FAIL — the heal exceeded the time budget and was stopped; "
+                "geometry untouched (the session is safe). The defect is likely too "
+                "large/complex to defeature in budget; inspect with measure()/render "
+                "and rebuild the region in execute().\n"
+                + json.dumps({"recovered": False, "reason": "timeout"})
+            )
+
+        result = None
+        for line in reversed(proc.stdout.splitlines()):
+            if line.startswith("RECOVER_RESULT:"):
+                try:
+                    result = json.loads(line[len("RECOVER_RESULT:") :])
+                except ValueError:
+                    result = None
+                break
+        if result is None:
+            return (
+                "Recovery: FAIL — the heal worker did not return a result; geometry "
+                "untouched.\n"
+                + json.dumps({"recovered": False, "reason": "no_result", "stderr": proc.stderr[-300:]})
+            )
+
+        status = result.get("status")
+        if status == "already_valid":
+            return "Recovery: PASS — already valid, no recovery needed.\n" + json.dumps(result)
+        if status == "recovered":
+            from build123d import import_step
+
+            healed = import_step(out_step)
+            session.current_shape = healed
+            dest = store_as or object_name
+            if dest:
+                session.objects[dest] = healed
+            where = f"'{dest}'" if dest else "the current shape"
+            return (
+                f"Recovery: PASS via {result['method']} "
+                f"(bbox moved ≤{result.get('bbox_max_delta', 0)} mm, tol {result.get('tol')} mm). "
+                f"Updated {where}.\n" + json.dumps(result)
+            )
+        # status == "failed"
+        return (
+            "Recovery: FAIL — no geometry-preserving heal cleared the gate; the original "
+            "shape is left untouched. The defect may be intrinsic (e.g. a self-intersecting "
+            "input face); inspect it with measure()/render and rebuild the region in "
+            "execute().\n" + json.dumps(result)
+        )
+    finally:
+        for p in (in_step, out_step):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        try:
+            os.rmdir(work)
+        except OSError:
+            pass
