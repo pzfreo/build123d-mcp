@@ -51,3 +51,38 @@ def test_tessellate_bounded_reports_subprocess_failure(monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Proc())
     with pytest.raises(RuntimeError, match="Tessellation subprocess failed"):
         _tessellate_shapes_bounded([("box", Box(10, 10, 10), None)], render._QUALITY["standard"])
+
+
+def test_tessellate_falls_back_in_process_when_subprocess_blocked(monkeypatch):
+    """On a host that blocks child-process creation (#143 / InProcessSession),
+    subprocess.run raises OSError — render must fall back to in-process
+    tessellation, not break. The shape still comes back as a mesh."""
+
+    def _blocked(*a, **k):
+        raise PermissionError("child process creation is not permitted")
+
+    monkeypatch.setattr(subprocess, "run", _blocked)
+    meshes, failed = _tessellate_shapes_bounded(
+        [("box", Box(10, 10, 10), None)], render._QUALITY["standard"]
+    )
+    assert failed == []
+    assert "box" in meshes and len(meshes["box"][1]) > 0
+
+
+def test_tessellate_bounded_unreadable_pickle_is_clean_error(monkeypatch, tmp_path):
+    """A subprocess that exits 0 but leaves a truncated/garbage pickle surfaces a
+    clean actionable error, not a raw UnpicklingError."""
+
+    class _Proc:
+        returncode = 0
+        stderr = ""
+
+    def _run(cmd, *a, **k):
+        # cmd[4] is the out_pkl path the worker should write; leave garbage there.
+        with open(cmd[4], "wb") as f:
+            f.write(b"\x80\x04not-a-valid-pickle")
+        return _Proc()
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    with pytest.raises(RuntimeError, match="unreadable result"):
+        _tessellate_shapes_bounded([("box", Box(10, 10, 10), None)], render._QUALITY["standard"])

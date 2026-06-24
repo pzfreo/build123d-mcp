@@ -398,6 +398,22 @@ def _vtk_subprocess_worker(
         conn.close()
 
 
+def _tessellate_in_process(shapes, tess) -> tuple[dict, list[str]]:
+    """Tessellate in the current process — the fallback for hosts that block
+    child-process creation (#143 / InProcessSession), where ``subprocess.run``
+    raises ``OSError``. Unbounded, but those hosts also run no worker op-timeout,
+    so there is no worker to SIGKILL — nothing to bound against."""
+    meshes: dict = {}
+    failed: list[str] = []
+    for name, shape, _color in shapes:
+        try:
+            verts, tris = shape.tessellate(tess["linear_deflection"], tess["angular_deflection"])
+            meshes[name] = ([(v.X, v.Y, v.Z) for v in verts], [list(t) for t in tris])
+        except Exception as exc:  # noqa: BLE001 - skip a shape that won't tessellate
+            failed.append(f"{name}: {exc}")
+    return meshes, failed
+
+
 def _tessellate_shapes_bounded(shapes, tess) -> tuple[dict, list[str]]:
     """Tessellate every shape OUT OF PROCESS, hard-bounded by ``_TESS_BUDGET_S``.
 
@@ -456,10 +472,22 @@ def _tessellate_shapes_bounded(shapes, tess) -> tuple[dict, list[str]]:
                 "complex to render at this quality. Try quality='standard', render fewer objects, "
                 "or inspect it numerically with measure()/cross_sections()."
             ) from exc
+        except OSError:
+            # The host blocks child-process creation (#143 / InProcessSession) —
+            # no subprocess available, and no worker op-timeout to kill us, so fall
+            # back to tessellating in-process (the pre-subprocess behaviour).
+            meshes, in_failed = _tessellate_in_process(shapes, tess)
+            return meshes, failed + in_failed
         if proc.returncode != 0 or not os.path.exists(out_pkl):
             raise RuntimeError("Tessellation subprocess failed: " + (proc.stderr or "")[-300:])
-        with open(out_pkl, "rb") as f:
-            result = pickle.load(f)
+        try:
+            with open(out_pkl, "rb") as f:
+                result = pickle.load(f)
+        except (pickle.UnpicklingError, EOFError, KeyError) as exc:
+            raise RuntimeError(
+                "Tessellation produced an unreadable result (the render may be too large or "
+                "complex). Try quality='standard' or render fewer objects."
+            ) from exc
         return result["meshes"], failed + result.get("failed", [])
     finally:
         for p in temp_files:
