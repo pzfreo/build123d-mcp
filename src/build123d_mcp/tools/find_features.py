@@ -70,7 +70,7 @@ def find_hole_patterns(session, object_name: str = "") -> str:
             # — tag the type and serialise its fields generically so the tool can
             # never crash here (was: AttributeError: 'RectGrid' has no 'pitch').
             rec["type"] = _snake(type(p).__name__)
-            if is_dataclass(p):
+            if is_dataclass(p) and not isinstance(p, type):  # a dataclass instance
                 rec.update({k: _round(v) for k, v in asdict(p).items() if k != "holes"})
         patterns.append(rec)
     # default=str so a generic field of an unknown future pattern type (a
