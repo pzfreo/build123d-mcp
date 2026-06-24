@@ -73,7 +73,7 @@ Read-only MCP resources available to LLM clients:
 - `build123d://session` — live session state as JSON (current shape, named objects, snapshots, variables)
 - `build123d://bd_warehouse` — catalogue of pre-built parametric parts from bd_warehouse (bearings, fasteners, gears, pipes, threads, and more)
 
-> **build123d version**: examples in `quickref` and `selectors` are tested against build123d 0.10.x (soft-pinned in `pyproject.toml` as `>=0.10,<0.11`). The exact installed version is reported at the top of each resource. If you need a different build123d version, override the dependency and verify the examples still match the API.
+> **build123d version**: examples in `quickref` and `selectors` are tested against build123d 0.10.x and 0.11.x (soft-pinned in `pyproject.toml` as `>=0.10,<0.12`). The exact installed version is reported at the top of each resource. If you need a different build123d version, override the dependency and verify the examples still match the API.
 
 ## Prompts
 
@@ -186,7 +186,7 @@ Or just use `uv tool run` — it fetches and runs the package in one step with n
 
 The server runs over stdio — the client launches it as a subprocess using `uv tool run build123d-mcp`.
 
-> **Note on Python version.** All examples below pass `--python 3.12`. VTK and cadquery-ocp do not yet ship wheels for Python 3.13+, so pinning to 3.12 is required. uv will auto-download a managed Python 3.12 if you don't already have one.
+> **Note on Python version.** The examples below pass `--python 3.12`, but **Python 3.11, 3.12, 3.13, and 3.14 are all supported and CI-tested**. 3.12 is just a safe, widely-available default — swap in whichever interpreter you have. uv will auto-download a managed Python if you don't already have one.
 
 > **Note on `@latest`.** The examples request `build123d-mcp@latest` so each launch re-resolves to the latest published release instead of reusing uv's cached environment — without it, the client can stay pinned to whatever version uv first cached and silently miss releases. The trade-off is a short dependency-resolution step at every startup (and it needs network access to check for updates). Use plain `build123d-mcp` if you prefer faster, offline-capable starts and update manually with `uv tool upgrade build123d-mcp`. (Older versions of this README passed `--upgrade` instead; recent uv ignores that flag in `uv tool run` and warns on every launch — swap to `@latest` if you have the old config.)
 
