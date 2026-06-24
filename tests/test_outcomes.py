@@ -570,6 +570,55 @@ def test_shape_compare_flags_change_elsewhere(session):
     assert data["changed"]["added_volume"] > 0 and data["changed"]["removed_volume"] > 0
 
 
+def test_shape_compare_exact_magnitude_removal(session):
+    """Drilling a hole reports material REMOVED, none added (exact boolean, right sign)."""
+    from build123d_mcp.tools.shape_compare import shape_compare
+
+    execute_code(
+        session,
+        "base = Box(60, 30, 10)\n"
+        "show(base, 'a')\n"
+        "show(base - Cylinder(4, 10), 'b')",  # Ø8 through-hole removed
+    )
+    data = json.loads(shape_compare(session, "a", "b"))
+    assert data["magnitude_method"] == "exact_boolean"
+    assert data["changed"]["removed_volume"] == pytest.approx(502.65, rel=0.1)  # pi*16*10
+    assert data["changed"]["added_volume"] == 0.0
+
+
+def test_shape_compare_budget_skip_falls_back_to_mesh(session):
+    """With no op budget left, the exact boolean is skipped for the flagged mesh estimate."""
+    import time
+
+    from build123d_mcp._shape_compare_subprocess import compare_shapes
+
+    execute_code(
+        session,
+        "base = Box(60, 30, 6)\n"
+        "show(base + Pos(0, 0, 7) * Box(8, 8, 8), 'a')\n"
+        "show(base + Pos(0, 0, 8) * Box(8, 8, 10), 'b')",
+    )
+    r = compare_shapes(session.objects["a"], session.objects["b"], deadline=time.monotonic())
+    assert r["magnitude_method"] == "mesh_estimate"
+    assert any("skipped" in w for w in r["warnings"])
+
+
+def test_shape_compare_skips_boolean_on_large_spread_edit(session):
+    """A spread edit on a LARGE part skips the exact boolean (its clip would span the
+    part and overrun the budget) and returns the flagged mesh estimate."""
+    from build123d_mcp._shape_compare_subprocess import compare_shapes
+
+    execute_code(
+        session,
+        "base = Box(400, 40, 8)\n"
+        "show(base + Pos(-180, 0, 9) * Box(8, 8, 8), 'a')\n"
+        "show(base + Pos(180, 0, 9) * Box(8, 8, 8), 'b')",
+    )
+    r = compare_shapes(session.objects["a"], session.objects["b"])
+    assert r["magnitude_method"] == "mesh_estimate"
+    assert any("spread region" in w for w in r["warnings"])
+
+
 def test_shape_compare_reexport_noop_is_clean(session, tmp_path):
     """A shape vs a STEP round-trip of ITSELF — same geometry, INDEPENDENTLY
     re-tessellated — must report NO change. This guards the eps-vs-tessellation-

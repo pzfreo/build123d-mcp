@@ -30,6 +30,13 @@ from typing import Any
 # of the op budget, skip it and report the (flagged) mesh estimate instead of risking
 # a hard subprocess kill that would lose the whole result.
 _BOOL_RESERVE_S = 25.0
+# Skip the exact boolean when the changed region's clip box spans more than this
+# fraction of the part diagonal AND the part is large enough for that to be slow:
+# boolean cost scales with clip-box size, so a spread or large-extent edit on a big
+# part overruns the op budget. Such edits fall back to the (flagged) mesh estimate.
+# Small parts are fast regardless of spread, so the gate ignores them.
+_MAX_CLIP_DIAG_FRAC = 0.35
+_MIN_DIAG_FOR_CLIP_GATE = 300.0
 
 # eps (the per-vertex "this point moved" threshold) = factor x mesh deflection,
 # placed above the independent-tessellation noise floor. Deflection is diag*1e-3
@@ -226,7 +233,11 @@ def _exact_region_magnitude(
 
 
 def compare_shapes(
-    shape_a: Any, shape_b: Any, eps: float = 0.0, deadline: float | None = None
+    shape_a: Any,
+    shape_b: Any,
+    eps: float = 0.0,
+    deadline: float | None = None,
+    on_mesh_ready: Any = None,
 ) -> dict:
     """Symmetric vertex-sampled surface diff, localized to significant changed regions,
     with an EXACT boolean magnitude in each region.
@@ -324,47 +335,71 @@ def compare_shapes(
             "have touched more than the requested feature; verify nothing unintended moved."
         )
 
-    # Exact magnitude: an EXACT boolean diff clipped to the located region(s) replaces
-    # the vertex-NN deviation, which inflates 10-100x on flat faces. Clipping to the
-    # tight region keeps it in budget even on huge parts; fall back to the mesh
-    # estimate (clearly flagged) only if the boolean fails.
-    skip_exact = deadline is not None and time.monotonic() > deadline - _BOOL_RESERVE_S
-    exact = None if skip_exact else _exact_region_magnitude(shape_a, shape_b, regions)
-    if exact is not None:
-        magnitude = exact["displacement"]
-        magnitude_method = "exact_boolean"
-    else:
-        magnitude = primary["max_deviation"]
-        magnitude_method = "mesh_estimate"
+    def _result(magnitude: float, method: str, exact: dict | None) -> dict:
+        return {
+            **base,
+            "max_deviation": round(magnitude, 4),
+            "magnitude_method": method,
+            "changed": {
+                "centroid": primary["centroid"],
+                "bbox": primary["bbox"],
+                "local_max_deviation": round(magnitude, 4),
+                "moved_fraction": moved_fraction,
+                "added_volume": exact["added_volume"] if exact else None,
+                "removed_volume": exact["removed_volume"] if exact else None,
+                "added_centroid": exact["added_centroid"] if exact else None,
+                "removed_centroid": exact["removed_centroid"] if exact else None,
+            },
+            "regions": regions[:5],
+            "region_count": len(regions),
+            "unchanged_elsewhere": unchanged_elsewhere,
+            "warnings": warnings,
+        }
+
+    # SALVAGE: hand the mesh-estimate result to the caller (which persists it) BEFORE
+    # the exact boolean runs, so a hard kill mid-boolean still leaves a usable, flagged
+    # result rather than nothing.
+    mesh_result = _result(primary["max_deviation"], "mesh_estimate", None)
+    if on_mesh_ready is not None:
+        on_mesh_ready(mesh_result)
+
+    # Gate the exact boolean: its cost scales with the CLIP-BOX size, so skip it when
+    # the change spans too much of the part (spread / large-extent edits, which
+    # otherwise overrun the op budget) or when too little budget remains — returning
+    # the flagged mesh estimate. The boolean runs only when the clip is genuinely tight.
+    union = [c for r in regions for c in r["bbox"]]
+    clip_diag = _bbox_diag(
+        [min(p[k] for p in union) for k in range(3)],
+        [max(p[k] for p in union) for k in range(3)],
+    )
+    too_wide = diag > _MIN_DIAG_FOR_CLIP_GATE and clip_diag > diag * _MAX_CLIP_DIAG_FRAC
+    low_budget = deadline is not None and time.monotonic() > deadline - _BOOL_RESERVE_S
+    if too_wide or low_budget:
         why = (
-            "skipped (insufficient op budget after tessellation)"
-            if skip_exact
-            else "unavailable (boolean failed)"
+            "the change spans a large/spread region"
+            if too_wide
+            else "insufficient op budget after tessellation"
         )
         warnings.append(
-            f"exact boolean magnitude {why}; max_deviation is a vertex-mesh estimate that can "
-            "overstate the true surface displacement on flat faces — cross-check the volume/bbox deltas."
+            f"exact boolean magnitude skipped ({why}); max_deviation is a vertex-mesh estimate that "
+            "can overstate displacement on flat faces — use the volume/bbox deltas for magnitude."
         )
+        return mesh_result
 
-    return {
-        **base,
-        "max_deviation": round(magnitude, 4),
-        "magnitude_method": magnitude_method,
-        "changed": {
-            "centroid": primary["centroid"],
-            "bbox": primary["bbox"],
-            "local_max_deviation": round(magnitude, 4),
-            "moved_fraction": moved_fraction,
-            "added_volume": exact["added_volume"] if exact else None,
-            "removed_volume": exact["removed_volume"] if exact else None,
-            "added_centroid": exact["added_centroid"] if exact else None,
-            "removed_centroid": exact["removed_centroid"] if exact else None,
-        },
-        "regions": regions[:5],
-        "region_count": len(regions),
-        "unchanged_elsewhere": unchanged_elsewhere,
-        "warnings": warnings,
-    }
+    exact = _exact_region_magnitude(shape_a, shape_b, regions)
+    if exact is None:
+        warnings.append(
+            "exact boolean magnitude unavailable (boolean failed); max_deviation is a vertex-mesh "
+            "estimate that can overstate displacement on flat faces — cross-check the volume/bbox deltas."
+        )
+        return mesh_result
+    if exact["added_volume"] + exact["removed_volume"] < _EXACT_VOL_TOL:
+        warnings.append(
+            f"the mesh detector flagged {len(regions)} changed region(s) but the exact boolean nets "
+            "~0 added/removed volume — likely tessellation noise the detector over-fired on, or a "
+            "purely tangential rearrangement; treat as effectively unchanged."
+        )
+    return _result(exact["displacement"], "exact_boolean", exact)
 
 
 def main(a_step: str, b_step: str, out_json: str, eps: str, budget_s: str = "0") -> None:
@@ -372,14 +407,24 @@ def main(a_step: str, b_step: str, out_json: str, eps: str, budget_s: str = "0")
 
     t0 = time.monotonic()
     deadline = t0 + float(budget_s) if float(budget_s) > 0 else None
+
+    def _persist(r: dict) -> None:
+        with open(out_json, "w") as f:
+            json.dump(r, f)
+
     try:
+        # _persist runs as on_mesh_ready (writes the mesh estimate before the boolean),
+        # so a hard kill mid-boolean leaves that flagged result on disk to salvage.
         result = compare_shapes(
-            import_step(a_step), import_step(b_step), float(eps), deadline=deadline
+            import_step(a_step),
+            import_step(b_step),
+            float(eps),
+            deadline=deadline,
+            on_mesh_ready=_persist,
         )
     except Exception as exc:  # noqa: BLE001 - convert worker failures to structured JSON
         result = {"error": f"{type(exc).__name__}: {exc}"}
-    with open(out_json, "w") as f:
-        json.dump(result, f)
+    _persist(result)
 
 
 if __name__ == "__main__":

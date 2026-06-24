@@ -16,10 +16,18 @@ _COMPARE_MIN_S = 10
 _SURFACE_EPS_MM = 0.0
 
 
-def _surface_compare_in_process(sa, sb) -> dict:
+def _read_json(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _surface_compare_in_process(sa, sb, deadline=None) -> dict:
     from build123d_mcp._shape_compare_subprocess import compare_shapes
 
-    return compare_shapes(sa, sb, _SURFACE_EPS_MM)
+    return compare_shapes(sa, sb, _SURFACE_EPS_MM, deadline=deadline)
 
 
 def _surface_compare_bounded(session, sa, sb) -> dict:
@@ -64,6 +72,16 @@ def _surface_compare_bounded(session, sa, sb) -> dict:
                 timeout=remaining,
             )
         except subprocess.TimeoutExpired:
+            # The worker persists the mesh-estimate result BEFORE the exact boolean, so
+            # if the boolean overran and got killed, salvage that flagged result rather
+            # than discard the whole comparison.
+            salvaged = _read_json(out_json)
+            if salvaged is not None and "region_count" in salvaged:
+                salvaged.setdefault("warnings", []).append(
+                    "exact boolean magnitude timed out and was stopped; the surface result above is "
+                    "the mesh estimate — use the volume/bbox deltas for magnitude."
+                )
+                return salvaged
             return {
                 "error": (
                     "surface comparison exceeded the time budget -- the parts are too "
@@ -73,8 +91,9 @@ def _surface_compare_bounded(session, sa, sb) -> dict:
             }
         except OSError:
             # Host blocks child-process creation (#143 / InProcessSession): run
-            # in-process because there is no worker op-timeout to protect there.
-            return _surface_compare_in_process(sa, sb)
+            # in-process. There is no worker op-timeout there, so pass a soft deadline
+            # so the worker self-skips the exact boolean if it would run long.
+            return _surface_compare_in_process(sa, sb, deadline=t0 + remaining)
 
         if proc.returncode != 0 or not os.path.exists(out_json):
             return {"error": "surface comparison subprocess failed: " + (proc.stderr or "")[-300:]}
