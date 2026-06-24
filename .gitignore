@@ -6,3 +6,6 @@ __pycache__/
 dist/
 build/
 .venv/
+
+# adversarial-review scratch outputs (must never be committed)
+res_*.txt

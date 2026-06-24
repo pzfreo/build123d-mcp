@@ -1,6 +1,0 @@
-reversed 1 cylindrical bore-wall face(s)
-gate passes (before): False
-RECOVER OUTPUT:
-Recovery: PASS — already valid, no recovery needed.
-{"status": "already_valid"}
-object replaced? False

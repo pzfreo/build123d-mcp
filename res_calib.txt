@@ -1,2 +1,0 @@
-fixture217: diag=193.167 eps=1.9317
-bore-fill: dev=16.3027 eps=1.0000 lin=0.2500

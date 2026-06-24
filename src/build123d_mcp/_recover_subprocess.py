@@ -23,14 +23,34 @@ satisfy: *no surface point moved more than ε*. The removed bore wall sits ~12 m
 from the nearest surface of the filled solid, so it is caught; a faithful sliver
 defeature moves the surface sub-millimetre, so it passes.
 
-The deviation is computed by sampling both surfaces densely (triangulation nodes
-+ triangle centroids, so planar-face interiors are covered, not just corners) and
-taking the max over both directions of each sample's nearest-neighbour distance
-to the other surface (a KD-tree over the point sets — fast even for ~100k
-points). Point-to-sample distance can only over-state the true distance, so the
+The deviation is computed by sampling both surfaces (triangulation nodes +
+triangle centroids) and taking the max over both directions of each sample's
+nearest-neighbour distance to the other surface (a KD-tree over the point sets —
+fast). Point-to-sample distance can only over-state the true distance, so the
 guard never under-reports a distortion. The whole computation runs inside the
 parent's hard time bound, so on a part too large to check in budget the
 subprocess is simply killed and recover() FAILs with the geometry untouched.
+
+What it does and does not catch (measured, fixtures + synthetics):
+* Gross distortions are caught with a wide margin — a filled Ø16 bore reads
+  ~16 mm and a filled Ø4 *through*-bore ~30 mm (the wall's distance to the
+  nearest remaining surface), versus a faithful defeature at ~0.5–1.2 mm on
+  fixture 217. The reviewer-suspected "small through-bore slips under ε" does not
+  reproduce: a through-feature's wall is *far* from any remaining surface, so its
+  deviation is large regardless of bore diameter.
+* The bound is on surface *displacement*, ε = max(1 mm, 1% of the diagonal). A
+  feature whose removal displaces the surface by less than ε (a shallow blind
+  pocket a few tenths deep on a large part) is within tolerance *by design* — a
+  surface-distance metric cannot distinguish "healed a small defect" from
+  "removed a small feature", since both move the surface by the same little.
+* It is deliberately *not* paired with a topology check: a faithful defeature
+  changes the solid's Euler characteristic too (χ shifts by 3 on fixture 217), so
+  χ / shell / genus counts cannot separate a faithful heal from a distorting one
+  and would false-reject the real fixtures.
+* On a large *planar* face the node+centroid sampling is sparse, so a heal that
+  re-triangulates such a face is *over*-reported (any geometry change perturbs the
+  mesh) — conservative, the safe direction: it can over-reject a faithful heal
+  (which then FAILs untouched and the agent rebuilds), never accept a distortion.
 """
 
 import json

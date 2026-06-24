@@ -1,4 +1,0 @@
-L=100: diag=173.2 eps=1.732  -> a real 1.65mm feature would be ACCEPTED as 'faithful'
-L=200: diag=346.4 eps=3.464  -> a real 3.29mm feature would be ACCEPTED as 'faithful'
-L=400: diag=692.8 eps=6.928  -> a real 6.58mm feature would be ACCEPTED as 'faithful'
-L=800: diag=1385.6 eps=13.856  -> a real 13.16mm feature would be ACCEPTED as 'faithful'

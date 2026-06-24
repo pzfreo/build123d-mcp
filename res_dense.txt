@@ -1,8 +1,0 @@
-side-bump H=2.0 r=1.0: dev=16.9082 eps=1.7437 true=16.4647 -> reject
-side-bump H=5.0 r=1.0: dev=18.0102 eps=1.7614 true=17.0940 -> reject
-side-bump H=2.0 r=2.0: dev=16.6306 eps=1.7437 true=16.1276 -> reject
-side-bump H=5.0 r=2.0: dev=17.7986 eps=1.7614 true=16.7696 -> reject
-side-bump H=2.0 r=4.0: dev=15.9546 eps=1.7437 true=15.4746 -> reject
-side-bump H=5.0 r=4.0: dev=17.0020 eps=1.7614 true=16.1425 -> reject
-side-dent d=2.0: dev=16.5415 eps=1.7321 true=16.1227 -> reject
-side-dent d=5.0: dev=16.8518 eps=1.7321 true=16.7578 -> reject
