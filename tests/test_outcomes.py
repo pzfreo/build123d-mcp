@@ -527,10 +527,31 @@ def test_shape_compare_reports_local_surface_deviation(session):
         "show(base + Pos(6, 0, 7) * Box(8, 8, 8), 'b')",
     )
     data = json.loads(shape_compare(session, "a", "b"))
+    # Exact boolean magnitude: the boss slid 6mm, so displacement ~6mm, and equal
+    # material is added (new position) and removed (old position).
+    assert data["magnitude_method"] == "exact_boolean"
     assert data["max_deviation"] == pytest.approx(6.0, abs=0.35)
-    assert data["changed"]["moved_fraction"] > 0
+    assert data["changed"]["added_volume"] > 0 and data["changed"]["removed_volume"] > 0
     assert data["changed"]["bbox"] is not None
     assert data["unchanged_elsewhere"] is True
+
+
+def test_shape_compare_exact_magnitude_growth(session):
+    """A pure boss-height increase: exact boolean reports material ADDED, none removed,
+    and the displacement equals the height change — not the inflated vertex-NN distance."""
+    from build123d_mcp.tools.shape_compare import shape_compare
+
+    execute_code(
+        session,
+        "base = Box(60, 30, 6)\n"
+        "show(base + Pos(0, 0, 7) * Box(8, 8, 8), 'a')\n"
+        "show(base + Pos(0, 0, 8) * Box(8, 8, 10), 'b')",  # top 11 -> 13 mm: +2 mm
+    )
+    data = json.loads(shape_compare(session, "a", "b"))
+    assert data["magnitude_method"] == "exact_boolean"
+    assert data["max_deviation"] == pytest.approx(2.0, abs=0.2)
+    assert data["changed"]["added_volume"] == pytest.approx(128.0, rel=0.1)  # 8*8*2
+    assert data["changed"]["removed_volume"] == 0.0  # pure growth, nothing removed
 
 
 def test_shape_compare_flags_change_elsewhere(session):
@@ -544,8 +565,9 @@ def test_shape_compare_flags_change_elsewhere(session):
         "show(base + Pos(25, 0, 7) * Box(6, 6, 8), 'b')",
     )
     data = json.loads(shape_compare(session, "a", "b"))
-    assert data["max_deviation"] > 10
+    # Two separate bosses removed/added -> regions span the part -> not localized.
     assert data["unchanged_elsewhere"] is False
+    assert data["changed"]["added_volume"] > 0 and data["changed"]["removed_volume"] > 0
 
 
 def test_shape_compare_reexport_noop_is_clean(session, tmp_path):

@@ -57,6 +57,7 @@ def _surface_compare_bounded(session, sa, sb) -> dict:
                     b_step,
                     out_json,
                     repr(_SURFACE_EPS_MM),
+                    repr(remaining),
                 ],
                 capture_output=True,
                 text=True,
@@ -122,17 +123,20 @@ def shape_compare(session, object_a: str, object_b: str) -> str:
         },
         "surface_deviation": surface,
         "max_deviation": surface.get("max_deviation"),
+        "magnitude_method": surface.get("magnitude_method"),
         "changed": surface.get("changed"),
         "regions": surface.get("regions"),
         "unchanged_elsewhere": surface.get("unchanged_elsewhere"),
         "warnings": surface.get("warnings"),
         "note": (
-            "Surface deviation compares object_a to object_b, not to a reference answer. "
-            "For editing, verify that the localized changed region(s) match the requested "
-            "feature and magnitude; do not minimise max_deviation as a score. IMPORTANT: a "
-            "TANGENTIAL feature move (e.g. sliding a hole sideways) produces ~zero surface "
-            "deviation and reads as no change here — for move/relocation edits confirm with "
-            "the volume/bbox/center deltas above and feature positions (find_holes), not this."
+            "Compares object_a to object_b, not to a reference answer. max_deviation is the "
+            "EXACT surface displacement (boolean-measured) when magnitude_method='exact_boolean'; "
+            "changed.added_volume/removed_volume give the exact material added/removed. For editing, "
+            "verify the changed region(s), displacement, and add/remove volumes match the request. "
+            "IMPORTANT: a TANGENTIAL feature move (sliding a hole) and a sub-resolution edit on a very "
+            "large part produce no detected region — 'unchanged' then means 'no change above the "
+            "detection floor', NOT a guarantee; cross-check the volume/bbox/center deltas and "
+            "find_holes for those."
         ),
     }
 

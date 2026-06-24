@@ -22,8 +22,14 @@ from __future__ import annotations
 import json
 import math
 import sys
+import time
 from collections import deque
 from typing import Any
+
+# Headroom (s) the exact boolean needs after tessellation; if less than this remains
+# of the op budget, skip it and report the (flagged) mesh estimate instead of risking
+# a hard subprocess kill that would lose the whole result.
+_BOOL_RESERVE_S = 25.0
 
 # eps (the per-vertex "this point moved" threshold) = factor x mesh deflection,
 # placed above the independent-tessellation noise floor. Deflection is diag*1e-3
@@ -132,13 +138,105 @@ def _regions(
     return out
 
 
-def compare_shapes(shape_a: Any, shape_b: Any, eps: float = 0.0) -> dict:
-    """Symmetric vertex-sampled surface diff, localized to significant changed regions.
+_EXACT_VOL_TOL = 1.0  # mm^3 — ignore boolean slivers below this
+
+
+def _chunk_displacement(chunk: Any, ref_solid: Any) -> float:
+    """Max distance from a difference chunk's vertices to the reference solid — i.e.
+    how far the surface actually moved (exact, no vertex-NN flat-face inflation)."""
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+    from OCP.TopAbs import TopAbs_VERTEX
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    e = TopExp_Explorer(chunk, TopAbs_VERTEX)
+    seen: set = set()
+    mx = 0.0
+    while e.More():
+        v = TopoDS.Vertex_s(e.Current())
+        p = BRep_Tool.Pnt_s(v)
+        key = (round(p.X(), 3), round(p.Y(), 3), round(p.Z(), 3))
+        if key not in seen:
+            seen.add(key)
+            d = BRepExtrema_DistShapeShape(v, ref_solid)
+            if d.IsDone():
+                mx = max(mx, d.Value())
+        e.Next()
+    return mx
+
+
+def _exact_region_magnitude(
+    shape_a: Any, shape_b: Any, regions: list, margin: float = 3.0
+) -> dict | None:
+    """Exact boolean diff in the located region(s): true added/removed VOLUME and
+    surface DISPLACEMENT, with no vertex-NN inflation. Clipping to the (tight) region
+    keeps the boolean inside budget even on huge parts. Returns None if the boolean
+    fails (caller keeps the mesh estimate)."""
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut
+    from OCP.BRepGProp import BRepGProp
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+    from OCP.GProp import GProp_GProps
+
+    pts = [c for r in regions for c in r["bbox"]]
+    mn = [min(p[k] for p in pts) - margin for k in range(3)]
+    mx = [max(p[k] for p in pts) + margin for k in range(3)]
+    try:
+        box = BRepPrimAPI_MakeBox(gp_Pnt(*mn), gp_Pnt(*mx)).Shape()
+        cA = BRepAlgoAPI_Common(shape_a.wrapped, box)
+        cA.Build()
+        cB = BRepAlgoAPI_Common(shape_b.wrapped, box)
+        cB.Build()
+        if not cA.IsDone() or not cB.IsDone():
+            return None
+        rem = BRepAlgoAPI_Cut(cA.Shape(), cB.Shape())  # material in A not B = removed
+        rem.Build()
+        add = BRepAlgoAPI_Cut(cB.Shape(), cA.Shape())  # material in B not A = added
+        add.Build()
+        if not rem.IsDone() or not add.IsDone():
+            return None
+    except Exception:  # noqa: BLE001 - boolean failure → fall back to mesh estimate
+        return None
+
+    def _vol(s: Any) -> float:
+        g = GProp_GProps()
+        BRepGProp.VolumeProperties_s(s, g)
+        return g.Mass()
+
+    def _ctr(s: Any) -> list[float]:
+        g = GProp_GProps()
+        BRepGProp.VolumeProperties_s(s, g)
+        c = g.CentreOfMass()
+        return [round(c.X(), 3), round(c.Y(), 3), round(c.Z(), 3)]
+
+    rv, av = _vol(rem.Shape()), _vol(add.Shape())
+    disp = 0.0
+    if av > _EXACT_VOL_TOL:
+        disp = max(disp, _chunk_displacement(add.Shape(), shape_a.wrapped))
+    if rv > _EXACT_VOL_TOL:
+        disp = max(disp, _chunk_displacement(rem.Shape(), shape_b.wrapped))
+    return {
+        "added_volume": round(av, 2),
+        "removed_volume": round(rv, 2),
+        "added_centroid": _ctr(add.Shape()) if av > _EXACT_VOL_TOL else None,
+        "removed_centroid": _ctr(rem.Shape()) if rv > _EXACT_VOL_TOL else None,
+        "displacement": round(disp, 4),
+    }
+
+
+def compare_shapes(
+    shape_a: Any, shape_b: Any, eps: float = 0.0, deadline: float | None = None
+) -> dict:
+    """Symmetric vertex-sampled surface diff, localized to significant changed regions,
+    with an EXACT boolean magnitude in each region.
 
     eps<=0 (the default) auto-scales the move threshold to the mesh deflection. This
     is model-vs-input EDIT VERIFICATION, not a score: a true no-op reads
     max_deviation~0, and a tangential feature move (sliding a hole) is invisible to a
     surface-distance metric — see the warning emitted when no region is found.
+    deadline (monotonic time): if set and too little remains after tessellation, the
+    exact boolean is skipped for the (flagged) mesh estimate.
     """
     from scipy.spatial import cKDTree
 
@@ -225,13 +323,42 @@ def compare_shapes(shape_a: Any, shape_b: Any, eps: float = 0.0) -> dict:
             "the changed regions are spread across the part, not confined to one area — the edit may "
             "have touched more than the requested feature; verify nothing unintended moved."
         )
+
+    # Exact magnitude: an EXACT boolean diff clipped to the located region(s) replaces
+    # the vertex-NN deviation, which inflates 10-100x on flat faces. Clipping to the
+    # tight region keeps it in budget even on huge parts; fall back to the mesh
+    # estimate (clearly flagged) only if the boolean fails.
+    skip_exact = deadline is not None and time.monotonic() > deadline - _BOOL_RESERVE_S
+    exact = None if skip_exact else _exact_region_magnitude(shape_a, shape_b, regions)
+    if exact is not None:
+        magnitude = exact["displacement"]
+        magnitude_method = "exact_boolean"
+    else:
+        magnitude = primary["max_deviation"]
+        magnitude_method = "mesh_estimate"
+        why = (
+            "skipped (insufficient op budget after tessellation)"
+            if skip_exact
+            else "unavailable (boolean failed)"
+        )
+        warnings.append(
+            f"exact boolean magnitude {why}; max_deviation is a vertex-mesh estimate that can "
+            "overstate the true surface displacement on flat faces — cross-check the volume/bbox deltas."
+        )
+
     return {
         **base,
+        "max_deviation": round(magnitude, 4),
+        "magnitude_method": magnitude_method,
         "changed": {
             "centroid": primary["centroid"],
             "bbox": primary["bbox"],
-            "local_max_deviation": primary["max_deviation"],
+            "local_max_deviation": round(magnitude, 4),
             "moved_fraction": moved_fraction,
+            "added_volume": exact["added_volume"] if exact else None,
+            "removed_volume": exact["removed_volume"] if exact else None,
+            "added_centroid": exact["added_centroid"] if exact else None,
+            "removed_centroid": exact["removed_centroid"] if exact else None,
         },
         "regions": regions[:5],
         "region_count": len(regions),
@@ -240,11 +367,15 @@ def compare_shapes(shape_a: Any, shape_b: Any, eps: float = 0.0) -> dict:
     }
 
 
-def main(a_step: str, b_step: str, out_json: str, eps: str) -> None:
+def main(a_step: str, b_step: str, out_json: str, eps: str, budget_s: str = "0") -> None:
     from build123d import import_step
 
+    t0 = time.monotonic()
+    deadline = t0 + float(budget_s) if float(budget_s) > 0 else None
     try:
-        result = compare_shapes(import_step(a_step), import_step(b_step), float(eps))
+        result = compare_shapes(
+            import_step(a_step), import_step(b_step), float(eps), deadline=deadline
+        )
     except Exception as exc:  # noqa: BLE001 - convert worker failures to structured JSON
         result = {"error": f"{type(exc).__name__}: {exc}"}
     with open(out_json, "w") as f:
@@ -252,4 +383,4 @@ def main(a_step: str, b_step: str, out_json: str, eps: str) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4])
+    main(*sys.argv[1:6])
