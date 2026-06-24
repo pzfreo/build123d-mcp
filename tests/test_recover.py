@@ -321,6 +321,27 @@ def test_recover_store_as_does_not_hijack_current_shape(session, monkeypatch):
     assert session.current_shape is current_before  # NOT hijacked
 
 
+def test_recover_in_place_updates_current_shape(session, monkeypatch):
+    """An in-place overwrite (store_as == object_name, or no store_as) makes the
+    healed solid current — current_shape must not be left pointing at the old,
+    now-replaced instance."""
+    from build123d import export_step
+
+    execute_code(session, "show(Box(10, 10, 10), 'part')")
+    old = session.objects["part"]
+    session.current_shape = old
+
+    recover_mod, fake_run = _fake_recovered_run(
+        lambda out_step: export_step(Box(10, 10, 10).solid(), out_step)
+    )
+    monkeypatch.setattr(recover_mod.subprocess, "run", fake_run)
+
+    out = recover(session, "part", store_as="part")
+    assert out.startswith("Recovery: PASS")
+    assert session.objects["part"] is not old  # replaced in place
+    assert session.current_shape is session.objects["part"]  # follows, not stale
+
+
 def test_recover_refuses_compound_with_free_faces(session):
     """A 1-solid Compound that also carries free faces/PMI is refused, not silently
     stripped down to the bare solid on PASS."""

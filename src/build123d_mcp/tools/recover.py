@@ -21,12 +21,13 @@ Two safety properties, both required:
   to a path the agent can import on a fresh op).
 * **It never distorts the geometry.** A heal is accepted only if it passes the
   gate AND the **surface-deviation (Hausdorff) distance** between the input and
-  the healed solid stays under ``max(1 mm, 0.5% of the diagonal)`` — no surface
-  point moved more than that. This catches the loss of an internal feature (a
-  filled-in bore moves its wall ~12 mm) that a bbox or signed-volume proxy is
-  blind to. Anything that distorts the part beyond a defective sliver is refused.
-  So recover() either returns a faithful valid solid or fails and leaves the
-  original exactly as it was.
+  the healed solid stays under ``min(max(1 mm, 1% of the diagonal), 3 mm)`` — no
+  surface point moved more than that. This catches the loss of an internal feature
+  (a filled-in bore moves its wall ~16 mm) that a bbox or signed-volume proxy is
+  blind to. Anything that distorts the part beyond that tolerance is refused. So
+  recover() either returns a faithful valid solid or fails and leaves the original
+  exactly as it was. (See :mod:`build123d_mcp._recover_subprocess` for the
+  guard's measured limits — notably a sub-ε feature can still be lost.)
 
 The actual healing + gating runs in :mod:`build123d_mcp._recover_subprocess`;
 this module is the in-worker orchestrator that bounds it and re-registers the
@@ -99,7 +100,7 @@ def recover(session, object_name: str = "", store_as: str = "") -> str:
     Runs ShapeFix → defeature OUT OF PROCESS (hard-bounded by the op budget so it
     can never block the worker) and keeps the first variant that passes the exact
     gate on the reimported STEP AND preserves the geometry (surface-deviation /
-    Hausdorff bound — no point moves more than max(1 mm, 0.5% of the diagonal)).
+    Hausdorff bound — no point moves more than min(max(1 mm, 1% of the diagonal), 3 mm)).
     On PASS the healed solid is re-registered; on FAIL (or timeout) the original
     is left exactly as it was. Requires a single solid. object_name: named object from show()
     (default: current shape). store_as: name to register the healed solid under
@@ -236,9 +237,11 @@ def recover(session, object_name: str = "", store_as: str = "") -> str:
             if dest:
                 session.objects[dest] = healed
             # Update the current shape only when the heal targets it (no object_name)
-            # or overwrites the source in place — not when store_as redirects the
-            # result to a different named object the user didn't ask to make current.
-            if not store_as or not object_name:
+            # or lands on the same object we resolved (in-place overwrite) — not when
+            # store_as redirects the result to a *different* named object the user
+            # didn't ask to make current. (dest == object_name covers both the
+            # default overwrite and an explicit store_as equal to the source.)
+            if not object_name or dest == object_name:
                 session.current_shape = healed
             where = f"'{dest}'" if dest else "the current shape"
             return (

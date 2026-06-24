@@ -38,11 +38,17 @@ What it does and does not catch (measured, fixtures + synthetics):
   fixture 217. The reviewer-suspected "small through-bore slips under ε" does not
   reproduce: a through-feature's wall is *far* from any remaining surface, so its
   deviation is large regardless of bore diameter.
-* The bound is on surface *displacement*, ε = max(1 mm, 1% of the diagonal). A
-  feature whose removal displaces the surface by less than ε (a shallow blind
-  pocket a few tenths deep on a large part) is within tolerance *by design* — a
-  surface-distance metric cannot distinguish "healed a small defect" from
-  "removed a small feature", since both move the surface by the same little.
+* The bound is on surface *displacement*, ε = min(max(1 mm, 1% of the diagonal),
+  3 mm). A feature whose removal displaces every surface point by less than ε is
+  within tolerance *by design* — a surface-distance metric cannot distinguish
+  "healed a small defect" from "removed a small feature", since both move the
+  surface by the same little. Note this is bounded by the feature's distance to
+  the *nearest retained* surface, not its depth: a counterbore/spotface over a
+  retained through-hole moves only ≈√(annular-gap² + depth²) ≈ a few mm (the hole
+  wall is the nearby surface), so the 3 mm cap exists to refuse a standard
+  cap-screw counterbore on a large part rather than let ε grow past it. Features
+  smaller than the cap can still be lost — that window is irreducible for a pure
+  surface-distance guard (a topology check cannot close it; see below).
 * It is deliberately *not* paired with a topology check: a faithful defeature
   changes the solid's Euler characteristic too (χ shifts by 3 on fixture 217), so
   χ / shell / genus counts cannot separate a faithful heal from a distorting one
@@ -78,13 +84,20 @@ from build123d_mcp.tools.validate import _gate_report
 
 # Accept a heal only if no surface point moved more than this. Absolute floor for
 # small parts; relative term (fraction of the bbox diagonal) scales it up for
-# large ones. Tuned against the benchmark: a faithful defeature genuinely extends
-# the neighbour faces to close the gap left by the removed defect (≈1.1 mm of
-# surface movement on fixture 217, diag 193 mm → ε≈1.93 mm, passes), while losing
-# a real internal feature moves the surface far more (a filled Ø16 bore ≈16 mm,
-# refused) — a wide margin between the two.
+# large ones; absolute CAP so it cannot grow without bound on a big part. Tuned
+# against the benchmark: a faithful defeature genuinely extends the neighbour
+# faces to close the gap left by the removed defect (≈1.1 mm of surface movement
+# on fixture 217, diag 193 mm → ε≈1.93 mm, passes), while losing a real internal
+# feature moves the surface far more (a filled Ø16 bore ≈16 mm, refused). The cap
+# bounds the danger window on large parts: without it, ε on a ≥600 mm part exceeds
+# the ~6 mm a standard cap-screw counterbore moves the surface, so defeaturing a
+# real counterbore would read as faithful; capping ε at 3 mm refuses that while
+# still clearing fixture 217. The residual (a feature whose removal moves every
+# surface point < ε) is the irreducible fidelity tolerance — a surface-distance
+# metric cannot tell "healed a small defect" from "removed a small feature".
 _HAUSDORFF_ABS = 1.0
 _HAUSDORFF_REL = 0.01
+_HAUSDORFF_CAP = 3.0
 
 
 def _solids(shp):
@@ -229,7 +242,7 @@ def main(in_step, out_step):
         return
 
     bb0 = _bbox6(src)
-    eps = max(_HAUSDORFF_ABS, _HAUSDORFF_REL * _diag(bb0))
+    eps = min(max(_HAUSDORFF_ABS, _HAUSDORFF_REL * _diag(bb0)), _HAUSDORFF_CAP)
     # Sample finer than the tolerance so the point-to-sample over-statement stays
     # well under ε and a faithful heal is not falsely rejected.
     lin = max(0.2, 0.25 * eps)
