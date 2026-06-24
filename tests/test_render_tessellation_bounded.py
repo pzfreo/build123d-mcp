@@ -18,7 +18,9 @@ from build123d_mcp.tools.render import _tessellate_shapes_bounded
 
 def test_tessellate_bounded_returns_mesh():
     """A normal shape tessellates via the subprocess and comes back as a mesh."""
-    meshes, failed = _tessellate_shapes_bounded([("box", Box(10, 10, 10), None)], render._QUALITY["standard"])
+    meshes, failed = _tessellate_shapes_bounded(
+        [("box", Box(10, 10, 10), None)], render._QUALITY["standard"]
+    )
     assert failed == []
     assert "box" in meshes
     verts, tris = meshes["box"]
@@ -30,7 +32,9 @@ def test_tessellate_bounded_timeout_is_graceful(monkeypatch):
     subprocess is killed) — it does NOT propagate as a hang / worker SIGKILL."""
 
     def _timeout(*args, **kwargs):
-        raise subprocess.TimeoutExpired(cmd=args[0] if args else "tessellate", timeout=render._TESS_BUDGET_S)
+        raise subprocess.TimeoutExpired(
+            cmd=args[0] if args else "tessellate", timeout=render._TESS_BUDGET_S
+        )
 
     monkeypatch.setattr(subprocess, "run", _timeout)
     with pytest.raises(RuntimeError, match="tessellation budget"):

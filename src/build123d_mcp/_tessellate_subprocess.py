@@ -18,7 +18,9 @@ import pickle
 import sys
 
 
-def main(manifest_path: str, out_path: str, linear_deflection: str, angular_deflection: str) -> None:
+def main(
+    manifest_path: str, out_path: str, linear_deflection: str, angular_deflection: str
+) -> None:
     from build123d import import_step
 
     lin = float(linear_deflection)

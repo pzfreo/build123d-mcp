@@ -438,11 +438,17 @@ def _tessellate_shapes_bounded(shapes, tess) -> tuple[dict, list[str]]:
         try:
             proc = subprocess.run(
                 [
-                    sys.executable, "-m", "build123d_mcp._tessellate_subprocess",
-                    man_path, out_pkl,
-                    repr(tess["linear_deflection"]), repr(tess["angular_deflection"]),
+                    sys.executable,
+                    "-m",
+                    "build123d_mcp._tessellate_subprocess",
+                    man_path,
+                    out_pkl,
+                    repr(tess["linear_deflection"]),
+                    repr(tess["angular_deflection"]),
                 ],
-                capture_output=True, text=True, timeout=_TESS_BUDGET_S,
+                capture_output=True,
+                text=True,
+                timeout=_TESS_BUDGET_S,
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
