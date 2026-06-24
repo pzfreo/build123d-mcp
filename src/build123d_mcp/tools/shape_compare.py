@@ -27,7 +27,9 @@ def _read_json(path):
 def _surface_compare_in_process(sa, sb, deadline=None) -> dict:
     from build123d_mcp._shape_compare_subprocess import compare_shapes
 
-    return compare_shapes(sa, sb, _SURFACE_EPS_MM, deadline=deadline)
+    # In-process (host blocks subprocesses) there is NO op-timeout to kill a runaway
+    # boolean, so never run it here — mesh estimate only (allow_exact=False).
+    return compare_shapes(sa, sb, _SURFACE_EPS_MM, deadline=deadline, allow_exact=False)
 
 
 def _surface_compare_bounded(session, sa, sb) -> dict:

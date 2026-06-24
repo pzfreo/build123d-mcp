@@ -30,13 +30,11 @@ from typing import Any
 # of the op budget, skip it and report the (flagged) mesh estimate instead of risking
 # a hard subprocess kill that would lose the whole result.
 _BOOL_RESERVE_S = 25.0
-# Skip the exact boolean when the changed region's clip box spans more than this
-# fraction of the part diagonal AND the part is large enough for that to be slow:
-# boolean cost scales with clip-box size, so a spread or large-extent edit on a big
-# part overruns the op budget. Such edits fall back to the (flagged) mesh estimate.
-# Small parts are fast regardless of spread, so the gate ignores them.
-_MAX_CLIP_DIAG_FRAC = 0.35
-_MIN_DIAG_FOR_CLIP_GATE = 300.0
+# Skip the exact boolean when the changed region's clip box is wider than this (mm).
+# Boolean cost scales with ABSOLUTE clip-box size (not a fraction of the part — a
+# 291mm part with a 198mm clip took 360s), so a spread or large-extent edit falls
+# back to the (flagged) mesh estimate. Localized edits (tight clip) still run exact.
+_MAX_CLIP_ABS_MM = 150.0
 
 # eps (the per-vertex "this point moved" threshold) = factor x mesh deflection,
 # placed above the independent-tessellation noise floor. Deflection is diag*1e-3
@@ -186,9 +184,23 @@ def _exact_region_magnitude(
     from OCP.gp import gp_Pnt
     from OCP.GProp import GProp_GProps
 
+    def _vol(s: Any) -> float:
+        g = GProp_GProps()
+        BRepGProp.VolumeProperties_s(s, g)
+        return g.Mass()
+
+    def _ctr(s: Any) -> list[float]:
+        g = GProp_GProps()
+        BRepGProp.VolumeProperties_s(s, g)
+        c = g.CentreOfMass()
+        return [round(c.X(), 3), round(c.Y(), 3), round(c.Z(), 3)]
+
     pts = [c for r in regions for c in r["bbox"]]
     mn = [min(p[k] for p in pts) - margin for k in range(3)]
     mx = [max(p[k] for p in pts) + margin for k in range(3)]
+    # The WHOLE computation (boolean + volume + displacement) is guarded: any failure
+    # returns None so the caller keeps the already-persisted mesh-estimate salvage —
+    # a post-boolean raise must not discard what a timeout would keep.
     try:
         box = BRepPrimAPI_MakeBox(gp_Pnt(*mn), gp_Pnt(*mx)).Shape()
         cA = BRepAlgoAPI_Common(shape_a.wrapped, box)
@@ -203,33 +215,21 @@ def _exact_region_magnitude(
         add.Build()
         if not rem.IsDone() or not add.IsDone():
             return None
-    except Exception:  # noqa: BLE001 - boolean failure → fall back to mesh estimate
+        rv, av = _vol(rem.Shape()), _vol(add.Shape())
+        disp = 0.0
+        if av > _EXACT_VOL_TOL:
+            disp = max(disp, _chunk_displacement(add.Shape(), shape_a.wrapped))
+        if rv > _EXACT_VOL_TOL:
+            disp = max(disp, _chunk_displacement(rem.Shape(), shape_b.wrapped))
+        return {
+            "added_volume": round(av, 2),
+            "removed_volume": round(rv, 2),
+            "added_centroid": _ctr(add.Shape()) if av > _EXACT_VOL_TOL else None,
+            "removed_centroid": _ctr(rem.Shape()) if rv > _EXACT_VOL_TOL else None,
+            "displacement": round(disp, 4),
+        }
+    except Exception:  # noqa: BLE001 - any failure → fall back to (salvaged) mesh estimate
         return None
-
-    def _vol(s: Any) -> float:
-        g = GProp_GProps()
-        BRepGProp.VolumeProperties_s(s, g)
-        return g.Mass()
-
-    def _ctr(s: Any) -> list[float]:
-        g = GProp_GProps()
-        BRepGProp.VolumeProperties_s(s, g)
-        c = g.CentreOfMass()
-        return [round(c.X(), 3), round(c.Y(), 3), round(c.Z(), 3)]
-
-    rv, av = _vol(rem.Shape()), _vol(add.Shape())
-    disp = 0.0
-    if av > _EXACT_VOL_TOL:
-        disp = max(disp, _chunk_displacement(add.Shape(), shape_a.wrapped))
-    if rv > _EXACT_VOL_TOL:
-        disp = max(disp, _chunk_displacement(rem.Shape(), shape_b.wrapped))
-    return {
-        "added_volume": round(av, 2),
-        "removed_volume": round(rv, 2),
-        "added_centroid": _ctr(add.Shape()) if av > _EXACT_VOL_TOL else None,
-        "removed_centroid": _ctr(rem.Shape()) if rv > _EXACT_VOL_TOL else None,
-        "displacement": round(disp, 4),
-    }
 
 
 def compare_shapes(
@@ -238,6 +238,7 @@ def compare_shapes(
     eps: float = 0.0,
     deadline: float | None = None,
     on_mesh_ready: Any = None,
+    allow_exact: bool = True,
 ) -> dict:
     """Symmetric vertex-sampled surface diff, localized to significant changed regions,
     with an EXACT boolean magnitude in each region.
@@ -372,14 +373,15 @@ def compare_shapes(
         [min(p[k] for p in union) for k in range(3)],
         [max(p[k] for p in union) for k in range(3)],
     )
-    too_wide = diag > _MIN_DIAG_FOR_CLIP_GATE and clip_diag > diag * _MAX_CLIP_DIAG_FRAC
+    too_wide = clip_diag > _MAX_CLIP_ABS_MM
     low_budget = deadline is not None and time.monotonic() > deadline - _BOOL_RESERVE_S
-    if too_wide or low_budget:
-        why = (
-            "the change spans a large/spread region"
-            if too_wide
-            else "insufficient op budget after tessellation"
-        )
+    if not allow_exact or too_wide or low_budget:
+        if not allow_exact:
+            why = "running in-process, where no op-timeout can bound the exact boolean"
+        elif too_wide:
+            why = "the change spans a large/spread region"
+        else:
+            why = "insufficient op budget after tessellation"
         warnings.append(
             f"exact boolean magnitude skipped ({why}); max_deviation is a vertex-mesh estimate that "
             "can overstate displacement on flat faces — use the volume/bbox deltas for magnitude."

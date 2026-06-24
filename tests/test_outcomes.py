@@ -603,20 +603,85 @@ def test_shape_compare_budget_skip_falls_back_to_mesh(session):
     assert any("skipped" in w for w in r["warnings"])
 
 
-def test_shape_compare_skips_boolean_on_large_spread_edit(session):
-    """A spread edit on a LARGE part skips the exact boolean (its clip would span the
-    part and overrun the budget) and returns the flagged mesh estimate."""
+def test_shape_compare_skips_boolean_on_wide_clip(session):
+    """A wide-clip (spread) edit skips the exact boolean because the boolean cost
+    scales with ABSOLUTE clip size — gated even on a sub-300mm part (the 206-class
+    that a part-size floor wrongly let run 360s)."""
     from build123d_mcp._shape_compare_subprocess import compare_shapes
 
     execute_code(
         session,
-        "base = Box(400, 40, 8)\n"
-        "show(base + Pos(-180, 0, 9) * Box(8, 8, 8), 'a')\n"
-        "show(base + Pos(180, 0, 9) * Box(8, 8, 8), 'b')",
+        "base = Box(250, 40, 8)\n"  # diag ~253mm (<300) but the two changes are ~200mm apart
+        "show(base + Pos(-100, 0, 9) * Box(8, 8, 8), 'a')\n"
+        "show(base + Pos(100, 0, 9) * Box(8, 8, 8), 'b')",
     )
     r = compare_shapes(session.objects["a"], session.objects["b"])
     assert r["magnitude_method"] == "mesh_estimate"
     assert any("spread region" in w for w in r["warnings"])
+
+
+def test_shape_compare_in_process_never_runs_boolean(session):
+    """The in-process path (subprocess-blocked host) has no op-timeout to bound a
+    runaway boolean, so it must run mesh-only (allow_exact=False)."""
+    from build123d_mcp._shape_compare_subprocess import compare_shapes
+
+    execute_code(
+        session,
+        "base = Box(60, 30, 6)\n"
+        "show(base + Pos(0, 0, 7) * Box(8, 8, 8), 'a')\n"
+        "show(base + Pos(0, 0, 8) * Box(8, 8, 10), 'b')",  # a real localized edit
+    )
+    r = compare_shapes(session.objects["a"], session.objects["b"], allow_exact=False)
+    assert r["magnitude_method"] == "mesh_estimate"
+    assert any("in-process" in w for w in r["warnings"])
+
+
+def test_shape_compare_exception_after_boolean_keeps_mesh_estimate(session, monkeypatch):
+    """If a post-boolean step raises, the comparison must fall back to the mesh
+    estimate (the salvage), not crash — a raise must not lose what a timeout keeps."""
+    import build123d_mcp._shape_compare_subprocess as scs
+    from build123d_mcp._shape_compare_subprocess import compare_shapes
+
+    execute_code(
+        session,
+        "base = Box(60, 30, 6)\n"
+        "show(base + Pos(0, 0, 7) * Box(8, 8, 8), 'a')\n"
+        "show(base + Pos(0, 0, 8) * Box(8, 8, 10), 'b')",
+    )
+
+    def _boom(*a, **k):
+        raise RuntimeError("displacement blew up")
+
+    monkeypatch.setattr(scs, "_chunk_displacement", _boom)
+    r = compare_shapes(session.objects["a"], session.objects["b"])
+    assert r["magnitude_method"] == "mesh_estimate"  # not an error, not a crash
+    assert r["region_count"] > 0
+
+
+def test_shape_compare_salvages_mesh_result_on_subprocess_timeout(session, monkeypatch, tmp_path):
+    """If the boolean overruns and the subprocess is hard-killed, the driver returns
+    the mesh-estimate result the worker persisted before the boolean — not a bare error."""
+    import subprocess
+
+    from build123d_mcp.tools.shape_compare import shape_compare
+
+    execute_code(
+        session, "show(Box(20, 10, 10), 'a')\nshow(Box(20, 10, 10) + Pos(0,0,6)*Box(4,4,4), 'b')"
+    )
+
+    def _kill(cmd, *a, **k):
+        # cmd[5] is the out_json path; the worker would have persisted the mesh result
+        # there before the boolean. Simulate that, then act like a hard timeout kill.
+        with open(cmd[5], "w") as f:
+            json.dump(
+                {"max_deviation": 4.0, "magnitude_method": "mesh_estimate", "region_count": 1}, f
+            )
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", _kill)
+    data = json.loads(shape_compare(session, "a", "b"))
+    assert data["surface_deviation"]["magnitude_method"] == "mesh_estimate"
+    assert any("timed out" in w for w in data["surface_deviation"]["warnings"])
 
 
 def test_shape_compare_reexport_noop_is_clean(session, tmp_path):
