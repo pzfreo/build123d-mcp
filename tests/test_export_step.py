@@ -54,6 +54,26 @@ def test_export_step_falls_back_when_high_level_writer_fails(session, tmp_path, 
     assert reimported.volume == pytest.approx(want_vol, rel=1e-3)
 
 
+def test_export_step_fallback_preserves_all_solids(session, tmp_path, monkeypatch):
+    """The raw-writer fallback must carry EVERY solid of a multi-solid compound,
+    not silently drop bodies — the main silent-degradation risk of the fallback."""
+    monkeypatch.chdir(tmp_path)
+    execute_code(
+        session,
+        "show(Compound(children=[Box(10, 10, 10), Pos(20, 0, 0) * Box(10, 10, 10), "
+        "Pos(40, 0, 0) * Box(10, 10, 10)]), 'asm')",
+    )
+
+    def boom(*a, **k):
+        raise RuntimeError("Failed to write STEP file")
+
+    monkeypatch.setattr("build123d.export_step", boom)
+
+    export_file(session, "out", "step", object_name="asm")
+    reimported = import_step(str(tmp_path / "out.step"))
+    assert len(reimported.solids()) == 3  # all three bodies survived the fallback
+
+
 def test_export_step_raises_clearly_when_both_writers_fail(session, tmp_path, monkeypatch):
     """If even the raw writer can't write, surface a clear combined error rather
     than a bare OCC failure."""
