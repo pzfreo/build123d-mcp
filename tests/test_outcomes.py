@@ -548,6 +548,29 @@ def test_shape_compare_flags_change_elsewhere(session):
     assert data["unchanged_elsewhere"] is False
 
 
+def test_shape_compare_reexport_noop_is_clean(session, tmp_path):
+    """A shape vs a STEP round-trip of ITSELF — same geometry, INDEPENDENTLY
+    re-tessellated — must report NO change. This guards the eps-vs-tessellation-
+    noise regression: a fixed-mm eps sat below the noise floor and fabricated a
+    multi-mm 'change' on identical geometry. Curved geometry (a cylinder wall) is
+    used so the two tessellations genuinely differ, unlike two identical Box()es."""
+    import os
+
+    from build123d_mcp.tools.export import _write_step
+    from build123d_mcp.tools.shape_compare import shape_compare
+
+    execute_code(session, "show(Cylinder(20, 30) + Box(70, 14, 30), 'orig')")
+    rt = os.path.join(tmp_path, "roundtrip.step")
+    _write_step(session.objects["orig"], rt)
+    execute_code(session, f"show(import_step({rt!r}), 'rt')")
+
+    data = json.loads(shape_compare(session, "orig", "rt"))
+    # No REAL change: region-filtered max_deviation ~0, no localized region, clean.
+    assert data["max_deviation"] < 1.0
+    assert data["changed"]["moved_fraction"] == 0.0
+    assert data["unchanged_elsewhere"] is True
+
+
 def test_shape_compare_falls_back_in_process_when_subprocess_blocked(session, monkeypatch):
     """If child process creation is blocked, surface compare still runs in-process."""
     import subprocess

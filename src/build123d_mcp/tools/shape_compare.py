@@ -10,7 +10,10 @@ from build123d_mcp.tools.measure import _center_of_mass
 
 _COMPARE_MARGIN_S = 15
 _COMPARE_MIN_S = 10
-_SURFACE_EPS_MM = 0.01
+# 0 => the worker auto-scales the move threshold to the mesh deflection. A fixed mm
+# eps is unsafe: it sits below the independent-tessellation noise floor on large
+# parts and fabricates changed regions on unchanged geometry.
+_SURFACE_EPS_MM = 0.0
 
 
 def _surface_compare_in_process(sa, sb) -> dict:
@@ -120,11 +123,16 @@ def shape_compare(session, object_a: str, object_b: str) -> str:
         "surface_deviation": surface,
         "max_deviation": surface.get("max_deviation"),
         "changed": surface.get("changed"),
+        "regions": surface.get("regions"),
         "unchanged_elsewhere": surface.get("unchanged_elsewhere"),
+        "warnings": surface.get("warnings"),
         "note": (
             "Surface deviation compares object_a to object_b, not to a reference answer. "
-            "For editing, verify that the localized changed region matches the requested "
-            "feature and magnitude; do not minimise max_deviation as a score."
+            "For editing, verify that the localized changed region(s) match the requested "
+            "feature and magnitude; do not minimise max_deviation as a score. IMPORTANT: a "
+            "TANGENTIAL feature move (e.g. sliding a hole sideways) produces ~zero surface "
+            "deviation and reads as no change here — for move/relocation edits confirm with "
+            "the volume/bbox/center deltas above and feature positions (find_holes), not this."
         ),
     }
 
