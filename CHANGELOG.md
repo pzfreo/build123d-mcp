@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.58
+
+### Fixed
+
+- **`find_hole_patterns()` no longer crashes on unrecognised pattern types.** The wrapper special-cased `BoltCircle` and assumed every other pattern was a `LinearArray`, reaching for `.pitch`/`.direction`. A `build123d_drafting` that returns a `RectGrid` (rectangular hole grid) tripped `AttributeError: 'RectGrid' object has no attribute 'pitch'`, so the agent got no bolt-pattern confirmation at all (seen across benchmark runs). `LinearArray` is now matched explicitly and any other pattern type is tagged by its (snake-cased) class name and serialised generically via its dataclass fields — forward-compatible with new pattern types and impossible to crash on a missing attribute.
+
 ## v0.3.57
 
 ### Fixed

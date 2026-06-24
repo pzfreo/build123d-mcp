@@ -6,9 +6,15 @@ run the recognition, serialise the dataclass records to JSON.
 """
 
 import json
-from dataclasses import asdict
+import re
+from dataclasses import asdict, is_dataclass
 
 from build123d_mcp.tools.measure import _resolve_shape
+
+
+def _snake(name: str) -> str:
+    """CamelCase class name -> snake_case type tag (RectGrid -> rect_grid)."""
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
 
 
 def _round(value):
@@ -39,7 +45,7 @@ def find_holes(session, object_name: str = "") -> str:
 
 def find_hole_patterns(session, object_name: str = "") -> str:
     """Recognise bolt-circle / linear-array hole patterns on a session object."""
-    from build123d_drafting import BoltCircle
+    from build123d_drafting import BoltCircle, LinearArray
     from build123d_drafting import find_hole_patterns as _find_patterns
     from build123d_drafting import find_holes as _find_holes
 
@@ -54,10 +60,18 @@ def find_hole_patterns(session, object_name: str = "") -> str:
             rec["type"] = "bolt_circle"
             rec["center"] = [round(c, 4) for c in p.center]
             rec["diameter"] = p.diameter
-        else:
+        elif isinstance(p, LinearArray):
             rec["type"] = "linear_array"
             rec["pitch"] = p.pitch
             rec["direction"] = [round(c, 4) for c in p.direction]
+        else:
+            # Forward-compatible: build123d_drafting can return other pattern
+            # types (e.g. RectGrid). Don't assume LinearArray's .pitch/.direction
+            # — tag the type and serialise its fields generically so the tool can
+            # never crash here (was: AttributeError: 'RectGrid' has no 'pitch').
+            rec["type"] = _snake(type(p).__name__)
+            if is_dataclass(p):
+                rec.update({k: _round(v) for k, v in asdict(p).items() if k != "holes"})
         patterns.append(rec)
     return json.dumps({"count": len(patterns), "patterns": patterns})
 
