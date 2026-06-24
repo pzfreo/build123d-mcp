@@ -90,11 +90,41 @@ def _write_svg(shape, abs_path: str) -> None:
     exporter.write(abs_path)
 
 
+def _write_step(shape, abs_path: str) -> None:
+    """Write a STEP, resilient to build123d's high-level writer failing.
+
+    build123d's ``export_step`` goes through ``STEPCAFControl_Writer`` (the CAF
+    writer that carries colours/layers/names). On build123d 0.11.0 that path
+    raises ``RuntimeError: Failed to write STEP file`` on many imported-STEP-
+    derived solids that 0.10.0 wrote fine — observed on ~38% of editing-fixture
+    runs, where the agent imports a STEP and exports the (valid) edited solid.
+    The basic ``STEPControl_Writer`` writes the same geometry without trouble, so
+    fall back to it: a CAD scorer / downstream tool needs the geometry, not the
+    CAF labels/colours the basic writer drops. Geometry round-trips identically.
+    """
+    from build123d import export_step
+
+    try:
+        export_step(shape, abs_path)
+        return
+    except Exception:  # noqa: BLE001 - any high-level-writer failure → raw fallback
+        pass
+
+    from OCP.IFSelect import IFSelect_ReturnStatus
+    from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
+
+    writer = STEPControl_Writer()
+    writer.Transfer(shape.wrapped, STEPControl_AsIs)
+    if writer.Write(abs_path) != IFSelect_ReturnStatus.IFSelect_RetDone:
+        raise RuntimeError(
+            "Failed to write STEP file (build123d export_step and the raw "
+            "STEPControl_Writer fallback both failed)"
+        )
+
+
 def _write_one(shape, abs_path: str, fmt: str) -> None:
     if fmt == "step":
-        from build123d import export_step
-
-        export_step(shape, abs_path)
+        _write_step(shape, abs_path)
     elif fmt == "stl":
         _stl_write(shape, abs_path)
     elif fmt == "dxf":

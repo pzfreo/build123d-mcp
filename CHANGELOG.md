@@ -2,11 +2,21 @@
 
 ## v0.3.58
 
+### Added
+
+- **Quick reference now advertises build123d 0.11 features (version-gated).** The `build123d://quickref` resource gains a "New in 0.11" section — `ConvexPolyhedron` (solid convex hull), `BSpline` (exact spline edge from control points + knots), and `ConstrainedArcs`/`ConstrainedLines` (constraint-solved sketch geometry), plus pointers to single-line engraving fonts, conic-section arcs, and broader intersection support. The section (and its runnable examples) is shown and tested **only when the installed build123d is ≥ 0.11**, so 0.10 sessions never see APIs they can't call. Gating keys off the version already reported in the resource banner.
+
 ### Fixed
 
-- **`find_hole_patterns()` no longer crashes on unrecognised pattern types.** The wrapper special-cased `BoltCircle` and assumed every other pattern was a `LinearArray`, reaching for `.pitch`/`.direction`. A `build123d_drafting` that returns a `RectGrid` (rectangular hole grid) tripped `AttributeError: 'RectGrid' object has no attribute 'pitch'`, so the agent got no bolt-pattern confirmation at all (seen across benchmark runs). `LinearArray` is now matched explicitly and any other pattern type is tagged by its (snake-cased) class name and serialised generically via its dataclass fields — forward-compatible with new pattern types and impossible to crash on a missing attribute.
+- **`export()` no longer fails to write STEP on build123d 0.11.0.** build123d 0.11.0's high-level `export_step` (the `STEPCAFControl_Writer` path) raises `RuntimeError: Failed to write STEP file` on many imported-STEP-derived solids that 0.10.0 wrote fine — `uvx build123d-mcp@latest` picked up 0.11.0 and the failure hit ~38% of editing-fixture benchmark runs (where the agent imports a STEP and exports the valid edited solid), wasting large amounts of the refinement budget and sometimes leaving no output on disk. `export()` now falls back to the basic `STEPControl_Writer`, which writes the same geometry (it only drops CAF labels/colours, which don't affect validity, downstream booleans, or CAD scoring); the geometry round-trips identically. A clear combined error is raised only if both writers fail.
+- **`find_hole_patterns()` no longer crashes on unrecognised pattern types.** The wrapper special-cased `BoltCircle` and assumed every other pattern was a `LinearArray`, reaching for `.pitch`/`.direction`. A `build123d_drafting` that returns a `RectGrid` (rectangular hole grid) tripped `AttributeError: 'RectGrid' object has no attribute 'pitch'`, so the agent got no bolt-pattern confirmation at all (seen across benchmark runs). `LinearArray` is now matched explicitly and any other pattern type is tagged by its (snake-cased) class name and serialised generically via its dataclass fields (with `default=str` so a non-JSON field can't crash it) — forward-compatible with new pattern types.
 
 ## v0.3.57
+
+### Changed
+
+- **Support build123d 0.11 (in addition to 0.10).** The dependency range is now `build123d>=0.10,<0.12`, and CI runs the full test suite against both 0.10 and 0.11 on Linux/macOS/Windows. 0.11 switched build123d's OCP backend to `cadquery-ocp-novtk`, which no longer pulls VTK transitively; since `render_view` drives VTK directly, `vtk` is now declared as an explicit dependency (harmless on 0.10, where `cadquery-ocp` already provides it). Also bumps the floor of the bundled `augura` printability analyzer to `>=0.1.5`, the first release that allows build123d 0.11.
+- **Support Python 3.13 and 3.14.** `requires-python` is now `>=3.11,<3.15`. The previous 3.12 cap was a stale assumption that VTK shipped no cp313 wheels — current `vtk` (9.6.2) ships cp313 and cp314 wheels, so the lock now uses it. CI exercises the full suite (incl. the VTK render path) on 3.12/3.13/3.14 for build123d 0.11; build123d 0.10 stays tested at 3.12 (it caps at <3.14). `--python 3.12` remains the recommended default in the README launch examples.
 
 ### Fixed
 
