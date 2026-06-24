@@ -17,15 +17,6 @@ import math
 import sys
 
 
-def _first_solid(shp):
-    from OCP.TopAbs import TopAbs_SOLID
-    from OCP.TopExp import TopExp_Explorer
-    from OCP.TopoDS import TopoDS
-
-    e = TopExp_Explorer(shp, TopAbs_SOLID)
-    return TopoDS.Solid_s(e.Current()) if e.More() else shp
-
-
 def _brep_invalid_faces(solid) -> list:
     """BRepCheck-invalid faces, each with face index, center, surface type, status."""
     from OCP.BRepAdaptor import BRepAdaptor_Surface
