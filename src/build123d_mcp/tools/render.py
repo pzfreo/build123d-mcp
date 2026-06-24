@@ -73,6 +73,14 @@ _QUALITY = {
 
 _VALID_FORMATS = ("png", "svg", "dxf", "both")
 
+# Wall-clock budget for tessellating ALL of a render's shapes out-of-process.
+# Kept safely below WorkerSession._RENDER_TIMEOUT (120s) so the bounded subprocess
+# is always killed — returning a clean error with the session intact — before the
+# parent op-timeout SIGKILLs the whole worker (which would destroy session state).
+# OCC BRepMesh is un-interruptible, so this is the only way to bound it; the
+# worker is a daemon, so it must be a real subprocess, not multiprocessing.
+_TESS_BUDGET_S = 75
+
 
 def _resolve_shapes(session, objects: str):
     """Return list of (name, shape, color_or_None) tuples based on objects selector.
@@ -390,18 +398,86 @@ def _vtk_subprocess_worker(
         conn.close()
 
 
+def _tessellate_shapes_bounded(shapes, tess) -> tuple[dict, list[str]]:
+    """Tessellate every shape OUT OF PROCESS, hard-bounded by ``_TESS_BUDGET_S``.
+
+    Each shape is written to a temp STEP, then ONE subprocess imports and
+    tessellates all of them (interpreter startup amortised across the render). On
+    timeout the subprocess is hard-killed and a clean RuntimeError is raised — the
+    worker and the whole session survive, instead of the un-interruptible BRepMesh
+    blowing the op-timeout and SIGKILLing the session. Returns
+    ``({name: (verts_xyz, tris)}, [failure strings])``.
+    """
+    import json
+    import os
+    import pickle
+    import subprocess
+    import sys
+    import tempfile
+
+    from build123d_mcp.tools.export import _write_step
+
+    work = tempfile.mkdtemp(prefix="b123d_tess_")
+    out_pkl = os.path.join(work, "meshes.pkl")
+    man_path = os.path.join(work, "manifest.json")
+    temp_files = [out_pkl, man_path]
+    manifest, failed = [], []
+    try:
+        for i, (name, shape, _color) in enumerate(shapes):
+            step = os.path.join(work, f"s{i}.step")
+            try:
+                _write_step(shape, step)
+                manifest.append({"name": name, "step": step})
+                temp_files.append(step)
+            except Exception as exc:  # noqa: BLE001 - skip an un-exportable shape
+                failed.append(f"{name}: export for render failed: {exc}")
+        if not manifest:
+            return {}, failed
+        with open(man_path, "w") as f:
+            json.dump(manifest, f)
+        try:
+            proc = subprocess.run(
+                [
+                    sys.executable, "-m", "build123d_mcp._tessellate_subprocess",
+                    man_path, out_pkl,
+                    repr(tess["linear_deflection"]), repr(tess["angular_deflection"]),
+                ],
+                capture_output=True, text=True, timeout=_TESS_BUDGET_S,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"Rendering exceeded the {_TESS_BUDGET_S}s tessellation budget — this part is too "
+                "complex to render at this quality. Try quality='standard', render fewer objects, "
+                "or inspect it numerically with measure()/cross_sections()."
+            ) from exc
+        if proc.returncode != 0 or not os.path.exists(out_pkl):
+            raise RuntimeError("Tessellation subprocess failed: " + (proc.stderr or "")[-300:])
+        with open(out_pkl, "rb") as f:
+            result = pickle.load(f)
+        return result["meshes"], failed + result.get("failed", [])
+    finally:
+        for p in temp_files:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        try:
+            os.rmdir(work)
+        except OSError:
+            pass
+
+
 def _do_render_png(
     shapes, tess, direction, clip_plane, clip_at, azimuth, elevation, labels=None
 ) -> tuple[bytes, list[str]]:
-    # Tessellate shapes using build123d (no VTK) so the data is serializable.
-    shape_data = []
-    failed: list[str] = []
-    for name, shape, obj_color in shapes:
-        try:
-            verts, tris = shape.tessellate(tess["linear_deflection"], tess["angular_deflection"])
-            shape_data.append((name, [(v.X, v.Y, v.Z) for v in verts], list(tris), obj_color))
-        except Exception as exc:
-            failed.append(f"{name}: {exc}")
+    # Tessellate shapes out-of-process (bounded) so an un-interruptible BRepMesh
+    # on a complex part can't blow the op-timeout and SIGKILL the session.
+    meshes, failed = _tessellate_shapes_bounded(shapes, tess)
+    shape_data = [
+        (name, meshes[name][0], meshes[name][1], obj_color)
+        for name, shape, obj_color in shapes
+        if name in meshes
+    ]
 
     if not shape_data:
         msg = (
