@@ -483,12 +483,14 @@ def _tessellate_shapes_bounded(shapes, tess) -> tuple[dict, list[str]]:
         try:
             with open(out_pkl, "rb") as f:
                 result = pickle.load(f)
-        except (pickle.UnpicklingError, EOFError, KeyError) as exc:
+            meshes = result["meshes"]
+            sub_failed = result.get("failed", [])
+        except (pickle.UnpicklingError, EOFError, KeyError, TypeError) as exc:
             raise RuntimeError(
                 "Tessellation produced an unreadable result (the render may be too large or "
                 "complex). Try quality='standard' or render fewer objects."
             ) from exc
-        return result["meshes"], failed + result.get("failed", [])
+        return meshes, failed + sub_failed
     finally:
         for p in temp_files:
             try:
