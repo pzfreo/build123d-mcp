@@ -605,7 +605,7 @@ class WorkerSession:
     def last_error(self) -> str:
         raise NotImplementedError
 
-    @_op(_tool(f"{_T}.shape_compare:shape_compare"), _GEOMETRY_TIMEOUT)
+    @_op(_tool(f"{_T}.shape_compare:shape_compare"), _export_budget)
     def shape_compare(self, object_a: str, object_b: str) -> str:
         raise NotImplementedError
 

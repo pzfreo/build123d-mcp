@@ -45,7 +45,6 @@ def test_geometry_heavy_ops_use_geometry_timeout():
     ws.measure("a")
     ws.clearance("a", "b")
     ws.cross_sections("a")
-    ws.shape_compare("a", "b")
     ws.align_check("a", "b")
     ws.analyze_printability("a")
     ws.save_snapshot("s")
@@ -88,6 +87,23 @@ def test_load_part_keeps_geometry_floor():
     ws = _proxy_session(record, exec_timeout=10)
     ws.load_part("worm_gear")
     assert record == [("load_part", _GEOMETRY_TIMEOUT)]
+
+
+def test_shape_compare_honours_exec_timeout():
+    # shape_compare bounds its own tessellation/boolean subprocess by the op budget
+    # (max(60, exec_timeout) - margin), so the worker op MUST give it that budget or
+    # the parent would kill the worker while the child still runs.
+    record = []
+    ws = _proxy_session(record, exec_timeout=300)
+    ws.shape_compare("a", "b")
+    assert record == [("shape_compare", 300)]
+
+
+def test_shape_compare_keeps_export_floor():
+    record = []
+    ws = _proxy_session(record, exec_timeout=10)
+    ws.shape_compare("a", "b")
+    assert record == [("shape_compare", _EXPORT_TIMEOUT)]
 
 
 def test_bookkeeping_ops_keep_short_timeout():

@@ -584,6 +584,10 @@ def test_shape_compare_exact_magnitude_removal(session):
     assert data["magnitude_method"] == "exact_boolean"
     assert data["changed"]["removed_volume"] == pytest.approx(502.65, rel=0.1)  # pi*16*10
     assert data["changed"]["added_volume"] == 0.0
+    # A cut has ~0 surface displacement, but max_deviation must NOT read 0 ("no change")
+    # — it falls back to the mesh estimate, with a warning that volume is the exact amount.
+    assert data["max_deviation"] > 0.0
+    assert any("cut or flush fill" in w for w in data["warnings"])
 
 
 def test_shape_compare_budget_skip_falls_back_to_mesh(session):
