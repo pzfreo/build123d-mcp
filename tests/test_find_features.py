@@ -87,6 +87,38 @@ def test_find_hole_patterns_none(session):
     assert json.loads(find_hole_patterns(session, "one")) == {"count": 0, "patterns": []}
 
 
+def test_find_hole_patterns_unknown_type_does_not_crash(session, monkeypatch):
+    """A pattern type the wrapper doesn't special-case (e.g. a RectGrid from a
+    newer build123d_drafting) must be tagged + serialised generically, not crash
+    with AttributeError as the old else-branch did ('RectGrid' has no 'pitch')."""
+    import dataclasses
+
+    import build123d_drafting
+    from build123d import Vector
+
+    @dataclasses.dataclass
+    class RectGrid:  # mimics a pattern type with neither .pitch nor .direction
+        holes: list
+        pitch_x: float
+        pitch_y: float
+        count: int
+        origin: Vector  # a field that is NOT natively JSON-serialisable
+
+    session.execute("show(Box(20, 20, 5), 'plate')")
+    fake = RectGrid(holes=[], pitch_x=10.0, pitch_y=8.0, count=4, origin=Vector(1, 2, 3))
+    monkeypatch.setattr(build123d_drafting, "find_hole_patterns", lambda holes: [fake])
+
+    # Must not raise: neither AttributeError (old else-branch reaching for
+    # .pitch) nor TypeError (json.dumps choking on the Vector field).
+    r = json.loads(find_hole_patterns(session, "plate"))
+    assert r["count"] == 1
+    (pat,) = r["patterns"]
+    assert pat["type"] == "rect_grid"
+    assert pat["pitch_x"] == 10.0 and pat["pitch_y"] == 8.0 and pat["count"] == 4
+    assert "pitch" not in pat  # the old code crashed reaching for this
+    assert isinstance(pat["origin"], str)  # Vector degraded to a string, not a crash
+
+
 def test_unknown_object_is_a_json_error(session):
     session.execute("show(Box(1, 1, 1), 'a')")
     r = json.loads(find_holes(session, "nope"))

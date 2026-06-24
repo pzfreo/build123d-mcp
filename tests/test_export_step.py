@@ -9,8 +9,8 @@ the high-level writer raise, so it's exercised on any build123d version).
 """
 
 import pytest
-
 from build123d import import_step
+
 from build123d_mcp.session import Session
 from build123d_mcp.tools.execute import execute_code
 from build123d_mcp.tools.export import export_file

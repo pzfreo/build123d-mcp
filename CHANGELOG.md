@@ -9,6 +9,7 @@
 ### Fixed
 
 - **`export()` no longer fails to write STEP on build123d 0.11.0.** build123d 0.11.0's high-level `export_step` (the `STEPCAFControl_Writer` path) raises `RuntimeError: Failed to write STEP file` on many imported-STEP-derived solids that 0.10.0 wrote fine — `uvx build123d-mcp@latest` picked up 0.11.0 and the failure hit ~38% of editing-fixture benchmark runs (where the agent imports a STEP and exports the valid edited solid), wasting large amounts of the refinement budget and sometimes leaving no output on disk. `export()` now falls back to the basic `STEPControl_Writer`, which writes the same geometry (it only drops CAF labels/colours, which don't affect validity, downstream booleans, or CAD scoring); the geometry round-trips identically. A clear combined error is raised only if both writers fail.
+- **`find_hole_patterns()` no longer crashes on unrecognised pattern types.** The wrapper special-cased `BoltCircle` and assumed every other pattern was a `LinearArray`, reaching for `.pitch`/`.direction`. A `build123d_drafting` that returns a `RectGrid` (rectangular hole grid) tripped `AttributeError: 'RectGrid' object has no attribute 'pitch'`, so the agent got no bolt-pattern confirmation at all (seen across benchmark runs). `LinearArray` is now matched explicitly and any other pattern type is tagged by its (snake-cased) class name and serialised generically via its dataclass fields (with `default=str` so a non-JSON field can't crash it) — forward-compatible with new pattern types.
 
 ## v0.3.57
 
