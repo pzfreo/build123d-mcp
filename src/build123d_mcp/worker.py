@@ -552,6 +552,10 @@ class WorkerSession:
     def validate(self, object_name: str = "") -> str:
         raise NotImplementedError
 
+    @_op(_tool(f"{_T}.locate:locate_gate_defects"), _export_budget)
+    def locate_gate_defects(self, object_name: str = "") -> str:
+        raise NotImplementedError
+
     @_op(_tool(f"{_T}.measure:clearance"), _GEOMETRY_TIMEOUT)
     def clearance(self, object_a: str, object_b: str) -> str:
         raise NotImplementedError
