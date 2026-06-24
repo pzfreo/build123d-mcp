@@ -111,6 +111,11 @@ def _validate(ws, tmp_path):
     assert "PASS" in r  # 'a' is a seeded unit box → valid solid
 
 
+def _locate_gate_defects(ws, tmp_path):
+    r = ws.locate_gate_defects("a")
+    assert "No validity defects" in r  # 'a' is a seeded valid unit box → no defects
+
+
 def _clearance(ws, tmp_path):
     r = json.loads(ws.clearance("a", "b"))
     assert "error" not in r and "status" in r
@@ -232,6 +237,7 @@ def _render_view(ws, tmp_path):
 SESSION_STATEFUL_TOOLS = {
     "measure": _measure,
     "validate": _validate,
+    "locate_gate_defects": _locate_gate_defects,
     "clearance": _clearance,
     "shape_compare": _shape_compare,
     "align_check": _align_check,
