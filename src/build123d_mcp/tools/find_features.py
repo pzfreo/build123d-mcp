@@ -55,7 +55,7 @@ def find_hole_patterns(session, object_name: str = "") -> str:
         return json.dumps({"error": str(exc)})
     patterns = []
     for p in _find_patterns(_find_holes(shape)):
-        rec: dict = {"holes": [_record(h) for h in p.holes]}
+        rec: dict = {"holes": [_record(h) for h in getattr(p, "holes", [])]}
         if isinstance(p, BoltCircle):
             rec["type"] = "bolt_circle"
             rec["center"] = [round(c, 4) for c in p.center]
@@ -73,7 +73,9 @@ def find_hole_patterns(session, object_name: str = "") -> str:
             if is_dataclass(p):
                 rec.update({k: _round(v) for k, v in asdict(p).items() if k != "holes"})
         patterns.append(rec)
-    return json.dumps({"count": len(patterns), "patterns": patterns})
+    # default=str so a generic field of an unknown future pattern type (a
+    # Vector, enum, set, …) degrades to a string instead of raising TypeError.
+    return json.dumps({"count": len(patterns), "patterns": patterns}, default=str)
 
 
 def find_bosses(session, object_name: str = "") -> str:
