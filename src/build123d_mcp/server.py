@@ -391,7 +391,7 @@ def reset() -> str:
 
 @mcp.tool()
 def shape_compare(object_a: str, object_b: str) -> str:
-    """Compare two named shapes (from show()) by geometry metrics: volume delta, bbox delta, topology delta (faces/edges/vertices), and center offset. Useful when you have an intended design and a reference/test shape and want to verify they match — or to quantify how a modification changed the geometry."""
+    """Compare two named shapes (from show()) by geometry metrics plus localized surface deviation. Keeps volume, bbox, topology, and center deltas, and adds a bounded symmetric Hausdorff-style surface diff: max_deviation, changed region (centroid/bbox/local max/moved fraction), and unchanged_elsewhere. For editing, this is model↔input verification, not a score: a no-op has low deviation but may be wrong. Use the localized changed region to check that the requested feature moved by the requested amount and that unrelated regions stayed put."""
     return _resolve_session().shape_compare(object_a, object_b)
 
 

@@ -129,6 +129,7 @@ dependencies = [
     { name = "defusedxml" },
     { name = "mcp" },
     { name = "resvg-py" },
+    { name = "scipy" },
     { name = "vtk" },
 ]
 
@@ -155,6 +156,7 @@ requires-dist = [
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "mcp", specifier = ">=1.9" },
     { name = "resvg-py" },
+    { name = "scipy" },
     { name = "uvicorn", marker = "extra == 'http'" },
     { name = "vtk", specifier = ">=9.3" },
 ]

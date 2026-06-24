@@ -511,6 +511,74 @@ def test_shape_compare_identical_shapes_zero_delta(session):
     data = json.loads(shape_compare(session, "a", "b"))
     assert abs(data["delta"]["volume"]) < 0.001
     assert data["delta"]["center_offset"] < 0.001
+    assert data["max_deviation"] < 0.001
+    assert data["changed"]["moved_fraction"] == 0.0
+    assert data["unchanged_elsewhere"] is True
+
+
+def test_shape_compare_reports_local_surface_deviation(session):
+    """A local boss translation reports a non-zero localized surface deviation."""
+    from build123d_mcp.tools.shape_compare import shape_compare
+
+    execute_code(
+        session,
+        "base = Box(60, 30, 6)\n"
+        "show(base + Pos(0, 0, 7) * Box(8, 8, 8), 'a')\n"
+        "show(base + Pos(6, 0, 7) * Box(8, 8, 8), 'b')",
+    )
+    data = json.loads(shape_compare(session, "a", "b"))
+    assert data["max_deviation"] == pytest.approx(6.0, abs=0.35)
+    assert data["changed"]["moved_fraction"] > 0
+    assert data["changed"]["bbox"] is not None
+    assert data["unchanged_elsewhere"] is True
+
+
+def test_shape_compare_flags_change_elsewhere(session):
+    """Two distant edits should not be reported as one clean localized change."""
+    from build123d_mcp.tools.shape_compare import shape_compare
+
+    execute_code(
+        session,
+        "base = Box(80, 20, 6)\n"
+        "show(base + Pos(-25, 0, 7) * Box(6, 6, 8), 'a')\n"
+        "show(base + Pos(25, 0, 7) * Box(6, 6, 8), 'b')",
+    )
+    data = json.loads(shape_compare(session, "a", "b"))
+    assert data["max_deviation"] > 10
+    assert data["unchanged_elsewhere"] is False
+
+
+def test_shape_compare_falls_back_in_process_when_subprocess_blocked(session, monkeypatch):
+    """If child process creation is blocked, surface compare still runs in-process."""
+    import subprocess
+
+    from build123d_mcp.tools.shape_compare import shape_compare
+
+    execute_code(session, "show(Box(10,10,10), 'a')\nshow(Box(10,10,10), 'b')")
+
+    def _blocked(*a, **k):
+        raise PermissionError("child process creation not permitted")
+
+    monkeypatch.setattr(subprocess, "run", _blocked)
+    data = json.loads(shape_compare(session, "a", "b"))
+    assert data["max_deviation"] < 0.001
+    assert "error" not in data["surface_deviation"]
+
+
+def test_shape_compare_timeout_is_clean_error(session, monkeypatch):
+    import subprocess
+
+    from build123d_mcp.tools.shape_compare import shape_compare
+
+    execute_code(session, "show(Box(10,10,10), 'a')\nshow(Box(20,20,20), 'b')")
+
+    def _timeout(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="shape_compare", timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", _timeout)
+    data = json.loads(shape_compare(session, "a", "b"))
+    assert "time budget" in data["surface_deviation"]["error"]
+    assert data["delta"]["volume"] > 0
 
 
 # ---------------------------------------------------------------------------
