@@ -69,3 +69,42 @@ def test_locate_timeout_is_a_clean_error(session, monkeypatch):
 def test_locate_unknown_object_errors(session):
     out = locate_gate_defects(session, "nope")
     assert "Unknown object" in out
+
+
+def test_locate_mesh_nonmanifold_vertex(session):
+    """Corner-to-corner touch fails the gate via a non-manifold VERTEX (#298) — it
+    must be located, not reported as a false 'clean' (no edge/face defect here)."""
+    execute_code(session, "show(Box(10, 10, 10) + Pos(10, 10, 10) * Box(10, 10, 10), 'corner')")
+    out = locate_gate_defects(session, "corner")
+    defects = _payload(out)["defects"]
+    nmv = [d for d in defects if d["kind"] == "mesh_nonmanifold_vertex"]
+    assert nmv, out
+    assert len(nmv[0]["where"]) == 3
+
+
+def _open_shell_solid():
+    """A box missing one face — an open (non-watertight) solid with 4 open edges."""
+    from build123d import Box, Solid
+    from OCP.BRep import BRep_Builder
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeSolid
+    from OCP.TopoDS import TopoDS_Shell
+
+    b = BRep_Builder()
+    shell = TopoDS_Shell()
+    b.MakeShell(shell)
+    for f in Box(10, 10, 10).faces()[:5]:
+        b.Add(shell, f.wrapped)
+    return Solid(BRepBuilderAPI_MakeSolid(shell).Solid())
+
+
+def test_locate_checks_every_solid_of_a_compound():
+    """B-rep checks must cover ALL solids of a compound, not just the first — an
+    open edge on a non-first solid must not be a false 'clean'."""
+    from build123d import Box, Compound, Location
+
+    from build123d_mcp._locate_subprocess import collect_defects
+
+    clean = Box(10, 10, 10)
+    leaky = _open_shell_solid().moved(Location((30, 0, 0)))
+    defects = collect_defects(Compound(children=[clean, leaky]))  # clean solid first
+    assert any(d["kind"] == "open_edge" for d in defects), [d["kind"] for d in defects]

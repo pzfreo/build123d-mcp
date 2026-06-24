@@ -45,10 +45,11 @@ def locate_gate_defects(session, object_name: str = "") -> str:
     """Locate the validity-gate defects on a shape, each with 3D coordinates.
 
     Returns a defect list: ``brep_invalid_face`` (face index + center + status),
-    ``open_edge`` / ``nonmanifold_edge`` (B-rep edge midpoint), and
-    ``mesh_nonmanifold_edge`` (the self-touch a CAD scorer rejects). Empty list
-    means the part passes the structural checks. object_name: named object from
-    show() (default: current shape).
+    ``open_edge`` / ``nonmanifold_edge`` (B-rep edge midpoint), and the mesh
+    self-touches a CAD scorer rejects — ``mesh_nonmanifold_edge`` and
+    ``mesh_nonmanifold_vertex`` (corner-to-corner touch). Empty list means the
+    part passes the structural checks. object_name: named object from show()
+    (default: current shape).
     """
     t0 = time.monotonic()
     shape, err = _resolve_shape(session, object_name)

@@ -109,18 +109,17 @@ def _brep_edge_defects(solid) -> list:
     return out
 
 
-def _mesh_nonmanifold_edges(shape) -> list:
-    """Mesh edges shared by >2 triangles (BRepCheck-valid but a scorer rejects),
-    welded by rounded coordinate exactly as the gate's check, with edge midpoint."""
-    from collections import Counter
-
+def _weld(shape) -> tuple[list, dict]:
+    """Tessellate and coordinate-weld (exactly as the gate's mesh check). Returns
+    ``(welded_tris, coord)`` where welded_tris is a list of (a, b, c) welded-node
+    triangles and coord maps a welded node to a representative (x, y, z)."""
     bb = shape.bounding_box()
     diag = math.dist((bb.min.X, bb.min.Y, bb.min.Z), (bb.max.X, bb.max.Y, bb.max.Z))
     if diag <= 0:
-        return []
+        return [], {}
     verts, tris = shape.tessellate(max(diag * 1e-3, 1e-4))
     if not verts or not tris:
-        return []
+        return [], {}
     q = diag * 1e-5
     remap: list[int] = []
     keys: dict = {}
@@ -130,11 +129,20 @@ def _mesh_nonmanifold_edges(shape) -> list:
         wi = keys.setdefault(k, len(keys))
         remap.append(wi)
         coord.setdefault(wi, (v.X, v.Y, v.Z))
-    edge_count: Counter = Counter()
+    welded = []
     for t in tris:
         a, b, c = remap[t[0]], remap[t[1]], remap[t[2]]
-        if len({a, b, c}) < 3:
-            continue
+        if len({a, b, c}) == 3:  # drop degenerate triangles after welding
+            welded.append((a, b, c))
+    return welded, coord
+
+
+def _mesh_nonmanifold_edges(welded, coord) -> list:
+    """Mesh edges shared by >2 triangles (self-touch a scorer rejects), with midpoint."""
+    from collections import Counter
+
+    edge_count: Counter = Counter()
+    for a, b, c in welded:
         for e in ((a, b), (b, c), (a, c)):
             edge_count[tuple(sorted(e))] += 1
     out = []
@@ -156,24 +164,75 @@ def _mesh_nonmanifold_edges(shape) -> list:
     return out
 
 
-def collect_defects(shape) -> list:
-    """Run all three locators on a build123d shape and return the defect list.
+def _mesh_nonmanifold_vertices(welded, coord) -> list:
+    """Mesh vertices where ≥2 surface sheets meet at a single point (corner-to-corner
+    touch) — edge-manifold and watertight but not a 2-manifold surface, which a CAD
+    scorer rejects (#298). Mirrors the gate's _nonmanifold_vertex_count: a manifold
+    vertex's incident triangles form one connected fan, a pinch forms ≥2."""
+    from collections import defaultdict
 
-    Shared by the subprocess ``main`` and the in-process fallback in the tool
-    (used when the host blocks child-process creation). One failing check records
-    a ``locator_error`` rather than losing the others.
+    spokes: dict = defaultdict(list)
+    for a, b, c in welded:
+        spokes[a].append((b, c))
+        spokes[b].append((a, c))
+        spokes[c].append((a, b))
+    out = []
+    for vi, edges in spokes.items():
+        par: dict = {}
+
+        def root(x: int, par: dict = par) -> int:
+            par.setdefault(x, x)
+            r = x
+            while par[r] != r:
+                r = par[r]
+            while par[x] != r:
+                par[x], x = r, par[x]
+            return r
+
+        for a, b in edges:
+            ra, rb = root(a), root(b)
+            if ra != rb:
+                par[ra] = rb
+        if len({root(x) for x in par}) > 1:
+            c = coord[vi]
+            out.append(
+                {
+                    "kind": "mesh_nonmanifold_vertex",
+                    "where": [round(c[0], 3), round(c[1], 3), round(c[2], 3)],
+                    "hint": (
+                        "two surface sheets meet at a single point (corner-to-corner touch) — "
+                        "BRepCheck-valid but a CAD scorer rejects it; separate the bodies or add "
+                        "material so they fuse into one manifold solid"
+                    ),
+                }
+            )
+    return out
+
+
+def collect_defects(shape) -> list:
+    """Run every locator on a build123d shape and return the defect list.
+
+    B-rep checks run on the WHOLE shape (not just the first solid) so a multi-solid
+    compound's later bodies aren't missed — matching the gate, which checks the
+    whole shape. The mesh soup is welded once and shared by the edge + vertex
+    checks. One failing check records a ``locator_error`` rather than losing the
+    rest. Shared by the subprocess ``main`` and the tool's in-process fallback.
     """
-    solid = _first_solid(shape.wrapped)
     defects: list = []
     for finder in (
-        lambda: _brep_invalid_faces(solid),
-        lambda: _brep_edge_defects(solid),
-        lambda: _mesh_nonmanifold_edges(shape),
+        lambda: _brep_invalid_faces(shape.wrapped),
+        lambda: _brep_edge_defects(shape.wrapped),
     ):
         try:
             defects += finder()
         except Exception as exc:  # noqa: BLE001 - one check failing shouldn't lose the rest
             defects.append({"kind": "locator_error", "detail": repr(exc)[:200]})
+    try:
+        welded, coord = _weld(shape)
+        defects += _mesh_nonmanifold_edges(welded, coord)
+        defects += _mesh_nonmanifold_vertices(welded, coord)
+    except Exception as exc:  # noqa: BLE001
+        defects.append({"kind": "locator_error", "detail": repr(exc)[:200]})
     return defects
 
 
