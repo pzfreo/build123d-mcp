@@ -35,6 +35,9 @@ dependencies = [
     "build123d-drafting-helpers>=0.10.0",
     "defusedxml>=0.7.1",
     "augura>=0.1.3",
+    # recover()'s fidelity guard does a KD-tree nearest-neighbour over surface
+    # samples (scipy.spatial.cKDTree); numpy ships with build123d already.
+    "scipy",
 ]
 
 [project.optional-dependencies]

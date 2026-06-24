@@ -1,0 +1,10 @@
+through-slot tw=0.5: dev=100.2500 eps=2.2439 true=20.00 npts=36/36 -> reject
+through-slot tw=1.0: dev=100.5000 eps=2.2428 true=20.00 npts=36/36 -> reject
+through-slot tw=2.0: dev=101.0000 eps=2.2406 true=20.00 npts=36/36 -> reject
+groove tw=1.0 d=2.0: dev=35.7464 eps=2.8355 true=2.00 npts=76/36 -> reject
+groove tw=2.0 d=2.0: dev=66.6700 eps=2.8355 true=2.00 npts=76/36 -> reject
+groove tw=1.0 d=4.0: dev=35.7464 eps=2.8355 true=4.00 npts=76/36 -> reject
+groove tw=2.0 d=4.0: dev=66.6700 eps=2.8355 true=4.00 npts=76/36 -> reject
+hole r=1.0 @ (70,70): dev=50.4929 eps=2.8355 true=2.00 npts=250/36 -> reject
+hole r=2.0 @ (70,70): dev=50.2212 eps=2.8355 true=4.00 npts=250/36 -> reject
+hole r=4.0 @ (70,70): dev=49.6998 eps=2.8355 true=8.00 npts=250/36 -> reject

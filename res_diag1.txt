@@ -1,0 +1,4 @@
+orig pts=76 bbox-pa min=[-100. -100.  -10.] max=[100. 100.  10.]
+cand pts=36 bbox-pb min=[-100. -100.  -10.] max=[100. 100.  10.]
+worst orig->cand pt=[33.33333333 40.         10.        ] dist=61.464
+worst cand->orig pt=[ 33.33333333 -33.33333333  10.        ] dist=20.000

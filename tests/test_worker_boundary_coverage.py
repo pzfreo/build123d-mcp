@@ -111,6 +111,14 @@ def _validate(ws, tmp_path):
     assert "PASS" in r  # 'a' is a seeded unit box → valid solid
 
 
+def _recover(ws, tmp_path):
+    # 'a' is a seeded valid box → nothing to heal → "already valid". Exercises the
+    # full wire: dispatch, the out-of-process heal subprocess, and re-registration.
+    # Were it reading the empty parent proxy, 'a' would be unknown (resolver error).
+    r = ws.recover("a")
+    assert "already valid" in r
+
+
 def _clearance(ws, tmp_path):
     r = json.loads(ws.clearance("a", "b"))
     assert "error" not in r and "status" in r
@@ -232,6 +240,7 @@ def _render_view(ws, tmp_path):
 SESSION_STATEFUL_TOOLS = {
     "measure": _measure,
     "validate": _validate,
+    "recover": _recover,
     "clearance": _clearance,
     "shape_compare": _shape_compare,
     "align_check": _align_check,

@@ -1,0 +1,4 @@
+box: cand-vs-reimport STEP deviation = 0 mm
+bored: cand-vs-reimport STEP deviation = 0.642862 mm
+sphere: cand-vs-reimport STEP deviation = 4.53948e-13 mm
+cyl: cand-vs-reimport STEP deviation = 1.19907e-28 mm

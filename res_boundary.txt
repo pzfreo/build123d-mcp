@@ -1,0 +1,11 @@
+sphere R=50.0 diag=173.21 eps=1.7321
+depth= 0.4: dev=4.1224 true=2.3629 eps=1.7321 under=-1.7595 -> reject
+depth= 0.6: dev=4.1224 true=2.3629 eps=1.7321 under=-1.7595 -> reject
+depth= 0.8: dev=4.1224 true=2.3629 eps=1.7321 under=-1.7595 -> reject
+depth= 1.0: dev=4.1224 true=2.3629 eps=1.7321 under=-1.7595 -> reject
+depth= 1.2: dev=4.1224 true=2.3629 eps=1.7321 under=-1.7595 -> reject
+depth= 1.5: dev=4.1224 true=2.3629 eps=1.7321 under=-1.7595 -> reject
+depth= 2.0: dev=4.2153 true=2.4810 eps=1.7321 under=-1.7343 -> reject
+depth= 3.0: dev=4.6134 true=3.3341 eps=1.7321 under=-1.2793 -> reject
+depth= 5.0: dev=5.8576 true=4.9792 eps=1.7321 under=-0.8784 -> reject
+worst under-report (true-dev) = +0.0000 (positive=guard blind)

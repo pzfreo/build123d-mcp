@@ -1,0 +1,2 @@
+identical box dev (floor noise) = 0.0000
+box sample pts = 36 (6 faces, all meshable)

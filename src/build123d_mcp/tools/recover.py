@@ -15,13 +15,18 @@ Two safety properties, both required:
   worker past its op budget and the parent would SIGKILL it, losing all session
   state. So the heal runs OUT OF PROCESS, hard-bounded by the time left in the op
   budget (mirroring how export bounds its mesh gate). If it overruns it is killed
-  and recover() returns FAIL — the session is untouched.
+  and recover() returns FAIL — the session is untouched. The parent's own reimport
+  of the healed STEP is likewise an OCC call, so it only runs when enough budget
+  remains for the cost the subprocess measured (else FAIL untouched, heal saved
+  to a path the agent can import on a fresh op).
 * **It never distorts the geometry.** A heal is accepted only if it passes the
-  gate AND every bounding-box face moves less than ``max(1 mm, 1% of the
-  diagonal)`` — bbox, not volume, because an invalid solid's signed volume is
-  unreliable (a reversed face halves it). Anything that moves the envelope more
-  than a defective sliver is refused. So recover() either returns a faithful
-  valid solid or fails and leaves the original exactly as it was.
+  gate AND the **surface-deviation (Hausdorff) distance** between the input and
+  the healed solid stays under ``max(1 mm, 0.5% of the diagonal)`` — no surface
+  point moved more than that. This catches the loss of an internal feature (a
+  filled-in bore moves its wall ~12 mm) that a bbox or signed-volume proxy is
+  blind to. Anything that distorts the part beyond a defective sliver is refused.
+  So recover() either returns a faithful valid solid or fails and leaves the
+  original exactly as it was.
 
 The actual healing + gating runs in :mod:`build123d_mcp._recover_subprocess`;
 this module is the in-worker orchestrator that bounds it and re-registers the
@@ -47,6 +52,15 @@ from build123d_mcp.tools.validate import _resolve_shape
 # the parent's poll granularity — so the worker total stays under its op-timeout.
 _MARGIN_S = 15
 _MIN_SUBPROC_S = 10
+# After the bounded subprocess returns a heal, the parent must reimport the healed
+# STEP to bring it into the session — an un-interruptible OCC call running back
+# in the worker. The subprocess reports how long ITS reimport of the same file
+# took; the parent only performs its own load if at least this multiple of that
+# cost is still left in the budget, otherwise it FAILs untouched (and persists the
+# healed STEP to a path the agent can import on a fresh op). Without this guard a
+# heal that finishes near the time limit plus a slow reimport could push the
+# worker past its op-timeout and the parent would SIGKILL it, losing the session.
+_REIMPORT_SAFETY = 2.0
 
 
 def _solids(shp):
@@ -70,14 +84,24 @@ def _invalid_faces(s):
     return out
 
 
+def _n_faces(shp):
+    n = 0
+    e = TopExp_Explorer(shp, TopAbs_FACE)
+    while e.More():
+        n += 1
+        e.Next()
+    return n
+
+
 def recover(session, object_name: str = "", store_as: str = "") -> str:
     """Heal an invalid solid so it passes the validity gate, or fail untouched.
 
     Runs ShapeFix → defeature OUT OF PROCESS (hard-bounded by the op budget so it
     can never block the worker) and keeps the first variant that passes the exact
-    gate on the reimported STEP AND preserves the bounding box. On PASS the healed
-    solid is re-registered; on FAIL (or timeout) the original is left exactly as
-    it was. Requires a single solid. object_name: named object from show()
+    gate on the reimported STEP AND preserves the geometry (surface-deviation /
+    Hausdorff bound — no point moves more than max(1 mm, 0.5% of the diagonal)).
+    On PASS the healed solid is re-registered; on FAIL (or timeout) the original
+    is left exactly as it was. Requires a single solid. object_name: named object from show()
     (default: current shape). store_as: name to register the healed solid under
     (default: overwrite object_name / update the current shape).
     """
@@ -96,6 +120,20 @@ def recover(session, object_name: str = "", store_as: str = "") -> str:
                 "error": f"recover heals a single solid, but '{object_name or 'current shape'}' "
                 f"has {len(solids)} solids. Fuse them (Part +) or recover each body separately.",
                 "n_solids": len(solids),
+            }
+        )
+
+    # A 1-solid Compound may also carry free faces / PMI alongside the body. recover
+    # heals only the solid, so accepting it would silently drop that content on PASS.
+    # Refuse rather than lose it (consistent with the multi-solid refusal).
+    free_faces = _n_faces(shape.wrapped) - _n_faces(solids[0])
+    if free_faces > 0:
+        return json.dumps(
+            {
+                "error": f"'{object_name or 'current shape'}' has a single solid but also "
+                f"{free_faces} free face(s)/PMI alongside it, which recover would drop. "
+                "Extract the solid (e.g. shape.solids()[0]) and recover that.",
+                "free_faces": free_faces,
             }
         )
 
@@ -151,17 +189,61 @@ def recover(session, object_name: str = "", store_as: str = "") -> str:
         if status == "already_valid":
             return "Recovery: PASS — already valid, no recovery needed.\n" + json.dumps(result)
         if status == "recovered":
-            from build123d import import_step
+            # The parent's own reimport is an un-interruptible OCC call; only run it
+            # if enough budget remains for it (the subprocess measured the same load).
+            # Otherwise FAIL untouched rather than risk overrunning the op-timeout —
+            # but persist the healed STEP so the successful heal isn't thrown away.
+            reimport_secs = result.get("reimport_secs", 0) or 0
+            time_left = budget - (time.monotonic() - t0) - _MARGIN_S
+            if time_left < reimport_secs * _REIMPORT_SAFETY:
+                import shutil
 
-            healed = import_step(out_step)
-            session.current_shape = healed
+                fd, kept = tempfile.mkstemp(prefix="b123d_recovered_", suffix=".step")
+                os.close(fd)
+                shutil.copy(out_step, kept)
+                result["recovered_step"] = kept
+                return (
+                    "Recovery: FAIL — a faithful heal was found but too little of the op "
+                    "budget remained to load it safely; geometry untouched (session safe). "
+                    f"The healed STEP is saved at {kept} — import_cad_file() it on a fresh op, "
+                    "or raise --exec-timeout.\n" + json.dumps(result)
+                )
+
+            # Verify in the PARENT what it actually loads and registers. The
+            # subprocess already ran the authoritative (mesh) gate on these exact
+            # bytes; the parent does its own independent OCC load, so it confirms that
+            # load yielded a single BRepCheck-valid solid — never trusting the
+            # subprocess's word about a file the parent reads separately. A load
+            # failure or a corrupt/solid-less STEP returns FAIL untouched (so a bad
+            # artifact can't be registered as PASS, and a missing out.step can't raise
+            # out of recover()). This check is BRepCheck only (no meshing) so it cannot
+            # itself overrun the budget — the expensive mesh check stays in the bounded
+            # subprocess, never in the parent after the budget has been spent.
+            from build123d import Solid, import_step
+
+            try:
+                healed_solids = _solids(import_step(out_step).wrapped)
+            except Exception:
+                healed_solids = []
+            healed = Solid(healed_solids[0]) if len(healed_solids) == 1 else None
+            if healed is None or not BRepCheck_Analyzer(healed.wrapped).IsValid():
+                return (
+                    "Recovery: FAIL — the healed STEP did not load as a single valid "
+                    "solid in the parent re-check; geometry untouched.\n"
+                    + json.dumps({**result, "status": "failed", "reason": "parent_recheck_failed"})
+                )
             dest = store_as or object_name
             if dest:
                 session.objects[dest] = healed
+            # Update the current shape only when the heal targets it (no object_name)
+            # or overwrites the source in place — not when store_as redirects the
+            # result to a different named object the user didn't ask to make current.
+            if not store_as or not object_name:
+                session.current_shape = healed
             where = f"'{dest}'" if dest else "the current shape"
             return (
                 f"Recovery: PASS via {result['method']} "
-                f"(bbox moved ≤{result.get('bbox_max_delta', 0)} mm, tol {result.get('tol')} mm). "
+                f"(surface moved ≤{result.get('hausdorff', 0)} mm, tol {result.get('eps')} mm). "
                 f"Updated {where}.\n" + json.dumps(result)
             )
         # status == "failed"
