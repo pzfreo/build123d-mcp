@@ -150,14 +150,17 @@ def shape_compare(session, object_a: str, object_b: str) -> str:
         "unchanged_elsewhere": surface.get("unchanged_elsewhere"),
         "warnings": surface.get("warnings"),
         "note": (
-            "Compares object_a to object_b, not to a reference answer. max_deviation is the "
-            "EXACT surface displacement (boolean-measured) when magnitude_method='exact_boolean'; "
-            "changed.added_volume/removed_volume give the exact material added/removed. For editing, "
-            "verify the changed region(s), displacement, and add/remove volumes match the request. "
-            "IMPORTANT: a TANGENTIAL feature move (sliding a hole) and a sub-resolution edit on a very "
-            "large part produce no detected region — 'unchanged' then means 'no change above the "
-            "detection floor', NOT a guarantee; cross-check the volume/bbox/center deltas and "
-            "find_holes for those."
+            "Compares object_a to object_b, not to a reference answer. magnitude_method tells you "
+            "how to read max_deviation: 'exact_boolean' = exact surface displacement AND exact "
+            "volumes; 'exact_volume_mesh_displacement' = exact added/removed VOLUME but max_deviation "
+            "is a mesh estimate (a cut/flush-fill has ~0 true surface displacement, so volume is the "
+            "real magnitude); 'mesh_estimate' = both are mesh estimates (boolean skipped or failed). "
+            "changed.added_volume/removed_volume are the exact material added/removed whenever the "
+            "method starts with 'exact_'. For editing, verify the changed region(s) and the add/remove "
+            "volumes match the request. IMPORTANT: a TANGENTIAL move (sliding a hole) and a sub-"
+            "resolution edit on a very large part produce no detected region — 'unchanged' then means "
+            "'no change above the detection floor', NOT a guarantee; cross-check the volume/bbox/"
+            "center deltas and find_holes for those."
         ),
     }
 

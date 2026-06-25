@@ -581,11 +581,12 @@ def test_shape_compare_exact_magnitude_removal(session):
         "show(base - Cylinder(4, 10), 'b')",  # Ø8 through-hole removed
     )
     data = json.loads(shape_compare(session, "a", "b"))
-    assert data["magnitude_method"] == "exact_boolean"
+    # Volumes are exact; the displacement is a mesh estimate (a cut has ~0 true surface
+    # displacement) — the METHOD must say so, not claim 'exact_boolean'.
+    assert data["magnitude_method"] == "exact_volume_mesh_displacement"
     assert data["changed"]["removed_volume"] == pytest.approx(502.65, rel=0.1)  # pi*16*10
     assert data["changed"]["added_volume"] == 0.0
-    # A cut has ~0 surface displacement, but max_deviation must NOT read 0 ("no change")
-    # — it falls back to the mesh estimate, with a warning that volume is the exact amount.
+    # max_deviation must NOT read 0 ("no change") for a real removal.
     assert data["max_deviation"] > 0.0
     assert any("cut or flush fill" in w for w in data["warnings"])
 

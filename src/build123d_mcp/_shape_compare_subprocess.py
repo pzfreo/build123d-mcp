@@ -408,18 +408,22 @@ def compare_shapes(
         return _result(exact["displacement"], "exact_boolean", exact)
 
     magnitude = exact["displacement"]
+    method = "exact_boolean"
     if magnitude < _DISP_NULL_MM:
         # A cut / flush fill (drilled hole, blind pocket): the new surface lies where
         # the removed material was, so the exact vertex displacement is ~0 even though
         # volume changed. Surface displacement is the wrong magnitude here — reporting
-        # max_deviation=0 reads as "no change". Use the mesh estimate for the headline;
-        # the exact magnitude is the added/removed VOLUME.
+        # max_deviation=0 reads as "no change". Use the mesh estimate for the headline
+        # (the VOLUMES stay exact) and label the method so consumers don't read
+        # max_deviation as exact.
         magnitude = primary["max_deviation"]
+        method = "exact_volume_mesh_displacement"
         warnings.append(
             "this edit removes/adds material with ~0 net surface displacement (a cut or flush fill) — "
-            "max_deviation shown is the mesh estimate; the EXACT magnitude is removed_volume/added_volume."
+            "max_deviation is a MESH estimate (not exact); the exact magnitude is "
+            "removed_volume/added_volume."
         )
-    return _result(magnitude, "exact_boolean", exact)
+    return _result(magnitude, method, exact)
 
 
 def main(a_step: str, b_step: str, out_json: str, eps: str, budget_s: str = "0") -> None:
