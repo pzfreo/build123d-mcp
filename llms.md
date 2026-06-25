@@ -227,11 +227,20 @@ Check whether two named shapes intersect.
 ---
 
 ### `shape_compare`
-Compare two named shapes by geometry metrics.
+Compare two named shapes by geometry metrics **plus a localized surface-deviation diff**.
 
 **Inputs:** `object_a`, `object_b` (string) — names from `show()`
 
-**Returns:** JSON with volume delta, bbox delta, topology delta (faces/edges/vertices), and centre offset.
+**Returns:** JSON with:
+- volume delta, bbox delta, topology delta (faces/edges/vertices), and centre offset (as before);
+- `max_deviation` — the largest *real* surface change (noise-floored against an independent shared-deflection tessellation, so a re-export no-op reads ~0);
+- `changed` / `regions` — the localized region(s) that moved: centroid and bbox, plus exact `added_volume` / `removed_volume`;
+- `magnitude_method` — how to read `max_deviation`: `exact_boolean` (exact surface displacement *and* exact volumes), `exact_volume_mesh_displacement` (exact added/removed volume, mesh-estimated displacement — e.g. a cut/flush-fill), or `mesh_estimate` (boolean skipped or failed);
+- `unchanged_elsewhere` (bool) and `warnings`.
+
+The exact B-rep boolean is clipped to the located region and runs in a hard-bounded subprocess (in-process fallback where child processes are blocked); on a large/spread edit it gracefully falls back to the flagged mesh estimate rather than overrunning the op budget.
+
+For editing this is **model↔input verification, not a score**: confirm the changed region(s) and the add/remove volumes match the request. Note a *tangential* move (sliding a hole) or a sub-resolution edit on a very large part produces no detected region — `unchanged_elsewhere` then means "no change above the detection floor", not a guarantee; cross-check the volume/bbox/center deltas and `find_holes`.
 
 Useful for verifying a procedural build matches a reference, or quantifying how a modification changed the geometry.
 

@@ -44,7 +44,7 @@ When using an AI to write build123d scripts, the AI writes blind — it cannot s
 - `import_cad_file` — load a STEP or STL file as a named object for comparison
 
 **Comparison**
-- `shape_compare` — compare two named shapes by volume, bbox, topology, and centre offset
+- `shape_compare` — compare two named shapes by volume, bbox, topology, and centre offset, plus a localized surface-deviation diff that pinpoints *where* the geometry changed (changed region centroid/bbox), with an exact-boolean magnitude (true surface displacement + added/removed volume) for verifying an edit landed where and by how much it was requested
 - `align_check` — check alignment between two named objects along an axis (flush / center / clearance modes)
 
 **Session checkpoints**

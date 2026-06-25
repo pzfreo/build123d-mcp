@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.59
+
+### Added
+
+- **`shape_compare()` now localizes WHERE the geometry changed, with an exact magnitude.** It kept volume/bbox/topology/center deltas — useful totals, but they never said *where* an edit landed or by how much the surface actually moved, so verifying "raise this block 10 mm" or "chamfer→fillet r3" against an imported reference was guesswork. `shape_compare` now adds a bounded surface diff: a mesh nearest-neighbour pass (both shapes tessellated at a **shared deflection**, with an auto-scaled noise floor so a same-geometry re-export reads ~0 instead of a fabricated multi-mm "change") **locates** the changed region(s), then an **exact B-rep boolean clipped to that region** reports the true surface displacement and exact added/removed **volume** — no flat-face vertex-NN inflation. Output gains `max_deviation` (largest real change), `changed`/`regions` (per-region centroid/bbox + `added_volume`/`removed_volume`), `magnitude_method` (`exact_boolean` = exact displacement *and* volumes; `exact_volume_mesh_displacement` = exact volumes with a mesh-estimated displacement, e.g. a cut/flush-fill whose surface barely moves; `mesh_estimate` = boolean skipped/failed), `unchanged_elsewhere`, and `warnings`. For editing this is **model↔input verification, not a score**. (#313)
+- The exact boolean is **hard-bounded**: it tessellates and runs out of process under a budget derived from the exec timeout (matching the worker op budget, so it can't outlive — and SIGKILL — the worker), with an in-process mesh-only fallback on hosts that block child processes. Clipping to the located region keeps it in budget even on a 13 MB part (full boolean >2 min → located+clipped ≈ 88 s); a large/spread edit (clip box >150 mm) skips straight to the flagged mesh estimate, and a mid-run timeout **salvages** the already-computed mesh result rather than discarding everything. A genuinely blind case — a **tangential** move (sliding a hole) or a sub-resolution edit on a very large part — detects no region and emits a warning, so `unchanged_elsewhere` is never mistaken for a guarantee.
+- Adds `scipy` as an explicit runtime dependency (`cKDTree` for the nearest-neighbour surface pass).
+
 ## v0.3.58
 
 ### Added

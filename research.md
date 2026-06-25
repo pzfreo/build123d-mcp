@@ -177,7 +177,7 @@ Boolean intersection of two named shapes. Volume threshold 1×10⁻⁶ mm³ to s
 
 `repair_hints`: regex pattern-matching on error messages. Covers NoneType, Location syntax, fillet edge selection, missing imports, degenerate shapes, ExecutionTimeout. Advisory only.
 
-`shape_compare`: compares two named objects by volume, topology, bbox, center offset distance.
+`shape_compare`: compares two named objects by volume, topology, bbox, center offset distance, plus a localized surface-deviation diff (where the geometry changed, with an exact-boolean magnitude — surface displacement + added/removed volume — bounded in a subprocess).
 
 `diff_snapshot`: compares two snapshots (or one snapshot vs current state) by volume delta, topology delta, added/removed objects. Returns text or JSON.
 

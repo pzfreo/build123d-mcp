@@ -82,6 +82,12 @@ views disagreeing — ask the user which value to use. Do not guess silently.
   interpenetrating, with volumes), `align_check()` for flush/concentric checks,
   and connect parts with Joints (RigidJoint / RevoluteJoint / …) rather than
   raw `.move()` — see `build123d://quickref`.
+- Editing an imported reference: after changing a part loaded with
+  `import_cad_file()`, `shape_compare("input", "edited")` localizes *where* the
+  geometry changed and reports the exact added/removed volume and surface
+  displacement — confirm the changed region and magnitude match the request, and
+  that the rest stayed put. A tangential move (sliding a hole) shows no region;
+  cross-check `find_holes` and the bbox/center deltas for those.
 
 ## Step 4 — Experiments and recovery
 
