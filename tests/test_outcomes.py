@@ -729,6 +729,31 @@ def test_shape_compare_falls_back_in_process_when_subprocess_blocked(session, mo
     assert "error" not in data["surface_deviation"]
 
 
+def test_shape_compare_in_process_tessellation_failure_is_clean_error(session, monkeypatch):
+    """On a subprocess-blocked host, an un-tessellatable shape (the build123d-0.11
+    'NbNodes' quirk) must return a structured JSON error, not raise out of the tool."""
+    import subprocess
+
+    import build123d_mcp._shape_compare_subprocess as scs
+    from build123d_mcp.tools.shape_compare import shape_compare
+
+    execute_code(
+        session, "show(Box(10,10,10), 'a')\nshow(Box(10,10,10) + Pos(0,0,6)*Box(4,4,4), 'b')"
+    )
+
+    def _blocked(*a, **k):
+        raise PermissionError("child process creation not permitted")
+
+    def _boom(*a, **k):
+        raise AttributeError("'NoneType' object has no attribute 'NbNodes'")
+
+    monkeypatch.setattr(subprocess, "run", _blocked)
+    monkeypatch.setattr(scs, "_tessellate_points", _boom)
+    data = json.loads(shape_compare(session, "a", "b"))  # must NOT raise
+    assert "error" in data["surface_deviation"]
+    assert "NbNodes" in data["surface_deviation"]["error"]
+
+
 def test_shape_compare_timeout_is_clean_error(session, monkeypatch):
     import subprocess
 

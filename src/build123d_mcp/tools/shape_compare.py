@@ -28,8 +28,14 @@ def _surface_compare_in_process(sa, sb, deadline=None) -> dict:
     from build123d_mcp._shape_compare_subprocess import compare_shapes
 
     # In-process (host blocks subprocesses) there is NO op-timeout to kill a runaway
-    # boolean, so never run it here — mesh estimate only (allow_exact=False).
-    return compare_shapes(sa, sb, _SURFACE_EPS_MM, deadline=deadline, allow_exact=False)
+    # boolean, so never run it here — mesh estimate only (allow_exact=False). Mirror
+    # the subprocess worker's structured-error boundary: an un-tessellatable shape
+    # (e.g. the build123d-0.11 'NbNodes' quirk) must return a JSON error, not raise
+    # out of shape_compare().
+    try:
+        return compare_shapes(sa, sb, _SURFACE_EPS_MM, deadline=deadline, allow_exact=False)
+    except Exception as exc:  # noqa: BLE001 - convert in-process failures to structured JSON
+        return {"error": f"{type(exc).__name__}: {exc}", "warnings": []}
 
 
 def _surface_compare_bounded(session, sa, sb) -> dict:
