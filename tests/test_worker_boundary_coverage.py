@@ -233,6 +233,14 @@ def _render_view(ws, tmp_path):
     assert out.exists() and out.stat().st_size > 0
 
 
+def _pull_viewer_deltas(ws, tmp_path):
+    # First pull on the seeded worker: both boxes are new, so they appear as
+    # upserts with tessellated meshes — proving the op reads worker geometry.
+    r = ws.pull_viewer_deltas()
+    assert "a" in r["upsert"] and "b" in r["upsert"]
+    assert r["remove"] == []
+
+
 # op name -> check function. The op name MUST match the dispatch/proxy op string.
 SESSION_STATEFUL_TOOLS = {
     "measure": _measure,
@@ -258,6 +266,7 @@ SESSION_STATEFUL_TOOLS = {
     "inspect_drawing": _inspect_drawing,
     "export_file": _export_file,
     "render_view": _render_view,
+    "pull_viewer_deltas": _pull_viewer_deltas,
 }
 
 # Dispatch ops deliberately NOT in the smoke inventory, each with the reason it

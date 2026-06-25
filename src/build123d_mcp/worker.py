@@ -284,6 +284,40 @@ def _op_render_drawing(session: Any, args: dict, library_index: Any) -> Any:
     return render_drawing(args["svg_path"], args.get("width", 0), args.get("save_to", ""))
 
 
+def _op_pull_viewer_deltas(session: Any, args: dict, library_index: Any) -> Any:
+    """Return per-shape mesh deltas since the last pull, for the live viewer.
+
+    Diffs ``session.objects`` by identity against a worker-held baseline and
+    tessellates only the changed shapes (via the same bounded, hard-killable
+    out-of-process path render_view uses), returning raw vertex/triangle arrays
+    the server encodes to glb. Called by server.py after each geometry-mutating
+    tool, only while a viewer is attached.
+    """
+    baseline = session._viewer_baseline
+    objects = session.objects
+    upsert_names = [name for name, shape in objects.items() if baseline.get(name) != id(shape)]
+    remove = [name for name in baseline if name not in objects]
+
+    meshes: dict = {}
+    if upsert_names:
+        from build123d_mcp.tools.render import _QUALITY, _tessellate_shapes_bounded
+
+        shapes = [(name, objects[name], None) for name in upsert_names]
+        meshes, _failed = _tessellate_shapes_bounded(shapes, _QUALITY["standard"])
+
+    # Advance the baseline only for shapes we actually tessellated (drop removed
+    # ones). A shape that failed tessellation is left dirty, so the next pull
+    # retries it instead of skipping it forever.
+    new_baseline = {name: ident for name, ident in baseline.items() if name in objects}
+    for name in upsert_names:
+        if name in meshes:
+            new_baseline[name] = id(objects[name])
+        else:
+            new_baseline.pop(name, None)
+    session._viewer_baseline = new_baseline
+    return {"upsert": meshes, "remove": remove}
+
+
 _T = "build123d_mcp.tools"
 
 # Populated by the @_op decorator on WorkerSession's typed stub methods, plus
@@ -366,6 +400,11 @@ class WorkerSession:
         # and one can recv() the other's response. A single OCC worker is serial
         # anyway, so serialising costs no real throughput. (#322)
         self._lock = threading.Lock()
+        # Optional callback fired after the worker is (re)started following a
+        # crash/timeout restart, used by the live viewer to emit a RESET so
+        # clients clear their now-stale scene. Not fired on the first start.
+        self._on_restart: Callable[[], None] | None = None
+        self._started_once = False
         self._start_worker()
 
     @property
@@ -452,6 +491,19 @@ class WorkerSession:
                 f"Worker process failed to start: {msg['error']}. "
                 "Relaunch with --in-process to skip subprocess resource limits."
             )
+
+        # A successful (re)start past the first one means the previous worker
+        # died and its session state is gone, so notify observers (the viewer).
+        if self._started_once and self._on_restart is not None:
+            try:
+                self._on_restart()
+            except Exception:  # noqa: BLE001 - a viewer callback must never break the restart
+                pass
+        self._started_once = True
+
+    def set_on_restart(self, callback: "Callable[[], None] | None") -> None:
+        """Register a callback fired after each worker restart (not the first)."""
+        self._on_restart = callback
 
     def _kill_worker(self) -> None:
         try:
@@ -553,6 +605,10 @@ class WorkerSession:
         colors: dict[str, str] | None = None,
         mode: str = "auto",
     ) -> dict:
+        raise NotImplementedError
+
+    @_op(_op_pull_viewer_deltas, _RENDER_TIMEOUT)
+    def pull_viewer_deltas(self) -> dict:
         raise NotImplementedError
 
     @_op(_tool(f"{_T}.export:export_file"), _export_budget)

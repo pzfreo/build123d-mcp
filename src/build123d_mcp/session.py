@@ -43,6 +43,9 @@ class Session:
         self.drawing_page: dict[str, Any] | None = None
         self.geometry_refs: dict[str, Any] = {}
         self.execute_history: list[str] = []
+        # Live-viewer delta tracking: name -> id(shape) at the last delta pull,
+        # used to identity-diff changed shapes (see worker._op_pull_viewer_deltas).
+        self._viewer_baseline: dict[str, int] = {}
         # True while the current execute() call has explicitly registered a
         # shape via show()/annotate()/register_centerline() — blocks the
         # post-exec variable scan from overriding that registration (#236).
@@ -739,4 +742,5 @@ class Session:
         self.last_error_detail = None
         self.geometry_refs.clear()
         self.execute_history = []
+        self._viewer_baseline.clear()
         self._inject_builtins()

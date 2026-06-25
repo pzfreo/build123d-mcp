@@ -184,6 +184,16 @@ Part library file format (Python, any .py file under --library path):
         "limit is reached and is killed at the hard limit. "
         "Overrides BUILD123D_CPU_LIMIT_S env var.",
     )
+    parser.add_argument(
+        "--viewer-socket",
+        metavar="PATH",
+        default=os.environ.get("BUILD123D_VIEWER_SOCKET", ""),
+        help="Bind a Unix domain socket at PATH and stream live mesh updates (glb "
+        "over a length-prefixed protocol) to connected viewer clients, so a human "
+        "can watch and rotate the model as the session changes. Off by default; "
+        "adds no cost when no viewer is attached. POSIX only. "
+        "Overrides BUILD123D_VIEWER_SOCKET env var. See docs/live-viewer.md.",
+    )
     args = parser.parse_args()
 
     if args.library and not os.path.isdir(args.library):
@@ -198,6 +208,13 @@ Part library file format (Python, any .py file under --library path):
         parser.error(f"--memory-limit-mb must be a positive integer, got {args.memory_limit_mb}")
     if args.cpu_limit_s is not None and args.cpu_limit_s <= 0:
         parser.error(f"--cpu-limit-s must be a positive integer, got {args.cpu_limit_s}")
+
+    if args.viewer_socket:
+        if sys.platform == "win32":
+            parser.error("--viewer-socket requires a POSIX platform (AF_UNIX sockets)")
+        parent = os.path.dirname(os.path.abspath(args.viewer_socket))
+        if not os.path.isdir(parent):
+            parser.error(f"--viewer-socket parent directory does not exist: {parent}")
 
     extra_imports = tuple(m.strip() for m in args.allow_imports.split(",") if m.strip())
 
@@ -231,6 +248,9 @@ Part library file format (Python, any .py file under --library path):
             file=sys.stderr,
         )
     server.configure(session_cls(**session_kwargs))
+
+    if args.viewer_socket:
+        server.start_viewer(args.viewer_socket)
 
     if args.transport == "http":
         import uvicorn

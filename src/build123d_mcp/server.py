@@ -50,6 +50,73 @@ def configure(session: WorkerSession) -> None:
     _session = session
 
 
+# Live-session viewer publisher (build123d_mcp.viewer.ViewerPublisher), or None
+# when --viewer-socket was not given. Set by start_viewer().
+_viewer = None
+
+
+def start_viewer(socket_path: str):
+    """Bind the live-viewer UDS and start broadcasting mesh deltas.
+
+    Called by ``cli.main()`` when ``--viewer-socket`` / ``BUILD123D_VIEWER_SOCKET``
+    is set. The publisher runs on its own daemon thread in this (server) process,
+    never on the agent path. A worker restart triggers a viewer RESET so clients
+    drop their now-stale scene.
+    """
+    global _viewer
+    from build123d_mcp.viewer import ViewerPublisher
+
+    _viewer = ViewerPublisher(socket_path)
+    _viewer.start()
+    try:
+        _resolve_session().set_on_restart(_viewer.reset)
+    except Exception:  # noqa: BLE001 - the viewer must never break startup
+        pass
+    return _viewer
+
+
+def _publish_deltas() -> None:
+    """Refresh the viewer's scene cache with changed shapes and broadcast them.
+
+    Runs whenever the viewer socket is configured (``_viewer`` is set), even with
+    no client attached, so the server-side cache stays current and a viewer that
+    attaches at any time (early or late) gets a correct full-scene dump.
+    Broadcasting to zero clients is a no-op. A pure agent run (no
+    ``--viewer-socket``) does no work here. Failures are swallowed: a viewer
+    problem must never turn a successful tool call into an error.
+    """
+    viewer = _viewer
+    if viewer is None:
+        return
+    # The viewer is bound to the module-singleton session. In HTTP multi-session
+    # mode a per-request tenant session is set on _session_var; do not publish its
+    # geometry into the shared viewer stream, which would leak between tenants.
+    if _session_var.get() is not None:
+        return
+    try:
+        deltas = _resolve_session().pull_viewer_deltas()
+    except Exception:  # noqa: BLE001 - viewer plumbing must not affect the tool result
+        return
+    if not isinstance(deltas, dict):
+        return
+    for name in deltas.get("remove", []):
+        viewer.remove(name)
+    for name, mesh in deltas.get("upsert", {}).items():
+        try:
+            verts, tris = mesh
+            viewer.upsert(name, verts, tris)
+        except Exception:  # noqa: BLE001 - skip a malformed mesh, keep the rest
+            continue
+
+
+def _publish_reset() -> None:
+    """Tell viewer clients to clear their scene (the session was reset)."""
+    viewer = _viewer
+    if viewer is None or _session_var.get() is not None:
+        return
+    viewer.reset()
+
+
 def http_app():
     """Return the FastMCP ASGI app for use with an ASGI server (e.g. uvicorn).
 
@@ -71,7 +138,9 @@ def execute(code: str) -> str:
     """Execute build123d Python code in the persistent session. Errors include automatic fix hints — read them before retrying. Use show(shape, name) to register named objects (name defaults to 'shape'); show() immediately prints volume and face count confirming the shape is non-empty. After any boolean operation (-, +, &) call measure() to confirm it succeeded (check topology.faces). named_face(shape, name) is a built-in helper: named_face(box, 'top') returns the highest-Z face, 'bottom'/'front'/'back'/'left'/'right' work similarly. find_edges(shape, geom='circle', radius=4.25, at_z=10.2, length=None, tol=0.05) filters edges for fillet/chamfer selection and prints what matched. save_json(name, obj) writes structured analysis data (face inventories, hole tables) to a server scratch file and returns its path — use it instead of printing large results; open()/os stay blocked."""
     from build123d_mcp.tools.execute import execute_code
 
-    return execute_code(_resolve_session(), code)
+    result = execute_code(_resolve_session(), code)
+    _publish_deltas()
+    return result
 
 
 @mcp.tool()
@@ -345,7 +414,9 @@ def load_part(name: str, params: str = "") -> str:
     """Load a named part from the library into the session. name: part name from search_library. params: optional JSON object of parameter overrides e.g. '{\"od\": 8.0, \"length\": 20.0}' — unspecified params use their defaults. The part is registered as a named object and becomes current_shape."""
     if not _resolve_session().has_library:
         return "No part library configured. Start the server with --library PATH or set BUILD123D_PART_LIBRARY."
-    return _resolve_session().load_part(name, params)
+    result = _resolve_session().load_part(name, params)
+    _publish_deltas()
+    return result
 
 
 @mcp.tool()
@@ -362,7 +433,9 @@ def restore_snapshot(name: str) -> str:
     The Python variable namespace is NOT restored — execute() calls made after the snapshot are still in scope,
     but current_shape and all show() objects revert to what they were at snapshot time.
     Raises an error if the snapshot name does not exist."""
-    return _resolve_session().restore_snapshot(name)
+    result = _resolve_session().restore_snapshot(name)
+    _publish_deltas()
+    return result
 
 
 @mcp.tool()
@@ -386,7 +459,9 @@ def health_check() -> str:
 @mcp.tool()
 def reset() -> str:
     """Clear the current session back to empty state, including all snapshots."""
-    return _resolve_session().reset()
+    result = _resolve_session().reset()
+    _publish_reset()
+    return result
 
 
 @mcp.tool()
@@ -434,7 +509,9 @@ def script(save_to: str = "") -> str:
 @mcp.tool()
 def import_cad_file(path: str, name: str = "") -> str:
     """Import a STEP (.step/.stp) or STL (.stl) file as a named object in the session. path: absolute or relative path to the file. name: name to register the shape under (defaults to the filename stem). The shape becomes both the named object and the current_shape. Returns volume, topology, and bounding box of the imported shape. After importing, use render_view() to visualise the shape, measure() for geometry queries, or shape_compare() to diff against a show() object. Note: STL imports produce a shell (volume=0) rather than a solid — render_view and measure still work, but clearance() and boolean operations require a solid. If you have both the original built shape and an imported copy in session.objects, render the imported one by name (e.g. objects='mypart') to avoid Z-fighting artifacts from two co-located shapes."""
-    return _resolve_session().import_cad_file(path, name)
+    result = _resolve_session().import_cad_file(path, name)
+    _publish_deltas()
+    return result
 
 
 @mcp.tool()

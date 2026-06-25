@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.60
+
+### Added
+
+- **Live session viewer over a Unix domain socket (`--viewer-socket PATH`).** Optionally stream the session's geometry to an interactive 3D viewer so a human can watch and rotate the model while an agent drives the MCP, instead of only seeing fixed-viewpoint `render_view` PNGs. When the flag (or `BUILD123D_VIEWER_SOCKET`) is set, the server binds a UDS and, after each geometry-mutating tool (`execute`, `reset`, `restore_snapshot`, `import_cad_file`, `load_part`), broadcasts the **changed** shapes as glTF-binary (glb) to connected viewer clients. The publisher runs on a background daemon thread in the server process and never blocks the agent path: it pays nothing while no viewer is attached (no tessellation, no worker round-trip), tessellates only identity-changed shapes via the existing hard-bounded out-of-process path, and a slow client is throttled (bounded per-client buffers, drop-oldest) rather than the producer. A viewer attaching mid-session gets `HELLO` + a full-scene dump; a worker restart emits `RESET`. The glb encoder is a small self-contained glTF 2.0 writer, so there is **no new dependency** and no OCC/VTK in the encode step. The socket is created mode 0600 and lives outside the sandboxed `execute()` worker. Wire protocol, usage, and a dependency-free reference consumer (`examples/live_viewer_client.py`) are documented in `docs/live-viewer.md`. POSIX only.
+
 ## v0.3.59
 
 ### Added

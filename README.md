@@ -320,6 +320,21 @@ Clients connect to `http://<host>:8000/mcp`.
 
 > **Security note.** The server has no built-in authentication. When binding to `0.0.0.0`, place it behind a reverse proxy with auth (e.g. nginx + mTLS, or a VPN).
 
+### Live session viewer (experimental)
+
+Start the server with `--viewer-socket PATH` (or `BUILD123D_VIEWER_SOCKET=PATH`) to
+stream the session's geometry to an interactive 3D viewer over a Unix domain socket,
+so a human can watch and rotate the model while an agent drives the tools. Each
+shape is broadcast as a glTF-binary (glb) and updated after every geometry-mutating
+tool call. The publisher runs on a background thread in the server process and does
+not stall the agent path; a pure agent run (no `--viewer-socket`) does no extra work.
+
+Two example consumers ship with it, neither a package dependency: an interactive
+pyvista window ([`examples/live_viewer_pyvista.py`](examples/live_viewer_pyvista.py),
+run via `uv run --with pyvista`) and a dependency-free text client
+([`examples/live_viewer_client.py`](examples/live_viewer_client.py)). The wire
+protocol and design are in [docs/live-viewer.md](docs/live-viewer.md). POSIX only.
+
 ---
 
 ## System prompt
