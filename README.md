@@ -12,6 +12,8 @@ An MCP (Model Context Protocol) server that exposes build123d CAD operations as 
 
 When using an AI to write build123d scripts, the AI writes blind — it cannot see the geometry it produces. This server closes the feedback loop: the AI can create geometry, render views, query dimensions, and catch errors incrementally rather than writing complete scripts and hoping they are correct.
 
+**Evidence it works:** on the public [CADGenBench](https://huggingface.co/spaces/HuggingAI4Engineering/CADGenBench) leaderboard (June 2026), driving GPT‑5.5 through build123d‑mcp scores **0.457 — the top result on the board** — versus **0.360** for the same model writing build123d scripts blind: a **+27%** gain that also raises CAD validity from 88% to 100%, and beats even the larger GPT‑5.5 Pro baseline. The feedback loop measurably improves what an LLM can model.
+
 ## Tools
 
 **Core**
