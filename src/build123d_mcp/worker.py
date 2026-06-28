@@ -22,6 +22,7 @@ containment and no operation timeouts.
 import functools
 import inspect
 import multiprocessing
+import threading
 from collections.abc import Callable
 from typing import Any, NamedTuple, TypeVar, cast
 
@@ -358,6 +359,13 @@ class WorkerSession:
         self._no_sandbox = no_sandbox
         self._conn: Any = None
         self._proc: Any = None
+        # Serialises the request/reply critical section (send -> poll -> recv)
+        # over the single worker Pipe. Under HTTP transport one WorkerSession is
+        # shared across concurrent requests (FastMCP runs sync tools off the
+        # event loop); without this lock two threads can interleave on the pipe
+        # and one can recv() the other's response. A single OCC worker is serial
+        # anyway, so serialising costs no real throughput. (#322)
+        self._lock = threading.Lock()
         self._start_worker()
 
     @property
@@ -453,6 +461,13 @@ class WorkerSession:
             pass
 
     def _call(self, op: str, args: dict, timeout: int) -> Any:
+        # Serialise the IPC critical section so concurrent callers (HTTP shared
+        # session, pipelined clients) can't interleave on the pipe. Subclasses
+        # override _do_call, not _call, so they inherit this guard. (#322)
+        with self._lock:
+            return self._do_call(op, args, timeout)
+
+    def _do_call(self, op: str, args: dict, timeout: int) -> Any:
         if not self._proc.is_alive():
             self._start_worker()
             raise RuntimeError(
@@ -735,11 +750,13 @@ class InProcessSession(WorkerSession):
         # no process here, so always dispatch the real reset.
         return self._call("reset", {}, _SHORT_TIMEOUT)
 
-    def _call(self, op: str, args: dict, timeout: int) -> Any:
+    def _do_call(self, op: str, args: dict, timeout: int) -> Any:
         # Same error contract as the worker path: tool exceptions surface as
         # RuntimeError("TypeName: message"), mirroring worker_main's error
         # envelope. (Session.execute() handles ExecutionTimeout internally
         # and returns an error string, so no special-casing is needed here.)
+        # Inherits the base _call's lock, so concurrent requests can't run the
+        # one shared Session/OCC kernel re-entrantly. (#322)
         try:
             return _dispatch(self._session, op, args, self._library_index)
         except Exception as exc:

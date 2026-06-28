@@ -10,6 +10,7 @@ These tests stub the pipe/process layer — no worker subprocess is spawned.
 """
 
 import inspect
+import threading
 
 import pytest
 
@@ -152,6 +153,7 @@ def _stubbed_session(conn, alive=True):
     ws._conn = conn
     ws._proc = _StubProc(alive=alive)
     ws._exec_timeout = 120
+    ws._lock = threading.Lock()
     ws._kill_worker = lambda: None
     ws._start_worker = lambda: None
     return ws

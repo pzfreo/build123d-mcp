@@ -65,6 +65,20 @@ tools/export.py    — STEP/STL export; path traversal blocked
 - **Snapshots** save `current_shape` + `objects` only — the Python namespace is NOT restored on `restore_snapshot()`.
 - **`reset()`** clears everything: namespace, shapes, objects, snapshots.
 
+## Concurrency model
+
+- **A `WorkerSession` is single-threaded over its pipe.** `_call()` holds
+  `self._lock` across `send → poll → recv`, so concurrent callers serialise.
+  This matters under HTTP transport, where one shared `WorkerSession` fields
+  concurrent requests — without the lock, replies mispair. **Subclasses
+  override `_do_call`, not `_call`**, so they inherit the guard (e.g.
+  `InProcessSession`). See `docs/adr/0001-worker-ipc-concurrency.md` (#322).
+- **HTTP mode shares one CAD session by default.** The lock makes the sharing
+  *safe*, not *isolated* — concurrent clients still see one namespace.
+  Per-tenant isolation is an embedder concern via the `_session_var` contextvar
+  hook in `server.py`; the CLI does not ship multi-session middleware, and
+  building it is a deliberate non-goal until a real hosting requirement exists.
+
 ## Security model
 
 Three layers, all must pass before user code runs:
