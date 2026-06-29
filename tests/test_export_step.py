@@ -3,9 +3,11 @@
 build123d 0.11.0's high-level ``export_step`` (the ``STEPCAFControl_Writer`` path)
 raises ``RuntimeError: Failed to write STEP file`` on many imported-STEP-derived
 solids that 0.10.0 wrote fine — it hit ~38% of editing-fixture benchmark runs.
-``_write_step`` falls back to the basic ``STEPControl_Writer``, which writes the
-same geometry. These tests pin the happy path and the fallback (forced by making
-the high-level writer raise, so it's exercised on any build123d version).
+``_write_step`` first retries through a ``Compound`` wrapper (which keeps the CAF
+path working, so names/colours survive), then falls back to the basic
+``STEPControl_Writer`` (geometry only). These tests pin the happy path, the
+forced fallback (high-level writer made to raise, so it runs on any version), and
+the real reimported-solid regression.
 """
 
 import pytest
@@ -94,5 +96,30 @@ def test_export_step_raises_clearly_when_both_writers_fail(session, tmp_path, mo
             return IFSelect_ReturnStatus.IFSelect_RetFail
 
     monkeypatch.setattr("OCP.STEPControl.STEPControl_Writer", _Dead)
-    with pytest.raises(RuntimeError, match="both failed"):
+    with pytest.raises(RuntimeError, match="all failed"):
         export_file(session, "out", "step", object_name="part")
+
+
+def test_write_step_handles_reimported_solid(tmp_path):
+    """gumyr/build123d#1356: on build123d 0.11 ``export_step`` raises on a solid
+    that came straight from ``import_step``; ``_write_step`` must still write a
+    valid STEP (via the Compound-wrap retry) and must NOT mutate the caller's
+    shape. Cross-version: on 0.10 the primary path already works. No monkeypatch
+    — this exercises the real regression where the installed version has it.
+    """
+    from build123d import Box, export_step, import_step
+
+    from build123d_mcp.tools.export import _write_step
+
+    seed = tmp_path / "seed.step"
+    export_step(Box(10, 10, 10), str(seed))
+    s = import_step(str(seed))
+    parent_before = s.parent
+
+    out = tmp_path / "out.step"
+    _write_step(s, str(out))  # must not raise on either build123d version
+
+    assert s.parent is parent_before  # the fallback must not reparent the shape
+    back = import_step(str(out))
+    assert len(back.solids()) == 1
+    assert back.volume == pytest.approx(1000.0, rel=1e-3)

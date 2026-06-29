@@ -95,19 +95,40 @@ def _write_step(shape, abs_path: str) -> None:
 
     build123d's ``export_step`` goes through ``STEPCAFControl_Writer`` (the CAF
     writer that carries colours/layers/names). On build123d 0.11.0 that path
-    raises ``RuntimeError: Failed to write STEP file`` on many imported-STEP-
-    derived solids that 0.10.0 wrote fine — observed on ~38% of editing-fixture
-    runs, where the agent imports a STEP and exports the (valid) edited solid.
-    The basic ``STEPControl_Writer`` writes the same geometry without trouble, so
-    fall back to it: a CAD scorer / downstream tool needs the geometry, not the
-    CAF labels/colours the basic writer drops. Geometry round-trips identically.
+    raises ``RuntimeError: Failed to write STEP file`` on a solid that came
+    straight from ``import_step`` (gumyr/build123d#1356) — observed on ~38% of
+    editing-fixture runs, where the agent imports a STEP and exports the (valid)
+    edited solid. Two fallbacks, best first:
+
+    1. **Wrap in a ``Compound`` and retry ``export_step``.** The same solid
+       writes through the CAF path once wrapped, so body names/colours survive.
+    2. **Raw ``STEPControl_Writer``.** Writes the geometry but drops CAF
+       names/colours.
+
+    Geometry round-trips identically in all three; a CAD scorer needs the
+    geometry, and the wrap retry additionally keeps the CAF metadata when it can.
     """
     from build123d import export_step
 
     try:
         export_step(shape, abs_path)
         return
-    except Exception:  # noqa: BLE001 - any high-level-writer failure → raw fallback
+    except Exception:  # noqa: BLE001 - high-level-writer failure → try the wrap retry
+        pass
+
+    # Wrap-and-retry (gumyr/build123d#1356). Constructing a Compound reparents its
+    # children, so save/restore ``shape.parent`` to keep the fallback free of side
+    # effects on the caller's shape (which may be the live session object).
+    try:
+        from build123d import Compound
+
+        _saved_parent = shape.parent
+        try:
+            export_step(Compound(children=[shape]), abs_path)
+            return
+        finally:
+            shape.parent = _saved_parent
+    except Exception:  # noqa: BLE001 - still failing → raw geometry-only fallback
         pass
 
     from OCP.IFSelect import IFSelect_ReturnStatus
@@ -117,8 +138,8 @@ def _write_step(shape, abs_path: str) -> None:
     writer.Transfer(shape.wrapped, STEPControl_AsIs)
     if writer.Write(abs_path) != IFSelect_ReturnStatus.IFSelect_RetDone:
         raise RuntimeError(
-            "Failed to write STEP file (build123d export_step and the raw "
-            "STEPControl_Writer fallback both failed)"
+            "Failed to write STEP file (build123d export_step, the Compound-wrap "
+            "retry, and the raw STEPControl_Writer fallback all failed)"
         )
 
 
