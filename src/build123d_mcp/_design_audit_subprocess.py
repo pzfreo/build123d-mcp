@@ -24,6 +24,12 @@ import time
 
 # Stop starting new rebuilds when this little of the soft budget remains.
 _STOP_THRESHOLD_S = 2
+# Cap each perturbation rebuild at this multiple of the measured baseline rebuild
+# time (floored) so one pathological/slow rebuild can't consume the whole budget
+# and starve later params — while a heavy-but-valid build (perturbation ≈ baseline)
+# still fits comfortably.
+_BASELINE_CAP_FACTOR = 4
+_MIN_PERTURB_S = 8
 
 
 def _const_number(node):
@@ -127,19 +133,32 @@ def _rewrite(program: str, name: str, new_value) -> str:
 
 
 def _perturbations(value, is_int: bool, eps: float):
-    """Return ``[(delta_pct, new_value)]`` for ±eps, dropping no-op directions."""
+    """Return perturbation dicts for ±eps: ``{delta_pct, new_value, discrete}``.
+
+    ``delta_pct`` is the *realized* change (from ``new_value`` vs ``value``), so a
+    discrete integer bump like 4→5 reports 25, not the nominal 10. ``discrete`` is
+    True when ±eps rounded back to the original int and it was stepped by ±1
+    instead. Directions that don't change the value (zero-valued float) are
+    dropped, and a discrete step that would drive a positive int to ≤ 0 is dropped
+    — that is a "remove the feature" edit, not a ±eps robustness probe.
+    """
     out = []
     for sign in (1, -1):
+        discrete = False
         nv = value * (1 + sign * eps)
         if is_int:
             nv = int(round(nv))
             if nv == value:
-                nv = value + sign  # ensure a discrete change (e.g. count 4 -> 5 / 3)
+                nv = value + sign  # ±eps rounded to no change → discrete ±1 step
+                discrete = True
+            if value > 0 and nv <= 0:
+                continue  # positive count/dimension to ≤0 is a removal, not a nudge
         else:
             nv = round(nv, 6)
         if nv == value:
             continue  # zero-valued float: ±eps is a no-op — unperturbable
-        out.append((round(sign * eps * 100), nv))
+        delta_pct = round((nv - value) / value * 100) if value else None
+        out.append({"delta_pct": delta_pct, "new_value": nv, "discrete": discrete})
     return out
 
 
@@ -190,8 +209,8 @@ def run_audit(
     def remaining() -> float:
         return deadline - time.monotonic()
 
-    def cap() -> int:
-        return max(3, min(per_run_cap, int(remaining())))
+    def cap(limit: float) -> int:
+        return max(3, min(int(limit), int(remaining())))
 
     state: dict = {"baseline": None, "baseline_ok": False, "audit": [], "completed": False}
 
@@ -203,7 +222,11 @@ def run_audit(
             json.dump(state, f)
         os.replace(tmp, out_path)
 
-    state["baseline"] = evaluate_program(program, cap())
+    # Baseline gets the full per-run budget (it may be the heaviest single build);
+    # time it so perturbations can be capped relative to it.
+    t_base = time.monotonic()
+    state["baseline"] = evaluate_program(program, cap(per_run_cap))
+    base_time = time.monotonic() - t_base
     state["baseline_ok"] = bool(
         state["baseline"].get("rebuilt") and state["baseline"].get("passes_gate")
     )
@@ -214,46 +237,54 @@ def run_audit(
         return state
 
     base_vol = state["baseline"]["volume"]
+    perturb_limit = max(_MIN_PERTURB_S, min(per_run_cap, int(base_time * _BASELINE_CAP_FACTOR) + 2))
+
     for p in params:
         if remaining() <= _STOP_THRESHOLD_S:
             break
+        if p.get("reassigned"):
+            # The later top-level assignment overwrites the one we rewrite, so the
+            # rebuild is a guaranteed no-op — skip it (reclaim budget) and mark the
+            # parameter inconclusive rather than counting it as robust.
+            state["audit"].append(
+                {
+                    **p,
+                    "perturbations": [],
+                    "brittle": False,
+                    "inconclusive": True,
+                    "note": "reassigned at top level — perturbing the first assignment is overwritten; audit inconclusive",
+                }
+            )
+            flush()
+            continue
         results: list = []
         brittle = False
-        for delta_pct, new_value in _perturbations(p["value"], p["type"] == "int", epsilon):
+        for pert in _perturbations(p["value"], p["type"] == "int", epsilon):
             if remaining() <= _STOP_THRESHOLD_S:
                 break
-            g = evaluate_program(_rewrite(program, p["name"], new_value), cap())
+            g = evaluate_program(
+                _rewrite(program, p["name"], pert["new_value"]), cap(perturb_limit)
+            )
+            entry = {"delta_pct": pert["delta_pct"], "new_value": pert["new_value"]}
+            if pert["discrete"]:
+                entry["discrete_step"] = True
             if not g.get("rebuilt"):
                 brittle = True
-                results.append(
-                    {
-                        "delta_pct": delta_pct,
-                        "new_value": new_value,
-                        "rebuilt": False,
-                        "error": g.get("error"),
-                    }
-                )
+                entry["rebuilt"] = False
+                entry["error"] = g.get("error")
+                results.append(entry)
                 continue
-            entry = {
-                "delta_pct": delta_pct,
-                "new_value": new_value,
-                "rebuilt": True,
-                "passes_gate": g["passes_gate"],
-                "n_solids": g["n_solids"],
-                "volume": g["volume"],
-            }
+            entry["rebuilt"] = True
+            entry["passes_gate"] = g["passes_gate"]
+            entry["n_solids"] = g["n_solids"]
+            entry["volume"] = g["volume"]
             if base_vol:
                 entry["volume_delta_pct"] = round((g["volume"] - base_vol) / base_vol * 100, 1)
             if not g["passes_gate"]:
                 brittle = True
                 entry["reasons"] = g["reasons"]
             results.append(entry)
-        entry_p = {**p, "perturbations": results, "brittle": brittle}
-        if p.get("reassigned"):
-            entry_p["note"] = (
-                "reassigned at top level — perturbation may be overwritten; result is not conclusive"
-            )
-        state["audit"].append(entry_p)
+        state["audit"].append({**p, "perturbations": results, "brittle": brittle})
         flush()
 
     # completed only if every parameter was audited — a soft-budget break leaves

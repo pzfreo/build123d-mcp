@@ -71,6 +71,10 @@ def design_audit(session, epsilon: float = 0.1, max_params: int = 8) -> str:
     For each top-level numeric parameter, rebuild the program with the parameter
     nudged ±epsilon and run the validity gate on the result. A parameter is
     brittle if any perturbation fails to rebuild or fails the gate.
+
+    Known limitation: only literal-valued top-level assignments are surfaced as
+    parameters. A derived parameter (e.g. ``radius = diameter / 2``) is not listed
+    on its own — perturb the upstream literal it depends on instead.
     """
     if not 0 < epsilon < 1:
         return json.dumps({"error": "epsilon must be between 0 and 1 (e.g. 0.1 for ±10%)."})
@@ -195,7 +199,11 @@ def _format(state, params, audited, inline_literals, epsilon, salvaged) -> str:
     n_audited = len(audit)
     completed = bool(state.get("completed"))
     truncated = len(params) > len(audited) or n_audited < len(audited) or not completed or salvaged
-    brittle_count = sum(1 for a in audit if a.get("brittle"))
+    # Each audited param falls in exactly one bucket: inconclusive (reassigned, a
+    # no-op rebuild), else brittle, else robust — so robust+brittle+inconclusive
+    # == audited and `robust` never over-counts an unprobed param.
+    inconclusive_count = sum(1 for a in audit if a.get("inconclusive"))
+    brittle_count = sum(1 for a in audit if a.get("brittle") and not a.get("inconclusive"))
 
     note = (
         "For editing, verify each brittle parameter: a small change should not collapse a robust "
@@ -221,8 +229,9 @@ def _format(state, params, audited, inline_literals, epsilon, salvaged) -> str:
             "summary": {
                 "total_params": len(params),
                 "audited": n_audited,
-                "robust": n_audited - brittle_count,
+                "robust": n_audited - brittle_count - inconclusive_count,
                 "brittle": brittle_count,
+                "inconclusive": inconclusive_count,
                 "truncated": truncated,
                 "epsilon": epsilon,
             },

@@ -103,14 +103,40 @@ def test_security_config_propagated_to_subprocess(session, monkeypatch):
     assert "w" in [a["name"] for a in r["audit"]]
 
 
-def test_reassigned_parameter_is_flagged_not_silently_passed(session):
+def test_reassigned_parameter_is_inconclusive_not_robust(session):
     # A name assigned twice at the top level: perturbing the first assignment is
-    # overwritten, so the audit must flag it as inconclusive, not report robust.
+    # overwritten, so the audit must bucket it as inconclusive (not robust) and
+    # skip the guaranteed-no-op rebuilds.
     r = _run(session, "t = 5.0\nt = 5.0\nshow(Box(t, t, t), 'p')\n")
     t_param = next(p for p in r["parameters"] if p["name"] == "t")
     assert t_param.get("reassigned") is True
     t_audit = next(a for a in r["audit"] if a["name"] == "t")
-    assert "reassigned" in t_audit.get("note", "")
+    assert t_audit.get("inconclusive") is True
+    assert t_audit["perturbations"] == []  # no-op rebuilds skipped
+    assert r["summary"]["inconclusive"] == 1
+    assert r["summary"]["robust"] == 0
+    # buckets partition the audited set
+    s = r["summary"]
+    assert s["robust"] + s["brittle"] + s["inconclusive"] == s["audited"]
+
+
+def test_perturbations_realized_delta_and_int_floor():
+    from build123d_mcp._design_audit_subprocess import _perturbations
+
+    # int 4 → discrete ±1 steps (5/3) with the *realized* ±25%, flagged discrete
+    by = {d["new_value"]: d for d in _perturbations(4, True, 0.1)}
+    assert set(by) == {5, 3}
+    assert by[5]["delta_pct"] == 25 and by[5]["discrete"] is True
+    assert by[3]["delta_pct"] == -25
+
+    # int 1 → the −step would hit 0 (a removal), so only the +1 direction survives
+    assert [d["new_value"] for d in _perturbations(1, True, 0.1)] == [2]
+
+    # float 10.0 → realized ±10, not discrete
+    pf = _perturbations(10.0, False, 0.1)
+    assert {d["new_value"] for d in pf} == {11.0, 9.0}
+    assert {d["delta_pct"] for d in pf} == {10, -10}
+    assert all(d["discrete"] is False for d in pf)
 
 
 def test_baseline_that_fails_gate_is_reported(session):
