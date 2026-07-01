@@ -56,6 +56,27 @@ def test_every_op_reachable_via_proxy():
         assert callable(getattr(ws, op)), f"op '{op}' has no callable proxy"
 
 
+def test_worker_kill_surfaces_structured_error_not_null():
+    """A worker kill / op timeout / in-worker error must reach the client as a
+    structured JSON error, never a bare null or a raised exception (field report
+    #2: cold-start first-call null). The @_op proxy wraps _call like execute()."""
+    from build123d_mcp.security import ExecutionTimeout
+
+    ws = WorkerSession.__new__(WorkerSession)  # no worker spawned
+    ws._exec_timeout = 120  # needed by the exec-timeout-derived budget callables
+
+    for exc in (RuntimeError("worker restarted after timeout"), ExecutionTimeout("exceeded 60s")):
+
+        def _boom(op, args, timeout, _e=exc):
+            raise _e
+
+        ws._call = _boom  # type: ignore[method-assign]
+        # a subprocess-backed tool and a plain one both go through the proxy
+        for out in (ws.locate_gate_defects("a"), ws.design_audit()):
+            d = json.loads(out)
+            assert "error" in d and str(exc) in d["error"]
+
+
 def test_stub_defaults_match_tool_function_defaults():
     """Stub-signature defaults must equal the tool function's own defaults.
 
@@ -362,9 +383,10 @@ def test_empty_worker_reports_missing_state():
     try:
         state = json.loads(s.session_state())
         assert state["objects"] == {}
-        # A geometry query against the empty worker raises on the unknown name;
-        # the message ("Registered: []") is the worker's own object registry.
-        with pytest.raises(RuntimeError, match="Unknown object"):
-            s.measure("a")
+        # A geometry query against the empty worker surfaces the unknown-name
+        # error as a structured result (the proxy returns it, never raises/null —
+        # field report #2); the message is the worker's own object registry.
+        r = json.loads(s.measure("a"))
+        assert "error" in r and "Unknown object" in r["error"]
     finally:
         s._kill_worker()

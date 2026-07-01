@@ -64,10 +64,10 @@ def test_session_state_sees_objects(session):
 
 
 def test_unknown_object_error_matches_worker_contract(session):
-    """Worker path raises RuntimeError('ValueError: Unknown object ...');
-    the in-process path must produce the identical surface."""
-    with pytest.raises(RuntimeError, match=r"ValueError: Unknown object 'nope'"):
-        session.measure("nope")
+    """Both the worker and in-process proxies surface a tool error as a structured
+    JSON result (never a raise/null — field report #2); the surface is identical."""
+    r = json.loads(session.measure("nope"))
+    assert "error" in r and "Unknown object 'nope'" in r["error"]
 
 
 def test_execute_error_returns_error_string(session):

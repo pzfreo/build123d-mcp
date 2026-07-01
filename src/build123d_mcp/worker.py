@@ -21,14 +21,17 @@ containment and no operation timeouts.
 
 import functools
 import inspect
+import json
 import multiprocessing
 import threading
 from collections.abc import Callable
 from typing import Any, NamedTuple, TypeVar, cast
 
+from build123d_mcp.security import ExecutionTimeout
 from build123d_mcp.tools._budget import OP_BUDGET_FLOOR_S
 
 _WORKER_READY_TIMEOUT = 60  # seconds to wait for worker import + ready signal
+_WARMUP_TIMEOUT_S = 120  # generous; runs off the critical path in a daemon thread
 
 
 def _build_session(
@@ -123,6 +126,16 @@ def worker_main(
 
     conn.send({"ready": True})
 
+    # Warm the out-of-process path off the critical path (field report #2). The
+    # first subprocess-tool call (locate_gate_defects / design_audit / export /
+    # render_view / shape_compare) otherwise pays a cold `from build123d import *`
+    # (OCP is hundreds of MB of .so) in a fresh child, which can blow its budget
+    # and surface as a null on call #1. Priming the import in a daemon thread
+    # warms the OS page cache so no user-facing first call is cold. Best-effort:
+    # a warmup failure (e.g. a host that blocks subprocess creation, #143) is
+    # swallowed and never affects serving.
+    threading.Thread(target=_warmup_subprocess_import, daemon=True).start()
+
     while True:
         try:
             request = conn.recv()
@@ -137,6 +150,27 @@ def worker_main(
             conn.send({"ok": True, "result": result})
         except Exception as exc:
             conn.send({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+
+
+def _warmup_subprocess_import() -> None:
+    """Prime build123d in a fresh child once, warming the OS page cache so the
+    first real out-of-process tool call isn't cold (field report #2). Best-effort."""
+    import subprocess
+    import sys
+
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from build123d_mcp.session import Session; "
+                "from build123d_mcp.tools.validate import _gate_report",
+            ],
+            capture_output=True,
+            timeout=_WARMUP_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001 - warmup must never affect the worker
+        pass
 
 
 # --------------------------------------------------------------------------- #
@@ -358,7 +392,15 @@ def _op(
             bound = sig.bind(self, *args, **kwargs)
             payload = {k: v for k, v in bound.arguments.items() if k != "self"}
             t = timeout(self) if callable(timeout) else timeout
-            return self._call(name, payload, t)
+            try:
+                return self._call(name, payload, t)
+            except (RuntimeError, ExecutionTimeout) as exc:
+                # A worker kill/restart, op timeout, or in-worker error must reach
+                # the MCP client as a structured, readable result — never a bare
+                # null / raised error (field report #2). execute() already wraps
+                # this way; the tool proxies must too, or the client sees `null`
+                # on e.g. a cold-start first call and can't tell it from success.
+                return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
         return cast(_F, proxy)
 
