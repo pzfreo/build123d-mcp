@@ -1,6 +1,6 @@
 # build123d-mcp — Specification
 
-> **Historical document.** This spec was written before the initial implementation. The current codebase has diverged significantly: there are now seven tools (not five), rendering uses pyvista not SVG, snapshots and interference checking have been added, and the package is structured as a `src` layout with a PyPI entry point. Refer to `llms.md` for the authoritative tool reference and `README.md` for setup.
+> **Historical document — not maintained.** This spec was written before the initial implementation and is kept only as a record of the original design intent. The codebase has diverged far beyond it: there are now **37 tools** (not five), rendering uses pyvista/VTK not SVG, and the server has grown validity gating, defect location, feature recognition, printability analysis, engineering-drawing/GD&T support, a live viewer, session snapshots, and a design-state (`design_audit`) tool. **For anything current, `llms.md` is the authoritative tool reference and `README.md` the setup guide** — do not treat the tool list or behaviour below as accurate.
 
 ## Purpose
 

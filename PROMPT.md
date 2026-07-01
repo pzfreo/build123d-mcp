@@ -1,5 +1,7 @@
 # Session Prompt — build123d-mcp
 
+> **Historical document — not maintained.** This is the original kickoff prompt used to bootstrap the project (implement per `SPEC.md`, five tools, SVG rendering). It is kept only as a record of how the project started; it does not describe the current server, which now has 37 tools and a pyvista/VTK render path. For the current system, read `README.md` (setup), `llms.md` (authoritative tool reference), and `default_prompt.md` (the system prompt for driving the live server). For the design-partner guidelines that still apply, see `CLAUDE.md`.
+
 ## What we are building
 
 An MCP (Model Context Protocol) server that wraps build123d, a Python CAD
