@@ -48,6 +48,60 @@ def _load_spec(spec: str, spec_path: str):
     return data, None
 
 
+def _is_num(x) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def _spec_shape_error(data: dict) -> str | None:
+    """Return an actionable message if a known spec field is the wrong shape, else None.
+
+    Catches the common agent typos (envelope axis as a scalar, features as a dict,
+    volume as a list) up front so verify_spec returns a clean error instead of
+    crashing on an unpack/attribute access deep in a checker.
+    """
+    env = data.get("envelope_mm")
+    if env is not None:
+        if not isinstance(env, dict):
+            return 'envelope_mm must be an object like {"x": [lo, hi], ...}'
+        for ax in ("x", "y", "z"):
+            if ax in env and not (
+                isinstance(env[ax], list) and len(env[ax]) == 2 and all(_is_num(v) for v in env[ax])
+            ):
+                return f"envelope_mm.{ax} must be [lo, hi] numbers"
+    vol = data.get("volume_mm3")
+    if vol is not None:
+        if not isinstance(vol, dict):
+            return 'volume_mm3 must be an object like {"min": .., "max": ..}'
+        for k in ("min", "max"):
+            if k in vol and not _is_num(vol[k]):
+                return f"volume_mm3.{k} must be a number"
+    if data.get("solid") is not None and not isinstance(data["solid"], dict):
+        return 'solid must be an object like {"count": 1, "valid": true}'
+    feats = data.get("features")
+    if feats is not None:
+        if not isinstance(feats, list):
+            return "features must be a list of feature objects"
+        for i, f in enumerate(feats):
+            if not isinstance(f, dict) or "kind" not in f:
+                return f"features[{i}] must be an object with a 'kind'"
+    params = data.get("parameters")
+    if params is not None:
+        if not isinstance(params, list):
+            return "parameters must be a list of {name, min, max} objects"
+        for i, p in enumerate(params):
+            if not isinstance(p, dict) or "name" not in p:
+                return f"parameters[{i}] must be an object with a 'name'"
+            for k in ("min", "max"):
+                if k in p and not _is_num(p[k]):
+                    return f"parameters[{i}].{k} must be a number"
+    tgts = data.get("targets")
+    if tgts is not None and not (isinstance(tgts, list) and all(isinstance(t, dict) for t in tgts)):
+        return "targets must be a list of objects"
+    if data.get("min_wall_mm") is not None and not _is_num(data["min_wall_mm"]):
+        return "min_wall_mm must be a number"
+    return None
+
+
 def _check_envelope(m: dict, spec: dict, out: list) -> None:
     env = spec.get("envelope_mm")
     if not env:
@@ -294,28 +348,49 @@ def verify_spec(session, spec: str = "", spec_path: str = "", object_name: str =
     if err is not None:
         return err
 
+    shape_err_msg = _spec_shape_error(data)
+    if shape_err_msg is not None:
+        return json.dumps({"error": f"Malformed spec: {shape_err_msg}"})
+
     shape, shape_err = _resolve_shape(session, object_name)
     if shape_err is not None:
         return shape_err
 
     out: list = []
-    if "envelope_mm" in data or "volume_mm3" in data:
-        from build123d_mcp.tools.measure import measure as _measure
+    try:
+        if "envelope_mm" in data or "volume_mm3" in data:
+            from build123d_mcp.tools.measure import measure as _measure
 
-        m = json.loads(_measure(session, object_name))
-        _check_envelope(m, data, out)
-        _check_volume(m, data, out)
-    if "solid" in data:
-        _check_solid(_gate_report(shape), data, out)
-    if data.get("features"):
-        _check_features(session, object_name, data["features"], out)
-    if data.get("parameters"):
-        _check_parameters(session, data["parameters"], out)
-    _check_deferred(data, out)
+            m = json.loads(_measure(session, object_name))
+            _check_envelope(m, data, out)
+            _check_volume(m, data, out)
+        if "solid" in data:
+            _check_solid(_gate_report(shape), data, out)
+        if data.get("features"):
+            _check_features(session, object_name, data["features"], out)
+        if data.get("parameters"):
+            _check_parameters(session, data["parameters"], out)
+        _check_deferred(data, out)
+    except Exception as exc:  # backstop: a spec quirk must return JSON, not crash the worker
+        return json.dumps({"error": f"Could not evaluate spec against the shape: {exc}"})
 
     n_fail = sum(1 for e in out if e["status"] == "FAIL")
     n_pass = sum(1 for e in out if e["status"] == "PASS")
     n_unv = sum(1 for e in out if e["status"] == "UNVERIFIED")
+    checked = n_pass + n_fail  # requirements actually verified (PASS/FAIL), not UNVERIFIED
+    note = (
+        "Proves requested-vs-built for the geometry-checkable requirements only. conforms means no "
+        "FAILs AND at least one requirement was checked; UNVERIFIED requirements are NOT met — they "
+        "are out of scope for this gate (declared unverifiable, deferred, or an unrecognised feature). "
+        "Each line carries its evidence tier (measured/structural/recognised). This is not a "
+        "certification; a human must sign off."
+    )
+    if checked == 0:
+        note = (
+            "WARNING: no geometry-checkable requirements were evaluated — every spec entry was "
+            "unrecognised, deferred, or unverifiable, so conforms is false (nothing was proven). "
+            + note
+        )
     return json.dumps(
         {
             "conformance": out,
@@ -323,15 +398,10 @@ def verify_spec(session, spec: str = "", spec_path: str = "", object_name: str =
                 "pass": n_pass,
                 "fail": n_fail,
                 "unverified": n_unv,
-                "conforms": n_fail == 0,
+                "checked": checked,
+                "conforms": n_fail == 0 and checked > 0,
             },
-            "note": (
-                "Proves requested-vs-built for the geometry-checkable requirements only. "
-                "conforms means no FAILs; UNVERIFIED requirements are NOT met — they are out of scope "
-                "for this gate (declared unverifiable, deferred, or an unrecognised feature). Each line "
-                "carries its evidence tier (measured/structural/recognised). This is not a certification; "
-                "a human must sign off."
-            ),
+            "note": note,
         },
         indent=2,
     )

@@ -112,10 +112,36 @@ def test_unverifiable_target_is_unverified_not_failed(session):
     assert r["summary"]["conforms"] is True and r["summary"]["unverified"] == 1
 
 
-def test_unrecognised_feature_kind_is_unverified(session):
+def test_unrecognised_feature_kind_is_unverified_not_failed(session):
+    # An unrecognised feature kind is UNVERIFIED (not a false FAIL); and since it is
+    # the only requirement, nothing was actually checked → conforms is False (not a
+    # vacuous True).
     r = _run(session, _PLATE, {"features": [{"kind": "spline_pocket"}]})
     assert r["conformance"][0]["status"] == "UNVERIFIED"
-    assert r["summary"]["conforms"] is True  # not a false FAIL
+    assert r["summary"]["fail"] == 0
+    assert r["summary"]["checked"] == 0
+    assert r["summary"]["conforms"] is False
+
+
+def test_empty_or_all_unverified_spec_does_not_falsely_conform(session):
+    # All keys unrecognised → nothing checked → conforms must be False, with a warning.
+    r = _run(session, _PLATE, {"typo_envelope": {"x": [0, 100]}})
+    assert r["summary"]["checked"] == 0
+    assert r["summary"]["conforms"] is False
+    assert "no geometry-checkable requirements" in r["note"].lower()
+
+
+def test_malformed_spec_fields_return_clean_error(session):
+    session.execute(_PLATE)
+    for bad in (
+        {"envelope_mm": {"x": 100}},  # axis must be [lo, hi]
+        {"features": {"kind": "hole"}},  # must be a list
+        {"volume_mm3": [0, 100]},  # must be an object
+        {"solid": "yes"},  # must be an object
+        {"parameters": [{"min": 1}]},  # entry needs a name
+    ):
+        r = json.loads(verify_spec(session, spec=json.dumps(bad)))
+        assert "error" in r and "spec" in r["error"].lower(), bad
 
 
 def test_min_wall_is_deferred_unverified(session):
