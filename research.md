@@ -181,6 +181,8 @@ Boolean intersection of two named shapes. Volume threshold 1×10⁻⁶ mm³ to s
 
 `diff_snapshot`: compares two snapshots (or one snapshot vs current state) by volume delta, topology delta, added/removed objects. Returns text or JSON.
 
+`design_audit`: surfaces the session program's top-level numeric parameters (Θ) and perturbs each ±ε, re-running the validity gate to flag *brittle* parameters where a small edit collapses the solid (Arko-T design-state robustness). Rebuild+gate loop runs in a hard-bounded subprocess.
+
 ---
 
 ## Test Coverage

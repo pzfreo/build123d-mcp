@@ -51,9 +51,9 @@ Alternatives considered and rejected:
     session (#214), and clear "state was lost" messaging on every restart path
     (#215);
   - pushing un-interruptible native calls **out of process, hard-bounded below
-    the op-timeout**, so a heavy render / mesh-check / defect-scan can't trip
-    the SIGKILL — render (#308), export mesh gate (#294/#295),
-    `locate_gate_defects` (#310);
+    the op-timeout**, so a heavy render / mesh-check / defect-scan / design-audit
+    can't trip the SIGKILL — render (#308), export mesh gate (#294/#295),
+    `locate_gate_defects` (#310), `design_audit` (#330);
   - the general policy that no un-interruptible native call should run unbounded
     in the worker (#307), and the cold-large-part short-timeout bug (#296).
 - **Spawn, not fork** — safe with OCC/TBB threads; the per-process startup cost
