@@ -213,12 +213,18 @@ def _format(state, params, audited, inline_literals, epsilon, salvaged) -> str:
     )
     for a in audit:
         counts[_verdict(a)] = counts.get(_verdict(a), 0) + 1
+    # brittle is the only certain-fragility bucket, but coupling / not_a_design_parameter
+    # are *ambiguous* (a coupling error can also be a fragile feature-dimension param; a
+    # selector failure can also be real degeneracy) — so surface a combined needs_review
+    # count. Do NOT read `brittle == 0` as "all good": check needs_review too. (#342 review)
+    needs_review = counts["brittle"] + counts["coupling"] + counts["not_a_design_parameter"]
 
     note = (
-        "Only `brittle` parameters (a small change that fails the validity gate or can't rebuild) "
-        "are a real fragility signal — verify those. `coupling` (a dependent feature failed when "
-        "the parameter changed alone), `not_a_design_parameter` (a measured selector anchor), and "
-        "`inconclusive` (perturbation timed out) are NOT fragility; each parameter carries a `reason`."
+        "`brittle` = certain fragility (a small change fails the validity gate or can't rebuild) — "
+        "verify first. `coupling` and `not_a_design_parameter` are AMBIGUOUS (a coupling error may be "
+        "a fragile feature dimension; a selector failure may be real degeneracy) — do not treat them "
+        "as safe. Read `needs_review` (brittle+coupling+not_a_design_parameter), not `brittle` alone. "
+        "`inconclusive` (timeout / reassigned / gate-errored) is not decidable. Each param has a `reason`."
     )
     note += _hoist_note(inline_literals, len(params))
     if truncated:
@@ -241,6 +247,7 @@ def _format(state, params, audited, inline_literals, epsilon, salvaged) -> str:
                 "total_params": len(params),
                 "audited": n_audited,
                 **counts,
+                "needs_review": needs_review,
                 "truncated": truncated,
                 "epsilon": epsilon,
             },

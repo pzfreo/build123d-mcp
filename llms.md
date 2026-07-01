@@ -169,11 +169,13 @@ Audit the session program as a **design, not just a shape**: surface its named n
 
 **Returns:** JSON with `parameters` (name/value/type), `baseline` (the unperturbed rebuild's gate verdict), `inline_literal_count`, `audit` (per parameter: `perturbations` with `delta_pct`, `new_value`, `cause` on failure, `volume_delta_pct`; plus a per-parameter **`verdict`** and one-line **`reason`**), `summary` (counts per verdict + truncation), and a `note`. Each parameter is classified — **not** every failed rebuild is "brittle":
 
-- **`brittle`** — a small change fails the validity gate or the solid can't form. *The only real fragility signal — verify these.*
-- **`coupling`** — a dependent feature (fillet/chamfer/shell/offset) fails to regenerate when this parameter alone changes. Parameter coupling, not fragility; verify with a co-edit.
-- **`not_a_design_parameter`** — perturbing it breaks a geometry selection ("found 0"): a measured selector/anchor constant, not an editable knob.
-- **`inconclusive`** — a perturbed rebuild timed out (too slow to decide, raise `--exec-timeout`) or the parameter is reassigned at top level.
+- **`brittle`** — certain fragility: a small change fails the validity gate or the solid can't form. *Verify first.*
+- **`coupling`** — a dependent feature (fillet/chamfer/shell/offset) failed when this parameter alone changed. **Ambiguous** — either parameter coupling (a fixed feature no longer fits) *or* a genuinely fragile feature dimension if this parameter drives that feature; disambiguate with a co-edit.
+- **`not_a_design_parameter`** — perturbing it breaks a geometry selection ("found 0"): likely a measured selector/anchor constant — **but** could be real degeneracy.
+- **`inconclusive`** — not decidable: a perturbed rebuild timed out (raise `--exec-timeout`), the validity gate errored, or the parameter is reassigned at top level.
 - **`robust`** — survives ±ε.
+
+`summary` reports counts per verdict plus **`needs_review` = brittle + coupling + not_a_design_parameter** — because coupling / not_a_design_parameter are ambiguous, **read `needs_review`, not `brittle` alone**; `brittle == 0` does not mean "all good". Each parameter carries a one-line `reason`.
 
 If no named parameters are found, the program uses inline magic constants and the note advises hoisting them into a parameter block. Bounded by a wall-clock budget and `max_params` — returns a partial report rather than risking a worker timeout.
 

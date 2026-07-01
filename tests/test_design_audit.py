@@ -160,6 +160,9 @@ def test_coupled_dependent_feature_is_coupling_not_brittle(session):
     assert a["verdict"] == "coupling"
     assert a["brittle"] is False
     assert r["summary"]["brittle"] == 0 and r["summary"]["coupling"] == 1
+    # coupling is ambiguous, so it must still surface under needs_review — a caller
+    # must not read brittle==0 as "all good".
+    assert r["summary"]["needs_review"] == 1
     assert "coupling" in a["reason"]
 
 

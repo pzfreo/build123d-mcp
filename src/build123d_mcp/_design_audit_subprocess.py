@@ -165,24 +165,21 @@ def _perturbations(value, is_int: bool, eps: float):
 # Perturbation-failure taxonomy (#341): a failed rebuild is NOT automatically
 # "brittle". Distinguish the cause so only real fragility counts.
 _DEPENDENT_FEATURE_HINTS = ("fillet", "chamfer", "shell", "offset", "max_fillet")
-_SELECTOR_HINTS = (
-    "expected exactly one",
-    "found 0",
-    "list index out of range",
-    "index out of range",
-    "cannot select",
-    "no such",
-)
+# Keep selector-specific phrases only — a bare "index out of range" is too broad
+# and would misclassify unrelated indexing errors as a selector anchor (#342 review).
+_SELECTOR_HINTS = ("expected exactly one", "found 0")
 
 _VERDICT_PRIORITY = ("brittle", "coupling", "not_a_design_parameter", "inconclusive", "robust")
 _VERDICT_REASON = {
     "brittle": "a ±ε change fails the validity gate or the solid can't form — fragile here",
-    "coupling": "a dependent feature (fillet/chamfer/shell/offset) fails to regenerate when this "
-    "parameter alone changes — likely parameter coupling, not fragility; verify with a co-edit",
+    "coupling": "a dependent feature (fillet/chamfer/shell/offset) failed to regenerate when this "
+    "parameter alone changed — this is EITHER parameter coupling (a fixed feature no longer fits) OR "
+    "a genuinely fragile feature dimension if this parameter drives that feature; disambiguate with a "
+    "co-edit. Counted under needs_review, not robust.",
     "not_a_design_parameter": "perturbing this breaks a geometry selection — likely a measured "
-    "anchor / selector constant, not an editable design knob",
-    "inconclusive": "a perturbed rebuild exceeded the per-perturbation time budget — too slow to "
-    "decide (raise --exec-timeout), not evidence of fragility",
+    "anchor / selector constant, not an editable design knob (counted under needs_review)",
+    "inconclusive": "a perturbation could not be decided — it timed out (raise --exec-timeout) or the "
+    "validity gate errored on the perturbed shape; not evidence of fragility",
     "robust": "survives ±ε",
 }
 
@@ -205,7 +202,10 @@ def _param_verdict(results: list) -> str:
     seen = set()
     for r in results:
         if r.get("rebuilt"):
-            seen.add("robust" if r.get("passes_gate") else "brittle")
+            if r.get("cause") == "gate_error":
+                seen.add("inconclusive")  # gate crashed — can't decide
+            else:
+                seen.add("robust" if r.get("passes_gate") else "brittle")
         else:
             cause = r.get("cause")
             if cause in ("timeout",):
@@ -241,9 +241,10 @@ def evaluate_program(program: str, cap_s: int) -> dict:
         return {"rebuilt": False, "error": "program ran but produced no shape/solid"}
     try:
         report = _gate_report(sess.current_shape)
-    except Exception as exc:  # a shape the gate can't analyse is not robust
+    except Exception as exc:  # gate crashed on this shape — inconclusive, not fragility
         return {
             "rebuilt": True,
+            "gate_error": True,
             "passes_gate": False,
             "n_solids": None,
             "volume": None,
@@ -343,7 +344,10 @@ def run_audit(
             entry["volume"] = g["volume"]
             if base_vol:
                 entry["volume_delta_pct"] = round((g["volume"] - base_vol) / base_vol * 100, 1)
-            if not g["passes_gate"]:
+            if g.get("gate_error"):
+                entry["cause"] = "gate_error"  # gate crashed → inconclusive, not brittle
+                entry["reasons"] = g["reasons"]
+            elif not g["passes_gate"]:
                 entry["cause"] = "gate_fail"
                 entry["reasons"] = g["reasons"]
             results.append(entry)
