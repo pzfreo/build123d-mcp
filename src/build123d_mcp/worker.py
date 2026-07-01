@@ -26,6 +26,8 @@ import threading
 from collections.abc import Callable
 from typing import Any, NamedTuple, TypeVar, cast
 
+from build123d_mcp.tools._budget import OP_BUDGET_FLOOR_S
+
 _WORKER_READY_TIMEOUT = 60  # seconds to wait for worker import + ready signal
 
 
@@ -147,7 +149,9 @@ def worker_main(
 # session state — so the budget errs generous (issue #214). _SHORT_TIMEOUT is
 # only for ops that read session bookkeeping without touching geometry kernels.
 _RENDER_TIMEOUT = 120
-_EXPORT_TIMEOUT = 60
+# The export/geometry floor is shared with the tool side (tools/_budget.py) so a
+# worker-run tool's self-imposed budget provably tracks this parent op budget.
+_EXPORT_TIMEOUT = OP_BUDGET_FLOOR_S
 _GEOMETRY_TIMEOUT = 60
 _SHORT_TIMEOUT = 10
 
@@ -625,6 +629,10 @@ class WorkerSession:
 
     @_op(_tool(f"{_T}.locate:locate_gate_defects"), _export_budget)
     def locate_gate_defects(self, object_name: str = "") -> str:
+        raise NotImplementedError
+
+    @_op(_tool(f"{_T}.design_audit:design_audit"), _export_budget)
+    def design_audit(self, epsilon: float = 0.1, max_params: int = 8) -> str:
         raise NotImplementedError
 
     @_op(_tool(f"{_T}.measure:clearance"), _GEOMETRY_TIMEOUT)

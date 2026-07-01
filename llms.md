@@ -158,6 +158,19 @@ A `FAIL` means a STEP/STL export would be rejected outright (a CAD scorer like C
 
 ---
 
+### `design_audit`
+Audit the session program as a **design, not just a shape**: surface its named numeric parameters (Θ) and test how robust each is to editing. Where `validate` proves you built a valid *shape* (the executed geometry `g`), this probes whether you built an editable *design* (the parameterisation `z` that produced it) — the Arko-T §6 distinction.
+
+**Inputs:**
+- `epsilon` (float, default `0.1`) — relative nudge per parameter, `0 < epsilon < 1` (0.1 = ±10%)
+- `max_params` (int, default `8`) — cap on the number of parameters audited
+
+**How it works:** parses the assembled program (see `script`) for top-level numeric assignments (`plate_thickness = 5.0`), then for each parameter rebuilds the whole program with that value nudged ±epsilon and runs the `validate` gate on each result. The rebuild+gate loop runs **out of process, hard-bounded by the op budget** (a rebuild or the gate's tessellation can hit an un-interruptible native OCC call that SIGALRM can't stop), persisting results incrementally so a kill still salvages a partial report; the live session is never mutated. On hosts that block child processes it degrades to an in-process run.
+
+**Returns:** JSON with `parameters` (name/value/type), `baseline` (the unperturbed rebuild's gate verdict), `inline_literal_count`, `audit` (per parameter: `perturbations` with `delta_pct`, `new_value`, `rebuilt`, `passes_gate`, `volume_delta_pct`, and `reasons` on failure; plus a `brittle` flag), `summary` (robust/brittle counts, truncation), and a `note`. A parameter is **brittle** if a small change fails to rebuild or drops below the validity gate — the thin-wall / coordinate-reasoning failure mode where a valid shape is not an editable design. If no named parameters are found, the program uses inline magic constants and the note advises hoisting them into a parameter block. Bounded by a wall-clock budget and `max_params` — returns a partial report rather than risking a worker timeout.
+
+---
+
 ### `clearance`
 Spatial relationship between two named shapes — distance, containment, and overlap in one call.
 

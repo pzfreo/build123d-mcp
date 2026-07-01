@@ -20,11 +20,12 @@ import sys
 import tempfile
 import time
 
+from build123d_mcp.tools._budget import op_budget
 from build123d_mcp.tools.validate import _resolve_shape
 
-# The locate subprocess is bounded by the time LEFT in the op budget (derived from
-# the worker op-timeout = max(60, exec_timeout)) minus a margin, so the un-
-# interruptible mesh check is always killed before the parent SIGKILLs the worker.
+# The locate subprocess is bounded by the time LEFT in the op budget (op_budget(),
+# shared with the parent op-timeout) minus a margin, so the un-interruptible mesh
+# check is always killed before the parent SIGKILLs the worker.
 _LOCATE_MARGIN_S = 15
 _LOCATE_MIN_S = 10
 
@@ -67,8 +68,7 @@ def locate_gate_defects(session, object_name: str = "") -> str:
         except Exception as exc:  # noqa: BLE001
             return json.dumps({"error": f"could not serialise the shape to locate defects: {exc}"})
 
-        budget = max(60, getattr(session, "exec_timeout", 120))
-        remaining = budget - (time.monotonic() - t0) - _LOCATE_MARGIN_S
+        remaining = op_budget(session) - (time.monotonic() - t0) - _LOCATE_MARGIN_S
         if remaining < _LOCATE_MIN_S:
             return json.dumps(
                 {

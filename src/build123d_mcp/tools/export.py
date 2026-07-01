@@ -2,7 +2,14 @@ import copy
 import struct
 import time
 
+from build123d_mcp.tools._budget import op_budget
 from build123d_mcp.tools._paths import safe_output_path
+
+# Headroom under the op budget for the in-process B-rep checks + subprocess
+# teardown + parent poll granularity; and the least time worth starting the
+# out-of-process mesh gate with. Matches the locate/shape_compare convention.
+_EXPORT_MESH_MARGIN_S = 15
+_EXPORT_MESH_MIN_S = 10
 
 _VALID_FORMATS = ("step", "stl", "dxf", "svg")
 
@@ -238,11 +245,10 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
             # Margin covers the B-rep checks that still run in-process after this
             # (fast — BRepCheck, not meshing) + subprocess teardown + parent poll
             # granularity, so worker total stays under the parent op-budget.
-            _budget = max(60, getattr(session, "exec_timeout", 120))
-            _remaining = _budget - (time.monotonic() - _t0) - 15
+            _remaining = op_budget(session) - (time.monotonic() - _t0) - _EXPORT_MESH_MARGIN_S
             _mesh = (
                 _run_mesh_gate_subprocess(step_path, timeout=_remaining)
-                if _remaining >= 10
+                if _remaining >= _EXPORT_MESH_MIN_S
                 else None
             )
             report = _gate_report(

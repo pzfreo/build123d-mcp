@@ -147,7 +147,11 @@ The ceiling can be raised with `--exec-timeout N` or `BUILD123D_EXEC_TIMEOUT=N`
    `scripts/<part>.py`: the parameter block, the build steps, and the export
    call. Follow the project's existing script layout, and pick a non-colliding
    name if one exists. The part should live in version control as code, not
-   only as a STEP artifact.
+   only as a STEP artifact. Keep dimensions in a named parameter block at the
+   top (`plate_thickness = 5.0  # mm`), not inline literals — then
+   `design_audit()` can surface those parameters and perturb each ±10% to flag
+   *brittle* ones (a nudge that fails the validity gate), so you ship an
+   editable design, not just a valid shape.
 5. If the part will be FDM printed, run `analyze_printability("part")` and
    report overhangs / thin walls / bed-fit findings.
 6. For an engineering drawing of the finished part, switch to the b123d-drawing

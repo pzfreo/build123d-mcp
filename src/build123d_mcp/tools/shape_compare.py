@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 
+from build123d_mcp.tools._budget import op_budget
 from build123d_mcp.tools.diff import _shape_diag
 from build123d_mcp.tools.measure import _center_of_mass
 
@@ -53,8 +54,7 @@ def _surface_compare_bounded(session, sa, sb) -> dict:
         except Exception as exc:  # noqa: BLE001
             return {"error": f"could not serialise shapes for surface comparison: {exc}"}
 
-        budget = max(60, getattr(session, "exec_timeout", 120))
-        remaining = budget - (time.monotonic() - t0) - _COMPARE_MARGIN_S
+        remaining = op_budget(session) - (time.monotonic() - t0) - _COMPARE_MARGIN_S
         if remaining < _COMPARE_MIN_S:
             return {
                 "error": (

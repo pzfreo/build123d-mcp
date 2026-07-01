@@ -198,6 +198,12 @@ def locate_gate_defects(object_name: str = "") -> str:
 
 
 @mcp.tool()
+def design_audit(epsilon: float = 0.1, max_params: int = 8) -> str:
+    """Audit the current session program as a *design*, not just a shape: surface its named numeric parameters (Θ) and test how robust each is to editing. Parses the assembled program (see script()) for top-level numeric assignments (e.g. `plate_thickness = 5.0`), then rebuilds the program with each parameter nudged ±epsilon (default ±10%) in a hard-bounded subprocess (the live session is never mutated) and runs the validity gate on each result. Returns JSON: {parameters, baseline, audit:[{name, value, perturbations:[{delta_pct, new_value, rebuilt, passes_gate, volume_delta_pct, reasons?}], brittle}], summary, note}. A parameter is `brittle` if a small change fails to rebuild or drops below the validity gate — the thin-wall / coordinate-reasoning failure mode where a valid *shape* is not an editable *design* (Arko-T §6). If no named parameters are found, the program uses inline magic constants and the note advises hoisting them to a parameter block. Bounded by a wall-clock budget and max_params (returns a partial report rather than risking a timeout). epsilon: relative nudge, 0<epsilon<1. max_params: cap on parameters audited."""
+    return _resolve_session().design_audit(epsilon, max_params)
+
+
+@mcp.tool()
 def clearance(object_a: str, object_b: str) -> str:
     """Spatial relationship between two named shapes. Returns JSON with `clearance` (mm), `status` (one of: apart, touching, containing, interpenetrating), `containment` (a_in_b, b_in_a, or neither), and `intersection_volume` / `a_volume_outside_b` / `b_volume_outside_a` for overlap quantification. Reads `clearance` differently per status: apart=gap, containing=wall thickness from inner surface to outer hull (use this to verify a pocket fits inside a plate), touching=0, interpenetrating=0 (check intersection_volume + a_volume_outside_b for the wall-piercing case). object_a, object_b: names from show()."""
     return _resolve_session().clearance(object_a, object_b)

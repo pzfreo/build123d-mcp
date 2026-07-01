@@ -27,6 +27,7 @@ When using an AI to write build123d scripts, the AI writes blind — it cannot s
 - `resolve` — evaluate a selector expression (e.g. `.faces().filter_by(Axis.Z).last()`) against a named object and return a geometry descriptor
 - `find_holes` / `find_bosses` / `find_hole_patterns` — feature recognition: coaxial drill + counterbore + spotface stacks as one hole record (axis, location, diameter, depth, bottom: through/flat/drill_point/unknown), external bosses with height, bolt-circle and linear-array patterns
 - `analyze_printability` — BREP-exact FDM printability analysis: overhangs, thin walls, minimum features, bed fit, tip-over risk
+- `design_audit` — audit the session program as a *design*, not just a shape: surface its named numeric parameters and perturb each ±ε in isolation, re-running the validity gate to flag *brittle* parameters where a small edit collapses the solid (Arko-T design-state robustness)
 - `session_state` — full JSON snapshot of active shapes, named objects, snapshot names, and Python namespace variables
 - `last_error` — details of the last failed `execute()`: type, message, line number, and code excerpt
 
