@@ -79,7 +79,9 @@ def design_audit(session, epsilon: float = 0.1, max_params: int = 8) -> str:
 
     program = _assemble(session)
     if not program:
-        return json.dumps({"error": "No executed program to audit. Run execute() to build geometry first."})
+        return json.dumps(
+            {"error": "No executed program to audit. Run execute() to build geometry first."}
+        )
 
     try:
         params, inline_literals = _extract_params(program)
@@ -143,7 +145,9 @@ def design_audit(session, epsilon: float = 0.1, max_params: int = 8) -> str:
 
         state = _read_state(out_json)
         if state is None or state.get("baseline") is None:
-            detail = (proc.stderr or "")[-200:] if proc else "no result before the time budget elapsed"
+            detail = (
+                (proc.stderr or "")[-200:] if proc else "no result before the time budget elapsed"
+            )
             return json.dumps({"error": f"design audit produced no result: {detail}"})
 
         return _format(state, params, audited, inline_literals, epsilon, salvaged)
@@ -177,7 +181,10 @@ def _format(state, params, audited, inline_literals, epsilon, salvaged) -> str:
         return json.dumps(
             {
                 "parameters": params,
-                "baseline": {"rebuilt": True, **{k: baseline[k] for k in ("passes_gate", "n_solids", "volume", "reasons")}},
+                "baseline": {
+                    "rebuilt": True,
+                    **{k: baseline[k] for k in ("passes_gate", "n_solids", "volume", "reasons")},
+                },
                 "note": "The baseline design does not pass the validity gate. Fix it (see validate()) "
                 "before auditing parameter robustness.",
             },
@@ -205,7 +212,10 @@ def _format(state, params, audited, inline_literals, epsilon, salvaged) -> str:
     return json.dumps(
         {
             "parameters": params,
-            "baseline": {"rebuilt": True, **{k: baseline[k] for k in ("passes_gate", "n_solids", "volume")}},
+            "baseline": {
+                "rebuilt": True,
+                **{k: baseline[k] for k in ("passes_gate", "n_solids", "volume")},
+            },
             "inline_literal_count": inline_literals,
             "audit": audit,
             "summary": {

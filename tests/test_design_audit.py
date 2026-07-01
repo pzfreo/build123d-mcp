@@ -38,7 +38,10 @@ def test_robust_design_all_parameters_pass(session):
 def test_brittle_parameter_is_flagged(session):
     # A hollow cube: raising `inner` past `outer` over-subtracts to zero volume,
     # which fails the validity gate — a valid shape that is not a robust design.
-    r = _run(session, "outer = 10.0\ninner = 9.5\nshow(Box(outer, outer, outer) - Box(inner, inner, inner), 'p')\n")
+    r = _run(
+        session,
+        "outer = 10.0\ninner = 9.5\nshow(Box(outer, outer, outer) - Box(inner, inner, inner), 'p')\n",
+    )
     assert r["baseline"]["passes_gate"] is True
     audit = {a["name"]: a for a in r["audit"]}
     assert audit["inner"]["brittle"] is True

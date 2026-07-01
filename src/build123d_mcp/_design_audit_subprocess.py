@@ -51,9 +51,17 @@ def _const_number(node):
 
 def _assign_target(node):
     """Return (name, value_node) for a single-Name top-level assignment, else None."""
-    if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+    if (
+        isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+    ):
         return node.targets[0].id, node.value
-    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+    if (
+        isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.value is not None
+    ):
         return node.target.id, node.value
     return None
 
@@ -71,7 +79,9 @@ def _extract_params(program: str):
     total_numeric = sum(
         1
         for n in ast.walk(tree)
-        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)) and not isinstance(n.value, bool)
+        if isinstance(n, ast.Constant)
+        and isinstance(n.value, (int, float))
+        and not isinstance(n.value, bool)
     )
     top_names: dict[str, int] = {}
     for node in tree.body:
@@ -151,8 +161,13 @@ def evaluate_program(program: str, cap_s: int) -> dict:
     try:
         report = _gate_report(sess.current_shape)
     except Exception as exc:  # a shape the gate can't analyse is not robust
-        return {"rebuilt": True, "passes_gate": False, "n_solids": None, "volume": None,
-                "reasons": [f"gate error: {exc}"[:200]]}
+        return {
+            "rebuilt": True,
+            "passes_gate": False,
+            "n_solids": None,
+            "volume": None,
+            "reasons": [f"gate error: {exc}"[:200]],
+        }
     return {
         "rebuilt": True,
         "passes_gate": report["passes_gate"],
@@ -162,8 +177,9 @@ def evaluate_program(program: str, cap_s: int) -> dict:
     }
 
 
-def run_audit(program: str, params: list, epsilon: float, budget_s: float,
-              per_run_cap: int, out_path: str) -> dict:
+def run_audit(
+    program: str, params: list, epsilon: float, budget_s: float, per_run_cap: int, out_path: str
+) -> dict:
     """Baseline + per-parameter perturbation audit, persisted incrementally.
 
     Writes ``out_path`` after the baseline and after each parameter so a hard kill
@@ -188,7 +204,9 @@ def run_audit(program: str, params: list, epsilon: float, budget_s: float,
         os.replace(tmp, out_path)
 
     state["baseline"] = evaluate_program(program, cap())
-    state["baseline_ok"] = bool(state["baseline"].get("rebuilt") and state["baseline"].get("passes_gate"))
+    state["baseline_ok"] = bool(
+        state["baseline"].get("rebuilt") and state["baseline"].get("passes_gate")
+    )
     flush()
     if not state["baseline_ok"]:
         state["completed"] = True
@@ -207,11 +225,23 @@ def run_audit(program: str, params: list, epsilon: float, budget_s: float,
             g = evaluate_program(_rewrite(program, p["name"], new_value), cap())
             if not g.get("rebuilt"):
                 brittle = True
-                results.append({"delta_pct": delta_pct, "new_value": new_value,
-                                "rebuilt": False, "error": g.get("error")})
+                results.append(
+                    {
+                        "delta_pct": delta_pct,
+                        "new_value": new_value,
+                        "rebuilt": False,
+                        "error": g.get("error"),
+                    }
+                )
                 continue
-            entry = {"delta_pct": delta_pct, "new_value": new_value, "rebuilt": True,
-                     "passes_gate": g["passes_gate"], "n_solids": g["n_solids"], "volume": g["volume"]}
+            entry = {
+                "delta_pct": delta_pct,
+                "new_value": new_value,
+                "rebuilt": True,
+                "passes_gate": g["passes_gate"],
+                "n_solids": g["n_solids"],
+                "volume": g["volume"],
+            }
             if base_vol:
                 entry["volume_delta_pct"] = round((g["volume"] - base_vol) / base_vol * 100, 1)
             if not g["passes_gate"]:
@@ -220,7 +250,9 @@ def run_audit(program: str, params: list, epsilon: float, budget_s: float,
             results.append(entry)
         entry_p = {**p, "perturbations": results, "brittle": brittle}
         if p.get("reassigned"):
-            entry_p["note"] = "reassigned at top level — perturbation may be overwritten; result is not conclusive"
+            entry_p["note"] = (
+                "reassigned at top level — perturbation may be overwritten; result is not conclusive"
+            )
         state["audit"].append(entry_p)
         flush()
 
@@ -249,8 +281,9 @@ def main(in_json: str, out_json: str) -> None:
     with open(in_json) as f:
         cfg = json.load(f)
     _apply_security(cfg.get("security") or {})
-    run_audit(cfg["program"], cfg["params"], cfg["epsilon"], cfg["budget_s"],
-              cfg["per_run_cap"], out_json)
+    run_audit(
+        cfg["program"], cfg["params"], cfg["epsilon"], cfg["budget_s"], cfg["per_run_cap"], out_json
+    )
 
 
 if __name__ == "__main__":
