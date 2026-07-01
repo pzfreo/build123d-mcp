@@ -199,15 +199,26 @@ def _format(state, params, audited, inline_literals, epsilon, salvaged) -> str:
     n_audited = len(audit)
     completed = bool(state.get("completed"))
     truncated = len(params) > len(audited) or n_audited < len(audited) or not completed or salvaged
-    # Each audited param falls in exactly one bucket: inconclusive (reassigned, a
-    # no-op rebuild), else brittle, else robust — so robust+brittle+inconclusive
-    # == audited and `robust` never over-counts an unprobed param.
-    inconclusive_count = sum(1 for a in audit if a.get("inconclusive"))
-    brittle_count = sum(1 for a in audit if a.get("brittle") and not a.get("inconclusive"))
+
+    # Each audited param carries exactly one verdict (#341): robust / brittle /
+    # coupling / not_a_design_parameter / inconclusive — so only true fragility
+    # (a small edit that fails the gate or won't form) counts as brittle; a
+    # perturbation that merely times out, breaks a dependent fillet, or moves a
+    # measured selector anchor is bucketed honestly instead of inflating brittle.
+    def _verdict(a: dict) -> str:
+        return a.get("verdict") or ("brittle" if a.get("brittle") else "robust")
+
+    counts = dict.fromkeys(
+        ("robust", "brittle", "coupling", "not_a_design_parameter", "inconclusive"), 0
+    )
+    for a in audit:
+        counts[_verdict(a)] = counts.get(_verdict(a), 0) + 1
 
     note = (
-        "For editing, verify each brittle parameter: a small change should not collapse a robust "
-        "design. Perturbation is structural (rebuild + validity gate), not a score."
+        "Only `brittle` parameters (a small change that fails the validity gate or can't rebuild) "
+        "are a real fragility signal — verify those. `coupling` (a dependent feature failed when "
+        "the parameter changed alone), `not_a_design_parameter` (a measured selector anchor), and "
+        "`inconclusive` (perturbation timed out) are NOT fragility; each parameter carries a `reason`."
     )
     note += _hoist_note(inline_literals, len(params))
     if truncated:
@@ -229,9 +240,7 @@ def _format(state, params, audited, inline_literals, epsilon, salvaged) -> str:
             "summary": {
                 "total_params": len(params),
                 "audited": n_audited,
-                "robust": n_audited - brittle_count - inconclusive_count,
-                "brittle": brittle_count,
-                "inconclusive": inconclusive_count,
+                **counts,
                 "truncated": truncated,
                 "epsilon": epsilon,
             },

@@ -111,13 +111,56 @@ def test_reassigned_parameter_is_inconclusive_not_robust(session):
     t_param = next(p for p in r["parameters"] if p["name"] == "t")
     assert t_param.get("reassigned") is True
     t_audit = next(a for a in r["audit"] if a["name"] == "t")
-    assert t_audit.get("inconclusive") is True
+    assert t_audit["verdict"] == "inconclusive"
     assert t_audit["perturbations"] == []  # no-op rebuilds skipped
     assert r["summary"]["inconclusive"] == 1
     assert r["summary"]["robust"] == 0
-    # buckets partition the audited set
+    # verdict buckets partition the audited set
     s = r["summary"]
-    assert s["robust"] + s["brittle"] + s["inconclusive"] == s["audited"]
+    assert (
+        s["robust"] + s["brittle"] + s["coupling"] + s["not_a_design_parameter"] + s["inconclusive"]
+        == s["audited"]
+    )
+
+
+def test_classify_error_buckets_failure_causes():
+    from build123d_mcp._design_audit_subprocess import _classify_error
+
+    assert (
+        _classify_error("Error: ExecutionTimeout: Code exceeded the 4s execution time limit.")
+        == "timeout"
+    )
+    assert (
+        _classify_error(
+            "Error: ValueError: Failed creating a fillet with radius of 1.0, use max_fillet()"
+        )
+        == "coupling"
+    )
+    assert (
+        _classify_error("Error: RuntimeError: Expected exactly one top face at z=18.7, found 0")
+        == "anchor"
+    )
+    assert _classify_error("Error: ValueError: some other geometric problem") == "rebuild_error"
+
+
+def test_coupled_dependent_feature_is_coupling_not_brittle(session):
+    # A fixed-radius fillet sized to the original box no longer fits when `size`
+    # shrinks — perturbing size alone breaks a *dependent* feature. That is
+    # coupling, not fragility, so it must NOT be flagged brittle.
+    prog = (
+        "size = 20.0\n"
+        "with BuildPart() as p:\n"
+        "    Box(size, size, 10)\n"
+        "    fillet(p.edges().filter_by(Axis.Z), radius=9.5)\n"
+        "result = p.part\n"
+        "show(result, 'x')\n"
+    )
+    r = _run(session, prog, max_params=4)
+    a = next(x for x in r["audit"] if x["name"] == "size")
+    assert a["verdict"] == "coupling"
+    assert a["brittle"] is False
+    assert r["summary"]["brittle"] == 0 and r["summary"]["coupling"] == 1
+    assert "coupling" in a["reason"]
 
 
 def test_perturbations_realized_delta_and_int_floor():

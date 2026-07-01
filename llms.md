@@ -167,7 +167,15 @@ Audit the session program as a **design, not just a shape**: surface its named n
 
 **How it works:** parses the assembled program (see `script`) for top-level numeric assignments (`plate_thickness = 5.0`), then for each parameter rebuilds the whole program with that value nudged ±epsilon and runs the `validate` gate on each result. The rebuild+gate loop runs **out of process, hard-bounded by the op budget** (a rebuild or the gate's tessellation can hit an un-interruptible native OCC call that SIGALRM can't stop), persisting results incrementally so a kill still salvages a partial report; the live session is never mutated. On hosts that block child processes it degrades to an in-process run.
 
-**Returns:** JSON with `parameters` (name/value/type), `baseline` (the unperturbed rebuild's gate verdict), `inline_literal_count`, `audit` (per parameter: `perturbations` with `delta_pct`, `new_value`, `rebuilt`, `passes_gate`, `volume_delta_pct`, and `reasons` on failure; plus a `brittle` flag), `summary` (robust/brittle counts, truncation), and a `note`. A parameter is **brittle** if a small change fails to rebuild or drops below the validity gate — the thin-wall / coordinate-reasoning failure mode where a valid shape is not an editable design. If no named parameters are found, the program uses inline magic constants and the note advises hoisting them into a parameter block. Bounded by a wall-clock budget and `max_params` — returns a partial report rather than risking a worker timeout.
+**Returns:** JSON with `parameters` (name/value/type), `baseline` (the unperturbed rebuild's gate verdict), `inline_literal_count`, `audit` (per parameter: `perturbations` with `delta_pct`, `new_value`, `cause` on failure, `volume_delta_pct`; plus a per-parameter **`verdict`** and one-line **`reason`**), `summary` (counts per verdict + truncation), and a `note`. Each parameter is classified — **not** every failed rebuild is "brittle":
+
+- **`brittle`** — a small change fails the validity gate or the solid can't form. *The only real fragility signal — verify these.*
+- **`coupling`** — a dependent feature (fillet/chamfer/shell/offset) fails to regenerate when this parameter alone changes. Parameter coupling, not fragility; verify with a co-edit.
+- **`not_a_design_parameter`** — perturbing it breaks a geometry selection ("found 0"): a measured selector/anchor constant, not an editable knob.
+- **`inconclusive`** — a perturbed rebuild timed out (too slow to decide, raise `--exec-timeout`) or the parameter is reassigned at top level.
+- **`robust`** — survives ±ε.
+
+If no named parameters are found, the program uses inline magic constants and the note advises hoisting them into a parameter block. Bounded by a wall-clock budget and `max_params` — returns a partial report rather than risking a worker timeout.
 
 ---
 

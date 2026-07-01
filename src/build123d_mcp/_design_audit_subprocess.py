@@ -162,6 +162,68 @@ def _perturbations(value, is_int: bool, eps: float):
     return out
 
 
+# Perturbation-failure taxonomy (#341): a failed rebuild is NOT automatically
+# "brittle". Distinguish the cause so only real fragility counts.
+_DEPENDENT_FEATURE_HINTS = ("fillet", "chamfer", "shell", "offset", "max_fillet")
+_SELECTOR_HINTS = (
+    "expected exactly one",
+    "found 0",
+    "list index out of range",
+    "index out of range",
+    "cannot select",
+    "no such",
+)
+
+_VERDICT_PRIORITY = ("brittle", "coupling", "not_a_design_parameter", "inconclusive", "robust")
+_VERDICT_REASON = {
+    "brittle": "a ±ε change fails the validity gate or the solid can't form — fragile here",
+    "coupling": "a dependent feature (fillet/chamfer/shell/offset) fails to regenerate when this "
+    "parameter alone changes — likely parameter coupling, not fragility; verify with a co-edit",
+    "not_a_design_parameter": "perturbing this breaks a geometry selection — likely a measured "
+    "anchor / selector constant, not an editable design knob",
+    "inconclusive": "a perturbed rebuild exceeded the per-perturbation time budget — too slow to "
+    "decide (raise --exec-timeout), not evidence of fragility",
+    "robust": "survives ±ε",
+}
+
+
+def _classify_error(error: str) -> str:
+    """Bucket a failed-rebuild error by cause: timeout / coupling / anchor / rebuild_error."""
+    e = error or ""
+    if "ExecutionTimeout" in e:
+        return "timeout"
+    low = e.lower()
+    if any(k in low for k in _DEPENDENT_FEATURE_HINTS):
+        return "coupling"
+    if any(k in low for k in _SELECTOR_HINTS):
+        return "anchor"
+    return "rebuild_error"
+
+
+def _param_verdict(results: list) -> str:
+    """Reduce a parameter's perturbation outcomes to a single verdict (worst-wins)."""
+    seen = set()
+    for r in results:
+        if r.get("rebuilt"):
+            seen.add("robust" if r.get("passes_gate") else "brittle")
+        else:
+            cause = r.get("cause")
+            if cause in ("timeout",):
+                seen.add("inconclusive")
+            elif cause == "coupling":
+                seen.add("coupling")
+            elif cause == "anchor":
+                seen.add("not_a_design_parameter")
+            else:  # rebuild_error — clear geometric invalidity
+                seen.add("brittle")
+    if not seen:
+        return "inconclusive"  # nothing evaluated (e.g. all perturbations skipped)
+    for v in _VERDICT_PRIORITY:
+        if v in seen:
+            return v
+    return "robust"
+
+
 def evaluate_program(program: str, cap_s: int) -> dict:
     """Rebuild ``program`` in a fresh Session and gate the result.
 
@@ -250,15 +312,15 @@ def run_audit(
                 {
                     **p,
                     "perturbations": [],
+                    "verdict": "inconclusive",
                     "brittle": False,
-                    "inconclusive": True,
-                    "note": "reassigned at top level — perturbing the first assignment is overwritten; audit inconclusive",
+                    "reason": "reassigned at top level — perturbing the first assignment is "
+                    "overwritten by the later one; audit inconclusive",
                 }
             )
             flush()
             continue
         results: list = []
-        brittle = False
         for pert in _perturbations(p["value"], p["type"] == "int", epsilon):
             if remaining() <= _STOP_THRESHOLD_S:
                 break
@@ -269,8 +331,9 @@ def run_audit(
             if pert["discrete"]:
                 entry["discrete_step"] = True
             if not g.get("rebuilt"):
-                brittle = True
+                # A failed rebuild is NOT automatically brittle — classify the cause (#341).
                 entry["rebuilt"] = False
+                entry["cause"] = _classify_error(g.get("error", ""))
                 entry["error"] = g.get("error")
                 results.append(entry)
                 continue
@@ -281,10 +344,19 @@ def run_audit(
             if base_vol:
                 entry["volume_delta_pct"] = round((g["volume"] - base_vol) / base_vol * 100, 1)
             if not g["passes_gate"]:
-                brittle = True
+                entry["cause"] = "gate_fail"
                 entry["reasons"] = g["reasons"]
             results.append(entry)
-        state["audit"].append({**p, "perturbations": results, "brittle": brittle})
+        verdict = _param_verdict(results)
+        state["audit"].append(
+            {
+                **p,
+                "perturbations": results,
+                "verdict": verdict,
+                "brittle": verdict == "brittle",  # back-compat flag
+                "reason": _VERDICT_REASON[verdict],
+            }
+        )
         flush()
 
     # completed only if every parameter was audited — a soft-budget break leaves
