@@ -1,6 +1,6 @@
 # Proposal: Design Conformance — an intent-to-solid verification gate
 
-**Status:** proposal (not yet scheduled) — tracked in [#335](https://github.com/pzfreo/build123d-mcp/issues/335)
+**Status:** MVP shipped — tracked in [#335](https://github.com/pzfreo/build123d-mcp/issues/335). See *Implementation (MVP)* below.
 **Author:** design partner review, 2026-07-01
 **Inspired by:** Arko-T (arXiv:2606.30429, "a design to edit, not a shape to render") and
 `armpro24-blip/cad-cae-copilot` (the aieng workbench). Builds on `design_audit()` (#330) and
@@ -140,6 +140,28 @@ agent can confirm/edit intent rather than write it from scratch; (b) fold the co
 spec + `script()` + STEP + validity report into a single **reproducible design bundle** (our answer
 to the `.aieng` package — but geometry-correctness-first); (c) auto-repair loop
 (`verify_spec` FAIL → `locate_gate_defects` / feature diff → targeted `execute` → re-verify).
+
+## Implementation (MVP — shipped)
+
+`verify_spec(spec="", spec_path="", object_name="")` in `tools/verify_spec.py`, composing existing
+checkers only (no new geometry code, no subprocess, no new dependency; `_GEOMETRY_TIMEOUT` op).
+
+**Decisions made for the MVP:**
+1. **`min_wall_mm` — deferred.** It has no clean kernel query today (`measure` doesn't expose it), so
+   rather than route it through `analyze_printability` now, a spec that requests it returns
+   **UNVERIFIED** (honest, not silently ignored). Revisit as a later PR.
+2. **Spec input — both.** Inline JSON (`spec=`) *and* a `.json` file path (`spec_path=`, via the
+   existing `safe_output_path` policy).
+3. **`conforms` — excludes UNVERIFIED.** `conforms = (fail == 0)`; UNVERIFIED requirements never
+   count as passing *or* as failing — they are explicitly out of scope for the gate.
+
+**Shipped checks:** `envelope_mm`, `solid {count, valid}`, `volume_mm3`, features
+(`hole_pattern`/`hole`/`boss`), `parameters` (top-level numeric range). Dimensions match within
+`max(0.1 mm, 1%)`; counts exact; an unrecognised feature `kind` → UNVERIFIED (never a false FAIL).
+Tiers emitted: `measured`, `structural`, `recognised`, `unverified`.
+
+**Still deferred (later PRs):** the `robust` tier (wire in `design_audit`), `min_wall_mm`, YAML specs,
+`suggest_spec()`, the reproducible design bundle, and the verify→repair→re-verify loop.
 
 ## Non-goals (deliberate restraint)
 

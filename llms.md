@@ -171,6 +171,20 @@ Audit the session program as a **design, not just a shape**: surface its named n
 
 ---
 
+### `verify_spec`
+Check the built solid against a **declared design-intent spec** — the "did I build what was requested?" gate. Where `validate` proves the solid is *valid* and `design_audit` probes its *parameters*, `verify_spec` proves requested-vs-built: it checks each requested feature/constraint against the actual geometry and returns an **evidence-tiered conformance report** (implements Arko-T's feature-realization idea, rec #3).
+
+**Inputs:**
+- `spec` (string) — the design-intent spec as inline JSON, **or**
+- `spec_path` (string) — path to a `.json` spec file (via the output-path policy)
+- `object_name` (string, default `""`) — named object from `show()`; empty = current shape
+
+**Spec keys (MVP):** `envelope_mm {x/y/z: [lo,hi]}` (bbox size in range), `solid {count, valid}`, `volume_mm3 {min,max}`, `features: [{kind:"hole_pattern", pattern:"bolt_circle", holes, bcd_mm, diameter_mm} | {kind:"hole", count, diameter_mm} | {kind:"boss", diameter_mm, height_mm}]`, `parameters: [{name, min, max}]` (top-level numeric assignment in range). `min_wall_mm` and `targets: [{name, verifiable:false}]` are reported UNVERIFIED (deferred / out of scope), not silently dropped.
+
+**Returns:** JSON `{conformance: [{requirement, status: PASS|FAIL|UNVERIFIED, tier, actual/found/hint}], summary: {pass, fail, unverified, conforms}, note}`. Each line carries its **evidence tier** — `measured` (kernel query), `structural` (validity gate), `recognised` (heuristic feature recognition), `unverified` (no checker / deferred / declared unverifiable). `conforms` = **no FAILs**; UNVERIFIED requirements are never counted as met. Dimensions match within `max(0.1 mm, 1%)`; counts exact; an unrecognised feature `kind` is UNVERIFIED, never a false FAIL. Not a certification. A spec is a **reusable contract** — re-run after any edit as a regression/acceptance gate to catch collateral breakage. See `docs/design-conformance-proposal.md`.
+
+---
+
 ### `clearance`
 Spatial relationship between two named shapes — distance, containment, and overlap in one call.
 

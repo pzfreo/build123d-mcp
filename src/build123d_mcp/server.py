@@ -204,6 +204,12 @@ def design_audit(epsilon: float = 0.1, max_params: int = 8) -> str:
 
 
 @mcp.tool()
+def verify_spec(spec: str = "", spec_path: str = "", object_name: str = "") -> str:
+    """Verify the built solid against a declared design-intent spec — did you build what was requested? Checks requested features/constraints against the actual geometry and returns an evidence-tiered conformance report; unlike validate() (is the solid valid?) this answers requested-vs-built. Provide the spec as inline JSON (spec=) or a .json file path (spec_path=). Supported spec keys: envelope_mm {x/y/z:[lo,hi]} (bbox size in range), solid {count, valid}, volume_mm3 {min,max}, features:[{kind:"hole_pattern",pattern:"bolt_circle",holes,bcd_mm,diameter_mm} | {kind:"hole",count,diameter_mm} | {kind:"boss",diameter_mm,height_mm}], parameters:[{name,min,max}] (top-level numeric assignment in range), min_wall_mm (deferred→UNVERIFIED), targets:[{name,verifiable:false}] (→UNVERIFIED). Returns JSON: {conformance:[{requirement, status:PASS|FAIL|UNVERIFIED, tier:measured|structural|recognised|unverified, actual/found/hint}], summary:{pass,fail,unverified,conforms}, note}. conforms = no FAILs; UNVERIFIED requirements are NOT met (out of scope), never counted as passing. Dimensions match within max(0.1mm, 1%); counts exact; an unrecognised feature kind is UNVERIFIED, not a false FAIL. Not a certification. Re-run after edits as a regression/acceptance gate. object_name: named object from show() (default: current shape)."""
+    return _resolve_session().verify_spec(spec, spec_path, object_name)
+
+
+@mcp.tool()
 def clearance(object_a: str, object_b: str) -> str:
     """Spatial relationship between two named shapes. Returns JSON with `clearance` (mm), `status` (one of: apart, touching, containing, interpenetrating), `containment` (a_in_b, b_in_a, or neither), and `intersection_volume` / `a_volume_outside_b` / `b_volume_outside_a` for overlap quantification. Reads `clearance` differently per status: apart=gap, containing=wall thickness from inner surface to outer hull (use this to verify a pocket fits inside a plate), touching=0, interpenetrating=0 (check intersection_volume + a_volume_outside_b for the wall-piercing case). object_a, object_b: names from show()."""
     return _resolve_session().clearance(object_a, object_b)

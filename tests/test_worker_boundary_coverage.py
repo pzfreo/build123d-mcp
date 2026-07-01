@@ -127,6 +127,19 @@ def _design_audit(ws, tmp_path):
     assert r["baseline"]["passes_gate"] is True
 
 
+def _verify_spec(ws, tmp_path):
+    # Spec matches the seeded unit box 'a'. An empty parent proxy doesn't know 'a',
+    # so it would return an error instead of a conformance report.
+    spec = json.dumps(
+        {
+            "solid": {"count": 1, "valid": True},
+            "envelope_mm": {"x": [0, 2], "y": [0, 2], "z": [0, 2]},
+        }
+    )
+    r = json.loads(ws.verify_spec(spec=spec, object_name="a"))
+    assert "error" not in r and r["summary"]["conforms"] is True
+
+
 def _clearance(ws, tmp_path):
     r = json.loads(ws.clearance("a", "b"))
     assert "error" not in r and "status" in r
@@ -258,6 +271,7 @@ SESSION_STATEFUL_TOOLS = {
     "validate": _validate,
     "locate_gate_defects": _locate_gate_defects,
     "design_audit": _design_audit,
+    "verify_spec": _verify_spec,
     "clearance": _clearance,
     "shape_compare": _shape_compare,
     "align_check": _align_check,
