@@ -368,3 +368,28 @@ def test_empty_worker_reports_missing_state():
             s.measure("a")
     finally:
         s._kill_worker()
+
+
+def test_tools_never_deliver_null_or_empty(seeded_ws):
+    """Invariant: a successful tool call always returns a non-empty string, never
+    None/"".
+
+    A bare `null` in a run stream is only ever the streaming `status=in_progress`
+    placeholder (which precedes every `status=completed` event) — never a tool's
+    actual return. This pins that build123d-mcp is not the source of a null
+    delivered to the model (field-report-#2 clarification). Covers in-worker and
+    subprocess-backed tools.
+    """
+    spec = json.dumps({"solid": {"count": 1, "valid": True}})
+    results = {
+        "measure": seeded_ws.measure("a"),
+        "validate": seeded_ws.validate("a"),
+        "locate_gate_defects": seeded_ws.locate_gate_defects("a"),  # subprocess-backed
+        "shape_compare": seeded_ws.shape_compare("a", "b"),  # subprocess-backed
+        "verify_spec": seeded_ws.verify_spec(spec=spec, object_name="a"),
+        "design_audit": seeded_ws.design_audit(),  # subprocess-backed
+        "session_state": seeded_ws.session_state(),
+        "script": seeded_ws.script(),
+    }
+    for name, r in results.items():
+        assert isinstance(r, str) and r.strip(), f"{name} returned null/empty: {r!r}"
