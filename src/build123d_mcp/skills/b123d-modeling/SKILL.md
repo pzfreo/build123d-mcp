@@ -56,11 +56,27 @@ views disagreeing — ask the user which value to use. Do not guess silently.
 
 - One feature (or one boolean) per `execute()` call. Small steps are easy to
   debug; a 60-line block that fails tells you nothing about which line broke.
-- Build from the parameters, never from magic numbers — the part must
-  regenerate when a dimension changes.
 - Register the part under a stable name as soon as it exists:
   `show(part, "part")`. `show()` prints volume and face count immediately,
   confirming the shape is non-empty.
+
+**Author for editability — a design to edit, not a shape to render.** A
+syntactically valid script that hard-codes every number is a *shape*, not a
+*design*: no one can change the hole spacing without rebuilding from scratch.
+Follow the design-state conventions (Arko-T §4.3) so an edit is a one-number
+change:
+
+- **Named parameter block at the top, with units** — `plate_thickness = 5.0  # mm`
+  — never inline magic constants.
+- **Consistent construction order** — base sketch/solid → secondary features
+  (holes, ribs, pockets) → finishing (fillets, chamfers, shell).
+- **Canonical feature idioms** so a feature name maps to the obvious construction
+  pattern; reuse the same idiom for the same feature.
+- **Derive coordinates from parameters** (expressions / references / selectors),
+  not hand-computed magic positions — so moving one datum moves everything bound
+  to it. See `build123d://quickref` Pattern 3 for a worked example.
+
+Finish by running `design_audit()` (Step 6) to prove the parameters are robust.
 
 ## Step 3 — Verify numerically, then visually
 

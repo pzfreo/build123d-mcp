@@ -47,6 +47,32 @@ result = p.part
 show(result, "part")""",
     ),
     Section(
+        label="design_state",
+        text="""\
+## Pattern 3: design-state authoring (a design to EDIT, not a shape to render)
+# Author for editability, not just a valid shape (Arko-T): put named parameters
+# WITH UNITS at the top, then build in a consistent order — base -> secondary
+# features -> finishing. An edit is then a number change here, not a hunt for
+# inline literals; prefer expressions/references over hand-computed coordinates.
+# Run design_audit() to confirm each parameter survives a +/-10% nudge (a small
+# change that collapses the solid or fails the validity gate is a brittle design).
+from build123d import *
+
+# --- parameters (mm) ---
+width = 60.0
+depth = 40.0
+height = 8.0
+bore_d = 10.0
+fillet_r = 3.0
+
+with BuildPart() as p:
+    Box(width, depth, height)                         # base
+    Cylinder(bore_d / 2, height, mode=Mode.SUBTRACT)  # secondary feature
+    fillet(p.edges().filter_by(Axis.Z), radius=fillet_r)  # finishing
+result = p.part
+show(result, "part")""",
+    ),
+    Section(
         text="""\
 ## Primitives
 Box(length, width, height)              # centred at origin

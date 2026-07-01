@@ -56,6 +56,8 @@ with BuildPart() as bp:
 result = bp.part
 ```
 
+**Author for editability — a design to edit, not a shape to render.** Put named parameters *with units* at the top and build from them, never from inline magic constants; keep a consistent construction order (base → secondary features → finishing) and derive coordinates from parameters rather than hand-computed positions. This produces an editable *design*, not just a valid *shape* — and lets `design_audit()` (see the validation protocol) check the parameters are robust. The `build123d://quickref` "design-state authoring" pattern is a worked example.
+
 ## Multi-object assemblies
 
 Use `show(shape, name)` inside `execute` to register named parts. This lets you render, measure, and export individual parts independently:

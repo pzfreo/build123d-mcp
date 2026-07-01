@@ -81,7 +81,7 @@ library parts, not the live session program). A new tool would:
 This converts "valid shape" into "valid, editable design" reusing machinery that already exists.
 It is the single change most faithful to the paper. **Delivered in #330.**
 
-### 2. Push design-state code structure in the guidance — *low cost, high leverage*
+### 2. Push design-state code structure in the guidance — *delivered alongside #330*
 
 §4.3 ("Design-State Code Normalization") is a recipe adoptable almost verbatim for the guidance the
 server gives the *calling* model:
@@ -92,12 +92,12 @@ server gives the *calling* model:
 - **Consistent construction order** (sketch → extrude → secondary features → finishing).
 - **Explicit constraints / references** rather than implicitly computed coordinates.
 
-Today `quickref.py` teaches the *opposite* by example — nearly every snippet is `Box(20, 10, 5)`
-with inline literals. A model imitating the quickref faithfully produces shapes, not editable
-designs. `default_prompt.md` has a strong *validation* protocol but nothing on *parametric authoring
-style*. Adding a short "Author for editability" section to both, plus one parametric exemplar in the
-quickref, is cheap and directly targets the thesis. `validate_code.py` could additionally emit an
-advisory when a program has many inline numeric literals and no parameter block.
+> **Status: shipped (guidance).** An "Author for editability" section is now in the b123d-modeling
+> skill (Step 2) and in `default_prompt.md`, and `quickref.py` gained a runnable **Pattern 3:
+> design-state authoring** exemplar (named parameter block + units, base → secondary → finishing
+> order). Previously the quickref taught the *opposite* — nearly every snippet was `Box(20, 10, 5)`
+> with inline literals. Still open as an optional extra: a `validate_code.py` advisory when a program
+> has many inline numeric literals and no parameter block.
 
 ### 3. Tie feature detection to *intent* (feature-realization check)
 
@@ -147,4 +147,7 @@ more than a code change.
 The server had nailed the executability half of the paper and a blind spot on the design-state
 half — the exact half the paper exists to argue for. The highest-value, most paper-faithful move,
 **#1, a design-state / parametric-robustness audit tool** built on the `_gate_report` machinery in
-`validate.py`, has now shipped as `design_audit()` (#330). Recommendations #2–#5 remain open.
+`validate.py`, has now shipped as `design_audit()` (#330), and its companion #2 (design-state
+authoring guidance) shipped with it in the skill, `default_prompt.md`, and `quickref.py`.
+Recommendations #3–#5 (feature-realization check, failure-mode lint, oracle/self-improving loop)
+remain open — they are new features, not doc changes.
