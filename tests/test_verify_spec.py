@@ -158,6 +158,99 @@ def test_spec_from_file_path(session, tmp_path):
     assert r["summary"]["conforms"] is True
 
 
+_CBORE = (
+    "with BuildPart() as p:\n"
+    "    Box(60, 30, 12)\n"
+    "    with Locations((-15, 0), (15, 0)):\n"
+    "        CounterBoreHole(radius=3, counter_bore_radius=5, counter_bore_depth=3)\n"
+    "result = p.part\n"
+    "show(result, 'p')\n"
+)
+_LINEAR = (
+    "with BuildPart() as p:\n"
+    "    Box(90, 20, 10)\n"
+    "    with GridLocations(20, 0, 4, 1):\n"
+    "        Hole(2.5)\n"
+    "result = p.part\n"
+    "show(result, 'p')\n"
+)
+
+
+def test_hole_counterbore_and_through_are_checked(session):
+    r = _run(
+        session,
+        _CBORE,
+        {
+            "features": [
+                {
+                    "kind": "hole",
+                    "count": 2,
+                    "diameter_mm": 6.0,
+                    "through": True,
+                    "counterbore": {"diameter_mm": 10.0},
+                }
+            ]
+        },
+    )
+    e = r["conformance"][0]
+    assert e["status"] == "PASS" and e["found"] == 2
+    assert "counterbore" in e["requirement"] and "through" in e["requirement"]
+
+
+def test_hole_wrong_counterbore_diameter_fails(session):
+    r = _run(
+        session,
+        _CBORE,
+        {
+            "features": [
+                {
+                    "kind": "hole",
+                    "count": 2,
+                    "diameter_mm": 6.0,
+                    "counterbore": {"diameter_mm": 20.0},
+                }
+            ]
+        },  # real cbore is Ø10
+    )
+    assert r["conformance"][0]["status"] == "FAIL"
+
+
+def test_blind_vs_through_distinguished(session):
+    # these holes are through; asking for blind must FAIL
+    r = _run(session, _CBORE, {"features": [{"kind": "hole", "count": 2, "through": False}]})
+    assert r["conformance"][0]["status"] == "FAIL"
+
+
+def test_linear_array_pattern_checked(session):
+    r = _run(
+        session,
+        _LINEAR,
+        {
+            "features": [
+                {
+                    "kind": "hole_pattern",
+                    "pattern": "linear_array",
+                    "holes": 4,
+                    "pitch_mm": 20.0,
+                    "diameter_mm": 5.0,
+                }
+            ]
+        },
+    )
+    e = r["conformance"][0]
+    assert e["status"] == "PASS" and e["found"]["pitch"] == 20.0
+
+
+def test_malformed_counterbore_is_clean_error(session):
+    session.execute(_CBORE)
+    r = json.loads(
+        verify_spec(
+            session, spec=json.dumps({"features": [{"kind": "hole", "counterbore": [1, 2]}]})
+        )
+    )
+    assert "error" in r and "counterbore" in r["error"]
+
+
 def test_missing_and_malformed_spec_error(session):
     session.execute(_PLATE)
     assert "error" in json.loads(verify_spec(session))  # neither spec nor spec_path

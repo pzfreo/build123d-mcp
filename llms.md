@@ -189,7 +189,12 @@ Check the built solid against a **declared design-intent spec** — the "did I b
 - `spec_path` (string) — path to a `.json` spec file (via the output-path policy)
 - `object_name` (string, default `""`) — named object from `show()`; empty = current shape
 
-**Spec keys (MVP):** `envelope_mm {x/y/z: [lo,hi]}` (bbox size in range), `solid {count, valid}`, `volume_mm3 {min,max}`, `features: [{kind:"hole_pattern", pattern:"bolt_circle", holes, bcd_mm, diameter_mm} | {kind:"hole", count, diameter_mm} | {kind:"boss", diameter_mm, height_mm}]`, `parameters: [{name, min, max}]` (top-level numeric assignment in range). `min_wall_mm` and `targets: [{name, verifiable:false}]` are reported UNVERIFIED (deferred / out of scope), not silently dropped.
+**Spec keys:** `envelope_mm {x/y/z: [lo,hi]}` (bbox size in range), `solid {count, valid}`, `volume_mm3 {min,max}`, `parameters: [{name, min, max}]` (top-level numeric assignment in range), and `features: [...]`:
+- `{kind:"hole", count, diameter_mm, depth_mm, through:bool, counterbore:{diameter_mm, depth_mm}|true, spotface:{...}}` — any subset of attributes; all are frame-independent (absolute position is not matched).
+- `{kind:"hole_pattern", pattern:"bolt_circle"|"linear_array", holes, bcd_mm (bolt_circle) | pitch_mm (linear_array), diameter_mm}`
+- `{kind:"boss", diameter_mm, height_mm}`
+
+`min_wall_mm` and `targets: [{name, verifiable:false}]` are reported UNVERIFIED (deferred / out of scope), not silently dropped. Feature kinds beyond hole/hole_pattern/boss (pocket, fillet, chamfer, rib, …) need new recognizers and currently read UNVERIFIED.
 
 **Returns:** JSON `{conformance: [{requirement, status: PASS|FAIL|UNVERIFIED, tier, actual/found/hint}], summary: {pass, fail, unverified, checked, conforms}, note}`. Each line carries its **evidence tier** — `measured` (kernel query), `structural` (validity gate), `recognised` (heuristic feature recognition), `unverified` (no checker / deferred / declared unverifiable). `conforms` = **no FAILs and ≥1 requirement actually checked** (`summary.checked`) — a spec that verifies nothing (all keys unrecognised/deferred/unverifiable) reports `conforms:false` with a warning, never a vacuous true; UNVERIFIED requirements are never counted as met. Dimensions match within `max(0.1 mm, 1%)`; counts exact; an unrecognised feature `kind` is UNVERIFIED, never a false FAIL. A malformed spec returns a clean error naming the bad field. Not a certification. A spec is a **reusable contract** — re-run after any edit as a regression/acceptance gate to catch collateral breakage. See `docs/design-conformance-proposal.md`.
 

@@ -84,6 +84,11 @@ def _spec_shape_error(data: dict) -> str | None:
         for i, f in enumerate(feats):
             if not isinstance(f, dict) or "kind" not in f:
                 return f"features[{i}] must be an object with a 'kind'"
+            for sub in ("counterbore", "spotface"):
+                if sub in f and not isinstance(f[sub], (dict, bool)):
+                    return (
+                        f"features[{i}].{sub} must be an object {{diameter_mm, depth_mm}} or true"
+                    )
     params = data.get("parameters")
     if params is not None:
         if not isinstance(params, list):
@@ -191,18 +196,22 @@ def _check_hole_pattern(f: dict, patterns: list, err, out: list) -> None:
             and not _close(p.get("diameter"), f["bcd_mm"])
         ):
             continue
+        if (
+            want_type == "linear_array"
+            and "pitch_mm" in f
+            and not _close(p.get("pitch"), f["pitch_mm"])
+        ):
+            continue
         if "diameter_mm" in f:
             hd = [h.get("diameter") for h in p.get("holes", []) if h.get("diameter") is not None]
             if not hd or not _close(hd[0], f["diameter_mm"]):
                 continue
-        out.append(
-            {
-                "requirement": req,
-                "status": "PASS",
-                "tier": "recognised",
-                "found": {"holes": len(p.get("holes", [])), "bcd": p.get("diameter")},
-            }
-        )
+        found = {"holes": len(p.get("holes", []))}
+        if want_type == "bolt_circle":
+            found["bcd"] = p.get("diameter")
+        elif want_type == "linear_array":
+            found["pitch"] = p.get("pitch")
+        out.append({"requirement": req, "status": "PASS", "tier": "recognised", "found": found})
         return
     n_type = sum(1 for p in patterns if p.get("type") == want_type)
     out.append(
@@ -210,19 +219,61 @@ def _check_hole_pattern(f: dict, patterns: list, err, out: list) -> None:
             "requirement": req,
             "status": "FAIL",
             "tier": "recognised",
-            "hint": f"found {n_type} {want_type} pattern(s); none matched holes/BCD/Ø",
+            "hint": f"found {n_type} {want_type} pattern(s); none matched holes/BCD/pitch/Ø",
         }
     )
+
+
+def _sub_matches(sub: dict | None, want) -> bool:
+    """Match a counterbore/spotface sub-feature. `want` is True (require presence)
+    or an object with optional diameter_mm/depth_mm."""
+    if not sub:
+        return False
+    if isinstance(want, dict):
+        if "diameter_mm" in want and not _close(sub.get("diameter"), want["diameter_mm"]):
+            return False
+        if "depth_mm" in want and not _close(sub.get("depth"), want["depth_mm"]):
+            return False
+    return True
+
+
+def _hole_matches(h: dict, f: dict) -> bool:
+    """Does a recognised hole record satisfy the requested hole spec? All
+    frame-independent attributes the recognizer exposes (Ø, depth, through/blind,
+    counterbore, spotface); absolute location is intentionally not matched."""
+    if "diameter_mm" in f and not _close(h.get("diameter"), f["diameter_mm"]):
+        return False
+    if "depth_mm" in f and not _close(h.get("depth"), f["depth_mm"]):
+        return False
+    if "through" in f and (h.get("bottom") == "through") != bool(f["through"]):
+        return False
+    if "counterbore" in f and not _sub_matches(h.get("cbore"), f["counterbore"]):
+        return False
+    if "spotface" in f and not _sub_matches(h.get("spotface"), f["spotface"]):
+        return False
+    return True
 
 
 def _check_hole(f: dict, holes: list, err, out: list) -> None:
     d = f.get("diameter_mm")
     want = f.get("count", 1)
-    req = f"{want}× Ø{d} hole" if d is not None else f"{want} hole(s)"
+    attrs = []
+    if "depth_mm" in f:
+        attrs.append(f"depth {f['depth_mm']}")
+    if f.get("through") is True:
+        attrs.append("through")
+    elif f.get("through") is False:
+        attrs.append("blind")
+    if "counterbore" in f:
+        attrs.append("counterbore")
+    if "spotface" in f:
+        attrs.append("spotface")
+    base = f"{want}× Ø{d} hole" if d is not None else f"{want} hole(s)"
+    req = base + (f" ({', '.join(attrs)})" if attrs else "")
     if err:
         out.append({"requirement": req, "status": "UNVERIFIED", "tier": "unverified", "note": err})
         return
-    matching = [h for h in holes if d is None or _close(h.get("diameter"), d)]
+    matching = [h for h in holes if _hole_matches(h, f)]
     ok = len(matching) == want if "count" in f else len(matching) >= 1
     out.append(
         {
