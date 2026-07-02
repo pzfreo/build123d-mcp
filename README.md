@@ -26,6 +26,7 @@ When using an AI to write build123d scripts, the AI writes blind — it cannot s
 - `cross_sections` — cross-sectional areas at evenly spaced planes along X/Y/Z; useful for detecting voids and wall-thickness variation
 - `resolve` — evaluate a selector expression (e.g. `.faces().filter_by(Axis.Z).last()`) against a named object and return a geometry descriptor
 - `find_holes` / `find_bosses` / `find_hole_patterns` — feature recognition: coaxial drill + counterbore + spotface stacks as one hole record (axis, location, diameter, depth, bottom: through/flat/drill_point/unknown), external bosses with height, bolt-circle and linear-array patterns
+- `find_countersinks` — recognise conical countersinks (major/drill diameter, included angle, depth) that `find_holes` reports only as plain openings
 - `analyze_printability` — BREP-exact FDM printability analysis: overhangs, thin walls, minimum features, bed fit, tip-over risk
 - `design_audit` — audit the session program as a *design*, not just a shape: surface its named numeric parameters and perturb each ±ε in isolation, re-running the validity gate to flag *brittle* parameters where a small edit collapses the solid (Arko-T design-state robustness)
 - `verify_spec` — check the built solid against a declared design-intent spec (envelope, solid count/validity, hole/boss features, parameter ranges): answers *"did I build what was requested?"* with an evidence-tiered PASS/FAIL/UNVERIFIED conformance report; reusable as a regression/acceptance gate after edits

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.62
+
+### Added
+
+- **`find_countersinks()` — recognise conical countersinks**, the feature `find_holes` reports only as a plain opening. A countersink is detected as an internal `CONE` face that flares from a drilled bore (minor circular edge) out to a larger opening (major circle) and is **coaxial with a `CYLINDER` of the drill radius** — which excludes drill-point cones (a single circle + apex) and external edge chamfers (no coaxial bore). Returns `{count, countersinks: [{location, axis, major_diameter, drill_diameter, included_angle (e.g. 82/90/100/120°), depth}]}`. First **in-house, Apache-licensed** recognizer (build123d/OCP only, in `tools/recognizers/`) — kept self-contained so it can be repatriated into a shared permissive recognition package later; build123d ships `CounterSinkHole` to build them but no recognizer for them. (#349-adjacent)
+
 ## v0.3.61
 
 ### Changed

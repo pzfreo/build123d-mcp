@@ -501,6 +501,12 @@ def find_bosses(object_name: str = "") -> str:
 
 
 @mcp.tool()
+def find_countersinks(object_name: str = "") -> str:
+    """Recognise countersinks (conical screw-head recesses) on a session object (defaults to current shape) — the feature find_holes reports only as a plain opening. A countersink is an internal cone flaring from a drilled bore out to a larger opening, coaxial with the drill; drill-point cones and external edge chamfers are excluded. Returns JSON: {count, countersinks: [{location (opening centre), axis (into the part), major_diameter (countersink Ø at the surface), drill_diameter, included_angle (deg, e.g. 82/90/100/120), depth}]}. object_name: named object from show() (default: current shape)."""
+    return _resolve_session().find_countersinks(object_name)
+
+
+@mcp.tool()
 def align_check(object_a: str, object_b: str, axis: str = "Z", mode: str = "flush") -> str:
     """Check alignment between two named objects along an axis. axis: X, Y, or Z. mode: flush (signed distance between bbox extremes — positive=A extends further), center (offset between bbox centroids), clearance (gap between nearest faces — positive=apart, negative=overlap). Returns JSON: {delta, axis, mode, object_a, object_b, interpretation}."""
     return _resolve_session().align_check(object_a, object_b, axis=axis, mode=mode)

@@ -734,6 +734,10 @@ class WorkerSession:
     def find_holes(self, object_name: str = "") -> str:
         raise NotImplementedError
 
+    @_op(_tool(f"{_T}.recognizers.countersink:find_countersinks"), _GEOMETRY_TIMEOUT)
+    def find_countersinks(self, object_name: str = "") -> str:
+        raise NotImplementedError
+
     @_op(_tool(f"{_T}.find_features:find_bosses"), _GEOMETRY_TIMEOUT)
     def find_bosses(self, object_name: str = "") -> str:
         raise NotImplementedError
