@@ -5,7 +5,7 @@ import json
 import pytest
 
 from build123d_mcp.session import Session
-from build123d_mcp.tools.verify_spec import verify_spec
+from build123d_mcp.tools.verify_spec import suggest_spec, verify_spec
 
 
 @pytest.fixture
@@ -486,3 +486,26 @@ def test_material_at_point_malformed_clean_error(session):
             )
         )
         assert "error" in r, bad
+
+
+def test_suggest_spec_round_trips_and_detects_features(session):
+    session.execute(_PLATE)
+    sug = json.loads(suggest_spec(session, "part"))
+    spec = sug["spec"]
+    # detected the bolt circle (deduped — no standalone hole entry for its members)
+    kinds = [f["kind"] for f in spec["features"]]
+    assert kinds == ["hole_pattern"]
+    bc = spec["features"][0]
+    assert bc["pattern"] == "bolt_circle" and bc["holes"] == 4
+    assert bc["bcd_mm"] == 40.0 and bc["diameter_mm"] == 6.6
+    assert spec["solid"] == {"count": 1, "valid": True}
+    assert any(p["name"] == "plate_thickness" for p in spec["parameters"])
+    # the drafted spec, fed back, conforms on the unchanged part
+    r = json.loads(verify_spec(session, spec=json.dumps(spec), object_name="part"))
+    assert r["summary"]["conforms"] is True and r["summary"]["fail"] == 0
+
+
+def test_suggest_spec_errors_without_a_shape():
+    s = Session()
+    s.execute("from build123d import *")
+    assert "error" in json.loads(suggest_spec(s))

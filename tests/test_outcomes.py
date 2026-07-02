@@ -869,6 +869,7 @@ def test_mcp_lists_all_tools():
         "locate_gate_defects",
         "design_audit",
         "verify_spec",
+        "suggest_spec",
         "export",
         "reset",
         "save_snapshot",

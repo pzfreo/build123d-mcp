@@ -140,6 +140,13 @@ def _verify_spec(ws, tmp_path):
     assert "error" not in r and r["summary"]["conforms"] is True
 
 
+def _suggest_spec(ws, tmp_path):
+    # Drafts a spec from the seeded worker's box 'a'; an empty parent proxy has no
+    # 'a' and would return an error instead of a spec.
+    r = json.loads(ws.suggest_spec("a"))
+    assert "error" not in r and r["spec"]["solid"]["count"] == 1
+
+
 def _clearance(ws, tmp_path):
     r = json.loads(ws.clearance("a", "b"))
     assert "error" not in r and "status" in r
@@ -279,6 +286,7 @@ SESSION_STATEFUL_TOOLS = {
     "locate_gate_defects": _locate_gate_defects,
     "design_audit": _design_audit,
     "verify_spec": _verify_spec,
+    "suggest_spec": _suggest_spec,
     "clearance": _clearance,
     "shape_compare": _shape_compare,
     "align_check": _align_check,

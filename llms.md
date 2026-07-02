@@ -181,6 +181,15 @@ If no named parameters are found, the program uses inline magic constants and th
 
 ---
 
+### `suggest_spec`
+Draft a starter `verify_spec` spec from the current (or named) shape, so you edit detected values instead of authoring one from scratch.
+
+**Input:** `object_name` (string, default `""`) — named object from `show()`; empty = current shape.
+
+**Returns:** JSON `{spec, note}`. `spec` describes what was **built** — `envelope_mm`/`volume_mm3` (±2% band), `solid {count, valid}`, `features` (recognised `hole`/`hole_pattern`/`boss`, de-duped so a pattern's holes aren't double-counted), and `parameters` (±10% band) — and is directly usable by `verify_spec` (a drafted spec conforms on the unchanged part). **Review and edit** each value against your intended drawing first. Not captured: absolute positions, and features the recognizers don't cover (fillets, chamfers, pockets, ribs) — add those manually.
+
+---
+
 ### `verify_spec`
 Check the built solid against a **declared design-intent spec** — the "did I build what was requested?" gate. Where `validate` proves the solid is *valid* and `design_audit` probes its *parameters*, `verify_spec` proves requested-vs-built: it checks each requested feature/constraint against the actual geometry and returns an **evidence-tiered conformance report** (implements Arko-T's feature-realization idea, rec #3).
 

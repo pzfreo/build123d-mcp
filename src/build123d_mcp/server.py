@@ -210,6 +210,12 @@ def verify_spec(spec: str = "", spec_path: str = "", object_name: str = "") -> s
 
 
 @mcp.tool()
+def suggest_spec(object_name: str = "") -> str:
+    """Draft a starter design-intent spec from the current (or named) shape, so you can edit detected values instead of authoring a verify_spec spec from scratch. Introspects the shape with the same primitives verify_spec checks against — bounding box (→ envelope_mm), the validity gate (→ solid), volume, feature recognition (→ hole/hole_pattern/boss features), and top-level numeric parameters — and returns JSON {spec, note}. The `spec` describes what was BUILT (envelope/volume use a ±2% band, parameters ±10% — editable defaults); review and edit each value against your intended drawing, then pass the `spec` object to verify_spec(). NOT captured: absolute positions, and cosmetic/other features (fillets, chamfers, pockets, ribs) the recognizers don't cover — add those manually. object_name: named object from show() (default: current shape)."""
+    return _resolve_session().suggest_spec(object_name)
+
+
+@mcp.tool()
 def clearance(object_a: str, object_b: str) -> str:
     """Spatial relationship between two named shapes. Returns JSON with `clearance` (mm), `status` (one of: apart, touching, containing, interpenetrating), `containment` (a_in_b, b_in_a, or neither), and `intersection_volume` / `a_volume_outside_b` / `b_volume_outside_a` for overlap quantification. Reads `clearance` differently per status: apart=gap, containing=wall thickness from inner surface to outer hull (use this to verify a pocket fits inside a plate), touching=0, interpenetrating=0 (check intersection_volume + a_volume_outside_b for the wall-piercing case). object_a, object_b: names from show()."""
     return _resolve_session().clearance(object_a, object_b)

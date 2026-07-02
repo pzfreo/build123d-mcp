@@ -639,6 +639,10 @@ class WorkerSession:
     def verify_spec(self, spec: str = "", spec_path: str = "", object_name: str = "") -> str:
         raise NotImplementedError
 
+    @_op(_tool(f"{_T}.verify_spec:suggest_spec"), _GEOMETRY_TIMEOUT)
+    def suggest_spec(self, object_name: str = "") -> str:
+        raise NotImplementedError
+
     @_op(_tool(f"{_T}.measure:clearance"), _GEOMETRY_TIMEOUT)
     def clearance(self, object_a: str, object_b: str) -> str:
         raise NotImplementedError

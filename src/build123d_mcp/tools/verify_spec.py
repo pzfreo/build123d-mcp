@@ -715,3 +715,112 @@ def verify_spec(session, spec: str = "", spec_path: str = "", object_name: str =
         },
         indent=2,
     )
+
+
+# --------------------------------------------------------------------------- #
+# suggest_spec — draft a starter design-intent spec from the current shape     #
+# --------------------------------------------------------------------------- #
+
+
+def _round(x, n=3):
+    return round(x, n) if isinstance(x, (int, float)) else x
+
+
+def _suggest_features(session, object_name: str) -> list:
+    """Emit hole/hole_pattern/boss feature entries from the recognizers, de-duped
+    so a pattern's member holes aren't also counted as standalone holes."""
+    from collections import Counter
+
+    from build123d_mcp.tools.find_features import find_bosses, find_hole_patterns, find_holes
+
+    feats: list = []
+    pats = json.loads(find_hole_patterns(session, object_name)).get("patterns", [])
+    holes = json.loads(find_holes(session, object_name)).get("holes", [])
+    bosses = json.loads(find_bosses(session, object_name)).get("bosses", [])
+
+    pattern_dia_counts: Counter = Counter()
+    for p in pats:
+        members = p.get("holes", [])
+        dias = [h.get("diameter") for h in members if h.get("diameter") is not None]
+        dia = _round(dias[0]) if dias else None
+        entry: dict = {"kind": "hole_pattern", "pattern": p.get("type"), "holes": len(members)}
+        if p.get("type") == "bolt_circle" and p.get("diameter") is not None:
+            entry["bcd_mm"] = _round(p["diameter"])
+        if p.get("type") == "linear_array" and p.get("pitch") is not None:
+            entry["pitch_mm"] = _round(p["pitch"])
+        if dia is not None:
+            entry["diameter_mm"] = dia
+            pattern_dia_counts[dia] += len(members)
+        feats.append(entry)
+
+    hole_dia_counts: Counter = Counter(
+        _round(h["diameter"]) for h in holes if h.get("diameter") is not None
+    )
+    for dia, cnt in hole_dia_counts.items():
+        remaining = cnt - pattern_dia_counts.get(dia, 0)
+        if remaining > 0:
+            feats.append({"kind": "hole", "count": remaining, "diameter_mm": dia})
+
+    boss_counts: Counter = Counter(
+        (_round(b["diameter"]), _round(b["height"]))
+        for b in bosses
+        if b.get("diameter") is not None and b.get("height") is not None
+    )
+    for (dia, h), _cnt in boss_counts.items():
+        feats.append({"kind": "boss", "diameter_mm": dia, "height_mm": h})
+    return feats
+
+
+def _suggest_parameters(session) -> list:
+    from build123d_mcp._design_audit_subprocess import _extract_params
+    from build123d_mcp.tools.design_audit import _assemble
+
+    program = _assemble(session)
+    params = _extract_params(program)[0] if program else []
+    return [
+        {"name": p["name"], "min": round(p["value"] * 0.9, 4), "max": round(p["value"] * 1.1, 4)}
+        for p in params
+    ]
+
+
+def suggest_spec(session, object_name: str = "") -> str:
+    """Draft a starter design-intent spec from the current (or named) shape.
+
+    Introspects the shape with the same primitives verify_spec checks against
+    (bbox, validity gate, feature recognition, parameter extraction) and returns
+    a spec that describes what was built — so the agent edits detected values
+    against the intended drawing rather than authoring from scratch. Envelope /
+    volume use a ±2% band and parameters a ±10% band (editable defaults).
+    """
+    shape, err = _resolve_shape(session, object_name)
+    if err is not None:
+        return err
+
+    from build123d_mcp.tools.measure import measure as _measure
+
+    m = json.loads(_measure(session, object_name))
+    gate = _gate_report(shape)
+    bb = m["bbox"]
+    spec = {
+        "envelope_mm": {
+            ax: [round(bb[f"{ax}size"] * 0.98, 2), round(bb[f"{ax}size"] * 1.02, 2)]
+            for ax in ("x", "y", "z")
+        },
+        "solid": {"count": gate["n_solids"], "valid": bool(gate["passes_gate"])},
+        "volume_mm3": {"min": round(m["volume"] * 0.98, 2), "max": round(m["volume"] * 1.02, 2)},
+        "features": _suggest_features(session, object_name),
+        "parameters": _suggest_parameters(session),
+    }
+    return json.dumps(
+        {
+            "spec": spec,
+            "note": (
+                "Detected from the CURRENT shape — a starter, not ground truth. Review and edit each "
+                "value against your intended drawing (the bands are editable defaults), then pass the "
+                "`spec` object to verify_spec(). Not captured: absolute positions, cosmetic/other "
+                "features (fillets, chamfers, pockets, ribs) — add those manually if the recognizers "
+                "don't cover them."
+            ),
+        },
+        indent=2,
+    )
