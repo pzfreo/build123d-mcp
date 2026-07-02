@@ -289,3 +289,57 @@ def test_missing_and_malformed_spec_error(session):
     assert "error" in json.loads(verify_spec(session))  # neither spec nor spec_path
     assert "error" in json.loads(verify_spec(session, spec="{not json"))
     assert "error" in json.loads(verify_spec(session, spec="[1,2,3]"))  # not an object
+
+
+_CSK_PART = (
+    "with BuildPart() as p:\n"
+    "    Box(60, 40, 12)\n"
+    "    top = p.faces().sort_by(Axis.Z)[-1]\n"
+    "    with Locations(top):\n"
+    "        with Locations((-15, 0), (15, 0)):\n"
+    "            CounterSinkHole(radius=3, counter_sink_radius=6, counter_sink_angle=82)\n"
+    "result = p.part\n"
+    "show(result, 'p')\n"
+)
+
+
+def test_countersink_feature_conforms(session):
+    r = _run(
+        session,
+        _CSK_PART,
+        {
+            "features": [
+                {
+                    "kind": "countersink",
+                    "count": 2,
+                    "major_diameter_mm": 12.0,
+                    "drill_diameter_mm": 6.0,
+                    "included_angle_deg": 82,
+                }
+            ]
+        },
+    )
+    e = r["conformance"][0]
+    assert e["status"] == "PASS" and e["found"] == 2 and e["tier"] == "recognised"
+
+
+def test_countersink_wrong_angle_fails(session):
+    r = _run(session, _CSK_PART, {"features": [{"kind": "countersink", "included_angle_deg": 90}]})
+    assert r["conformance"][0]["status"] == "FAIL"
+
+
+def test_countersink_absent_fails(session):
+    # a plain-hole part has no countersinks → a countersink requirement FAILs
+    r = _run(session, _PLAIN_HOLES, {"features": [{"kind": "countersink"}]})
+    assert r["conformance"][0]["status"] == "FAIL" and r["conformance"][0]["found"] == 0
+
+
+def test_countersink_non_numeric_field_clean_error(session):
+    session.execute(_CSK_PART)
+    r = json.loads(
+        verify_spec(
+            session,
+            spec=json.dumps({"features": [{"kind": "countersink", "included_angle_deg": "82"}]}),
+        )
+    )
+    assert "error" in r and "included_angle_deg" in r["error"]

@@ -92,6 +92,9 @@ def _spec_shape_error(data: dict) -> str | None:
                 "height_mm",
                 "holes",
                 "count",
+                "major_diameter_mm",
+                "drill_diameter_mm",
+                "included_angle_deg",
             ):
                 if k in f and not _is_num(f[k]):
                     return f"features[{i}].{k} must be a number"
@@ -320,11 +323,44 @@ def _check_boss(f: dict, bosses: list, err, out: list) -> None:
     out.append({"requirement": req, "status": "FAIL", "tier": "recognised"})
 
 
+def _check_countersink(f: dict, csinks: list, err, out: list) -> None:
+    want = f.get("count", 1)
+    req = f"{want}× countersink" + (
+        f" Ø{f['major_diameter_mm']}" if "major_diameter_mm" in f else ""
+    )
+    if err:
+        out.append({"requirement": req, "status": "UNVERIFIED", "tier": "unverified", "note": err})
+        return
+
+    def _matches(c: dict) -> bool:
+        for spec_key, rec_key in (
+            ("major_diameter_mm", "major_diameter"),
+            ("drill_diameter_mm", "drill_diameter"),
+            ("included_angle_deg", "included_angle"),
+            ("depth_mm", "depth"),
+        ):
+            if spec_key in f and not _close(c.get(rec_key), f[spec_key]):
+                return False
+        return True
+
+    matching = [c for c in csinks if _matches(c)]
+    ok = len(matching) == want if "count" in f else len(matching) >= 1
+    out.append(
+        {
+            "requirement": req,
+            "status": "PASS" if ok else "FAIL",
+            "tier": "recognised",
+            "found": len(matching),
+        }
+    )
+
+
 def _check_features(session, object_name: str, features: list, out: list) -> None:
     from build123d_mcp.tools.find_features import find_bosses, find_hole_patterns, find_holes
+    from build123d_mcp.tools.recognizers.countersink import find_countersinks
 
-    holes = pats = bosses = None
-    holes_err = pats_err = bosses_err = None
+    holes = pats = bosses = csinks = None
+    holes_err = pats_err = bosses_err = csinks_err = None
     for f in features:
         kind = f.get("kind")
         if kind == "hole_pattern":
@@ -339,6 +375,12 @@ def _check_features(session, object_name: str, features: list, out: list) -> Non
             if bosses is None:
                 bosses, bosses_err = _recognise(find_bosses, session, object_name, "bosses")
             _check_boss(f, bosses, bosses_err, out)
+        elif kind == "countersink":
+            if csinks is None:
+                csinks, csinks_err = _recognise(
+                    find_countersinks, session, object_name, "countersinks"
+                )
+            _check_countersink(f, csinks, csinks_err, out)
         else:
             out.append(
                 {

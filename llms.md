@@ -193,6 +193,7 @@ Check the built solid against a **declared design-intent spec** — the "did I b
 - `{kind:"hole", count, diameter_mm, depth_mm, through:bool, counterbore:{diameter_mm, depth_mm}|true|false, spotface:{...}}` — any subset of attributes; all frame-independent (absolute position is not matched). `counterbore`/`spotface`: `true` requires one present, `false` requires it absent, an object matches its dims. Note a `depth_mm` on `counterbore`/`spotface` is matched against the **recognizer-measured** depth, which can differ from a drawing callout — match on `diameter_mm` when unsure.
 - `{kind:"hole_pattern", pattern:"bolt_circle"|"linear_array", holes, bcd_mm (bolt_circle) | pitch_mm (linear_array), diameter_mm}`
 - `{kind:"boss", diameter_mm, height_mm}`
+- `{kind:"countersink", count, major_diameter_mm, drill_diameter_mm, included_angle_deg, depth_mm}` — any subset; conical screw-head recesses (see `find_countersinks`). A shallow lead-in/deburr chamfer also registers as a small countersink.
 
 `min_wall_mm` and `targets: [{name, verifiable:false}]` are reported UNVERIFIED (deferred / out of scope), not silently dropped. Feature kinds beyond hole/hole_pattern/boss (pocket, fillet, chamfer, rib, …) need new recognizers and currently read UNVERIFIED.
 
