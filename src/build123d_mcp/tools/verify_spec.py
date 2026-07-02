@@ -84,11 +84,26 @@ def _spec_shape_error(data: dict) -> str | None:
         for i, f in enumerate(feats):
             if not isinstance(f, dict) or "kind" not in f:
                 return f"features[{i}] must be an object with a 'kind'"
+            for k in (
+                "diameter_mm",
+                "depth_mm",
+                "bcd_mm",
+                "pitch_mm",
+                "height_mm",
+                "holes",
+                "count",
+            ):
+                if k in f and not _is_num(f[k]):
+                    return f"features[{i}].{k} must be a number"
             for sub in ("counterbore", "spotface"):
-                if sub in f and not isinstance(f[sub], (dict, bool)):
-                    return (
-                        f"features[{i}].{sub} must be an object {{diameter_mm, depth_mm}} or true"
-                    )
+                if sub not in f:
+                    continue
+                if not isinstance(f[sub], (dict, bool)):
+                    return f"features[{i}].{sub} must be an object {{diameter_mm, depth_mm}} or true/false"
+                if isinstance(f[sub], dict):
+                    for k in ("diameter_mm", "depth_mm"):
+                        if k in f[sub] and not _is_num(f[sub][k]):
+                            return f"features[{i}].{sub}.{k} must be a number"
     params = data.get("parameters")
     if params is not None:
         if not isinstance(params, list):
@@ -225,8 +240,12 @@ def _check_hole_pattern(f: dict, patterns: list, err, out: list) -> None:
 
 
 def _sub_matches(sub: dict | None, want) -> bool:
-    """Match a counterbore/spotface sub-feature. `want` is True (require presence)
-    or an object with optional diameter_mm/depth_mm."""
+    """Match a counterbore/spotface sub-feature. `want` is:
+    True  → require presence, False → require absence (symmetric with `through`),
+    or an object with optional diameter_mm/depth_mm (depth is matched against the
+    *recognizer-measured* depth, which may differ from a drawing callout)."""
+    if want is False:
+        return not sub  # explicitly assert NO counterbore/spotface
     if not sub:
         return False
     if isinstance(want, dict):

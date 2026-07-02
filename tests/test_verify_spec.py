@@ -221,6 +221,39 @@ def test_blind_vs_through_distinguished(session):
     assert r["conformance"][0]["status"] == "FAIL"
 
 
+_PLAIN_HOLES = (
+    "with BuildPart() as p:\n"
+    "    Box(60, 30, 12)\n"
+    "    with Locations((-15, 0), (15, 0)):\n"
+    "        Hole(3)\n"
+    "result = p.part\n"
+    "show(result, 'p')\n"
+)
+
+
+def test_counterbore_false_means_absent(session):
+    # `counterbore: false` asserts NO counterbore (symmetric with through:false).
+    plain = _run(
+        session, _PLAIN_HOLES, {"features": [{"kind": "hole", "count": 2, "counterbore": False}]}
+    )
+    assert plain["conformance"][0]["status"] == "PASS"
+
+
+def test_counterbore_false_fails_when_present(session):
+    cbored = _run(
+        session, _CBORE, {"features": [{"kind": "hole", "count": 2, "counterbore": False}]}
+    )
+    assert cbored["conformance"][0]["status"] == "FAIL"
+
+
+def test_non_numeric_feature_field_is_clean_error(session):
+    session.execute(_PLAIN_HOLES)
+    r = json.loads(
+        verify_spec(session, spec=json.dumps({"features": [{"kind": "hole", "diameter_mm": "6"}]}))
+    )
+    assert "error" in r and "diameter_mm" in r["error"]
+
+
 def test_linear_array_pattern_checked(session):
     r = _run(
         session,

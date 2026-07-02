@@ -190,7 +190,7 @@ Check the built solid against a **declared design-intent spec** — the "did I b
 - `object_name` (string, default `""`) — named object from `show()`; empty = current shape
 
 **Spec keys:** `envelope_mm {x/y/z: [lo,hi]}` (bbox size in range), `solid {count, valid}`, `volume_mm3 {min,max}`, `parameters: [{name, min, max}]` (top-level numeric assignment in range), and `features: [...]`:
-- `{kind:"hole", count, diameter_mm, depth_mm, through:bool, counterbore:{diameter_mm, depth_mm}|true, spotface:{...}}` — any subset of attributes; all are frame-independent (absolute position is not matched).
+- `{kind:"hole", count, diameter_mm, depth_mm, through:bool, counterbore:{diameter_mm, depth_mm}|true|false, spotface:{...}}` — any subset of attributes; all frame-independent (absolute position is not matched). `counterbore`/`spotface`: `true` requires one present, `false` requires it absent, an object matches its dims. Note a `depth_mm` on `counterbore`/`spotface` is matched against the **recognizer-measured** depth, which can differ from a drawing callout — match on `diameter_mm` when unsure.
 - `{kind:"hole_pattern", pattern:"bolt_circle"|"linear_array", holes, bcd_mm (bolt_circle) | pitch_mm (linear_array), diameter_mm}`
 - `{kind:"boss", diameter_mm, height_mm}`
 
