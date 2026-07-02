@@ -65,3 +65,33 @@ def test_tool_wrapper_json(session):
 
 def test_tool_unknown_object_error(session):
     assert "error" in json.loads(find_countersinks(session, "nope"))
+
+
+def test_near_flat_cone_is_not_a_countersink(session):
+    # a 178° near-flat conical relief is a draft/washer face, not a countersink
+    session.execute(
+        "with BuildPart() as p:\n"
+        "    Box(60, 40, 12)\n"
+        "    top = p.faces().sort_by(Axis.Z)[-1]\n"
+        "    with Locations(top):\n"
+        "        CounterSinkHole(radius=3, counter_sink_radius=10, counter_sink_angle=178)\n"
+        "result = p.part\n"
+        "show(result, 'p')\n"
+    )
+    assert recognise_countersinks(session.current_shape) == []
+
+
+@pytest.mark.parametrize("face,into_z", [("[-1]", -1.0), ("[0]", 1.0)])
+def test_axis_points_into_the_part(session, face, into_z):
+    # top-drilled → axis -z; bottom-drilled → axis +z; both point INTO the part
+    session.execute(
+        "with BuildPart() as p:\n"
+        "    Box(60, 40, 12)\n"
+        f"    face = p.faces().sort_by(Axis.Z){face}\n"
+        "    with Locations(face):\n"
+        "        CounterSinkHole(radius=3, counter_sink_radius=6, counter_sink_angle=82)\n"
+        "result = p.part\n"
+        "show(result, 'p')\n"
+    )
+    cs = recognise_countersinks(session.current_shape)
+    assert cs and cs[0]["axis"] == [0.0, 0.0, into_z]

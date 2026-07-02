@@ -11,6 +11,12 @@ single circle + apex, not flared) and external edge chamfers (no coaxial bore).
 ``recognise_countersinks(part)`` is pure (build123d/OCP only) so it can move to a
 shared recognition package unchanged; ``find_countersinks(session, ...)`` is the
 thin MCP tool wrapper.
+
+Heuristic limits (``recognised`` tier): a small lead-in / deburr chamfer at a hole
+mouth is geometrically a shallow countersink and also registers (its small
+``major_diameter``/``depth`` make that visible); a near-flat cone above
+``_MAX_INCLUDED_ANGLE`` (a draft/relief) is excluded; and a countersink cone
+clipped by another feature (its edges no longer full circles) is missed.
 """
 
 import json
@@ -20,6 +26,10 @@ from build123d import GeomType
 
 _TOL = 0.05  # mm — dimension match tolerance (matches other feature matchers)
 _COAXIAL_TOL = 0.1  # mm — how far the opening may sit off the drill's axis line
+# Real countersinks are ≤120° included (60/82/90/100/120 standards); a near-flat
+# cone is a draft/relief/washer face, not a countersink. 160° keeps every real
+# countersink with margin while excluding drafts (~176–178° included).
+_MAX_INCLUDED_ANGLE = 160.0
 
 
 def _parallel(a, b) -> bool:
@@ -54,27 +64,34 @@ def recognise_countersinks(part) -> list:
         if major_r - minor_r < _TOL:
             continue  # not flared — not a countersink
         cone = BRepAdaptor_Surface(f.wrapped).Cone()
-        cd = cone.Axis().Direction()
-        cdir = (cd.X(), cd.Y(), cd.Z())
+        included_angle = round(2 * abs(math.degrees(cone.SemiAngle())), 2)
+        if included_angle > _MAX_INCLUDED_ANGLE:
+            continue  # a near-flat cone is a draft/relief/washer face, not a countersink
         opening = major_e.arc_center
         opening_pt = (opening.X, opening.Y, opening.Z)
+        mc = minor_e.arc_center
+        minor_pt = (mc.X, mc.Y, mc.Z)
+        # Axis points INTO the part: from the wide opening toward the drilled bore.
+        # (Deterministic — don't trust OCP's cone-axis sign across constructions.)
+        av = (minor_pt[0] - opening_pt[0], minor_pt[1] - opening_pt[1], minor_pt[2] - opening_pt[2])
+        alen = math.sqrt(av[0] ** 2 + av[1] ** 2 + av[2] ** 2) or 1.0
+        axis = (av[0] / alen, av[1] / alen, av[2] / alen)
         # A countersink sits on a drilled bore: a coaxial cylinder of the minor radius.
         if not any(
             abs(r - minor_r) <= _TOL
-            and _parallel(cdir, ld)
+            and _parallel(axis, ld)
             and _dist_to_line(opening_pt, lp, ld) <= _COAXIAL_TOL
             for r, lp, ld in cyls
         ):
             continue
-        mc = minor_e.arc_center
         out.append(
             {
                 "location": [round(v, 4) for v in opening_pt],
-                "axis": [round(v, 4) for v in cdir],
+                "axis": [round(v, 4) for v in axis],
                 "major_diameter": round(2 * major_r, 4),
                 "drill_diameter": round(2 * minor_r, 4),
-                "included_angle": round(2 * abs(math.degrees(cone.SemiAngle())), 2),
-                "depth": round(math.dist(opening_pt, (mc.X, mc.Y, mc.Z)), 4),
+                "included_angle": included_angle,
+                "depth": round(alen, 4),
             }
         )
     return out
