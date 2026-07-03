@@ -509,3 +509,52 @@ def test_suggest_spec_errors_without_a_shape():
     s = Session()
     s.execute("from build123d import *")
     assert "error" in json.loads(suggest_spec(s))
+
+
+def _roundtrip(session, program, obj=""):
+    session.execute(program)
+    spec = json.loads(suggest_spec(session, obj))["spec"]
+    return spec, json.loads(verify_spec(session, spec=json.dumps(spec), object_name=obj))["summary"]
+
+
+def test_suggest_spec_pattern_plus_standalone_holes_round_trips(session):
+    # bolt circle Ø6 + a same-Ø standalone hole of different depth: the emitted
+    # standalone hole must NOT carry an exact count (verify counts pattern members too).
+    spec, summ = _roundtrip(
+        session,
+        "with BuildPart() as p:\n"
+        "    Box(80, 80, 20)\n"
+        "    with PolarLocations(30, 4):\n"
+        "        Hole(3)\n"
+        "    with Locations((0, 0)):\n"
+        "        Hole(3, depth=5)\n"
+        "show(p.part, 'p')\n",
+        "p",
+    )
+    assert summ["conforms"] is True
+    hole = next(f for f in spec["features"] if f["kind"] == "hole")
+    assert "count" not in hole  # dropped because a same-Ø pattern exists
+
+
+def test_suggest_spec_negative_parameter_round_trips(session):
+    spec, summ = _roundtrip(
+        session, "offset = -10.0\nshow(Pos(offset, 0, 0) * Box(20, 20, 20), 'p')\n", "p"
+    )
+    assert summ["conforms"] is True
+    p = next(p for p in spec["parameters"] if p["name"] == "offset")
+    assert p["min"] <= -10.0 <= p["max"]  # band brackets the value (order-safe)
+
+
+def test_suggest_spec_near_zero_parameter_round_trips(session):
+    _, summ = _roundtrip(session, "w = 1e-9\nshow(Box(20, 20, 20), 'p')\n", "p")
+    assert summ["conforms"] is True
+
+
+def test_suggest_spec_skips_reassigned_parameter(session):
+    spec, _ = _roundtrip(session, "t = 2\nt = 5\nshow(Box(20, 20, t), 'p')\n", "p")
+    assert all(p["name"] != "t" for p in spec["parameters"])
+
+
+def test_suggest_spec_sub_millimetre_dimension_round_trips(session):
+    _, summ = _roundtrip(session, "show(Box(0.006, 5, 5), 'p')\n", "p")
+    assert summ["conforms"] is True

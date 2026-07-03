@@ -13,6 +13,7 @@ ignored): parameter robustness (design_audit), non-geometry targets.
 """
 
 import json
+import math
 
 from build123d_mcp.tools._paths import safe_output_path
 from build123d_mcp.tools.validate import _gate_report, _resolve_shape
@@ -722,6 +723,14 @@ def verify_spec(session, spec: str = "", spec_path: str = "", object_name: str =
 # --------------------------------------------------------------------------- #
 
 
+def _pct_band(x: float, dp: int = 2) -> list[float]:
+    """A ±2% band floored/ceiled to `dp` decimals so the actual value is always
+    bracketed — plain rounding can push a bound past x for sub-0.25 mm dimensions,
+    breaking the suggest→verify round-trip."""
+    scale = 10**dp
+    return [math.floor(x * 0.98 * scale) / scale, math.ceil(x * 1.02 * scale) / scale]
+
+
 def _round(x, n=3):
     return round(x, n) if isinstance(x, (int, float)) else x
 
@@ -759,7 +768,15 @@ def _suggest_features(session, object_name: str) -> list:
     for dia, cnt in hole_dia_counts.items():
         remaining = cnt - pattern_dia_counts.get(dia, 0)
         if remaining > 0:
-            feats.append({"kind": "hole", "count": remaining, "diameter_mm": dia})
+            entry = {"kind": "hole", "diameter_mm": dia}
+            # Only assert an exact count when there's no same-Ø pattern: verify_spec's
+            # hole check matches by diameter only (pattern members included), so an
+            # exact standalone count would double-count against the pattern entry and
+            # fail the round-trip. With a same-Ø pattern present, fall back to
+            # at-least-one (omit count).
+            if pattern_dia_counts.get(dia, 0) == 0:
+                entry["count"] = remaining
+            feats.append(entry)
 
     boss_counts: Counter = Counter(
         (_round(b["diameter"]), _round(b["height"]))
@@ -777,10 +794,16 @@ def _suggest_parameters(session) -> list:
 
     program = _assemble(session)
     params = _extract_params(program)[0] if program else []
-    return [
-        {"name": p["name"], "min": round(p["value"] * 0.9, 4), "max": round(p["value"] * 1.1, 4)}
-        for p in params
-    ]
+    out = []
+    for p in params:
+        if p.get("reassigned"):
+            continue  # a band around the first (dead) value would be misleading
+        v = p["value"]
+        lo, hi = sorted((v * 0.9, v * 1.1))  # ±10%, order-safe for negative v
+        if hi - lo < _ABS_TOL:  # zero / near-zero → widen to an absolute band
+            lo, hi = v - _ABS_TOL, v + _ABS_TOL
+        out.append({"name": p["name"], "min": round(lo, 4), "max": round(hi, 4)})
+    return out
 
 
 def suggest_spec(session, object_name: str = "") -> str:
@@ -801,13 +824,11 @@ def suggest_spec(session, object_name: str = "") -> str:
     m = json.loads(_measure(session, object_name))
     gate = _gate_report(shape)
     bb = m["bbox"]
+    vlo, vhi = _pct_band(m["volume"])
     spec = {
-        "envelope_mm": {
-            ax: [round(bb[f"{ax}size"] * 0.98, 2), round(bb[f"{ax}size"] * 1.02, 2)]
-            for ax in ("x", "y", "z")
-        },
+        "envelope_mm": {ax: _pct_band(bb[f"{ax}size"]) for ax in ("x", "y", "z")},
         "solid": {"count": gate["n_solids"], "valid": bool(gate["passes_gate"])},
-        "volume_mm3": {"min": round(m["volume"] * 0.98, 2), "max": round(m["volume"] * 1.02, 2)},
+        "volume_mm3": {"min": vlo, "max": vhi},
         "features": _suggest_features(session, object_name),
         "parameters": _suggest_parameters(session),
     }
@@ -817,9 +838,10 @@ def suggest_spec(session, object_name: str = "") -> str:
             "note": (
                 "Detected from the CURRENT shape — a starter, not ground truth. Review and edit each "
                 "value against your intended drawing (the bands are editable defaults), then pass the "
-                "`spec` object to verify_spec(). Not captured: absolute positions, cosmetic/other "
-                "features (fillets, chamfers, pockets, ribs) — add those manually if the recognizers "
-                "don't cover them."
+                "`spec` object to verify_spec(). Not captured: absolute positions; countersinks (drafted "
+                "as plain holes — add `counterbore`/`spotface`/a `countersink` feature yourself), wall "
+                "thickness (`wall_thickness_at`/`min_wall_mm`), material_at_point, and cosmetic/other "
+                "features (fillets, chamfers, pockets, ribs) the recognizers don't cover."
             ),
         },
         indent=2,
