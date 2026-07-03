@@ -558,3 +558,31 @@ def test_suggest_spec_skips_reassigned_parameter(session):
 def test_suggest_spec_sub_millimetre_dimension_round_trips(session):
     _, summ = _roundtrip(session, "show(Box(0.006, 5, 5), 'p')\n", "p")
     assert summ["conforms"] is True
+
+
+def test_suggest_spec_near_diameter_standalone_holes_round_trip(session):
+    # two holes 0.04 mm apart in radius (within verify's 0.1 mm match tol) must be
+    # one clustered entry with the combined count, not two count-1 entries that both
+    # match both holes.
+    spec, summ = _roundtrip(
+        session,
+        "with BuildPart() as p:\n"
+        "    Box(60, 40, 12)\n"
+        "    with Locations((-15, 0)):\n"
+        "        Hole(2.5)\n"
+        "    with Locations((15, 0)):\n"
+        "        Hole(2.54)\n"
+        "show(p.part, 'p')\n",
+        "p",
+    )
+    assert summ["conforms"] is True
+    holes = [f for f in spec["features"] if f["kind"] == "hole"]
+    assert len(holes) == 1 and holes[0]["count"] == 2
+
+
+def test_suggest_spec_skips_non_finite_parameter(session):
+    # an overflow literal (1e999 → inf) must not leak non-strict-JSON into the spec.
+    session.execute("overflow = 1e999\nshow(Box(20, 20, 20), 'p')\n")
+    out = suggest_spec(session, "p")
+    json.loads(out, parse_constant=lambda x: (_ for _ in ()).throw(ValueError(x)))  # strict
+    assert json.loads(out)["spec"]["parameters"] == []

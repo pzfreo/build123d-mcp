@@ -762,21 +762,34 @@ def _suggest_features(session, object_name: str) -> list:
             pattern_dia_counts[dia] += len(members)
         feats.append(entry)
 
+    # Standalone (non-pattern) holes, one entry per diameter. Group by verify_spec's
+    # OWN match tolerance (`_close`), not an exact key: verify counts every hole
+    # within tol of the entry's Ø, so two holes 0.08 mm apart would otherwise each
+    # claim count 1 while verify matches both → a self-failing spec.
     hole_dia_counts: Counter = Counter(
         _round(h["diameter"]) for h in holes if h.get("diameter") is not None
     )
+    standalone: list[float] = []
     for dia, cnt in hole_dia_counts.items():
-        remaining = cnt - pattern_dia_counts.get(dia, 0)
-        if remaining > 0:
-            entry = {"kind": "hole", "diameter_mm": dia}
-            # Only assert an exact count when there's no same-Ø pattern: verify_spec's
-            # hole check matches by diameter only (pattern members included), so an
-            # exact standalone count would double-count against the pattern entry and
-            # fail the round-trip. With a same-Ø pattern present, fall back to
-            # at-least-one (omit count).
-            if pattern_dia_counts.get(dia, 0) == 0:
-                entry["count"] = remaining
-            feats.append(entry)
+        standalone.extend([dia] * max(0, cnt - pattern_dia_counts.get(dia, 0)))
+
+    clusters: list[list] = []  # [representative_diameter, count]
+    for dia in sorted(standalone):
+        for c in clusters:
+            if _close(dia, c[0]):
+                c[1] += 1
+                break
+        else:
+            clusters.append([dia, 1])
+
+    for rep, count in clusters:
+        entry = {"kind": "hole", "diameter_mm": rep}
+        # Assert an exact count only when no pattern shares this Ø (within tol):
+        # verify matches by diameter only (pattern members included), so a count
+        # alongside a same-Ø pattern would double-count → at-least-one fallback.
+        if not any(_close(rep, pd) for pd in pattern_dia_counts):
+            entry["count"] = count
+        feats.append(entry)
 
     boss_counts: Counter = Counter(
         (_round(b["diameter"]), _round(b["height"]))
@@ -799,6 +812,8 @@ def _suggest_parameters(session) -> list:
         if p.get("reassigned"):
             continue  # a band around the first (dead) value would be misleading
         v = p["value"]
+        if not math.isfinite(v):
+            continue  # an overflow literal (1e999→inf) would emit non-strict-JSON
         lo, hi = sorted((v * 0.9, v * 1.1))  # ±10%, order-safe for negative v
         if hi - lo < _ABS_TOL:  # zero / near-zero → widen to an absolute band
             lo, hi = v - _ABS_TOL, v + _ABS_TOL
