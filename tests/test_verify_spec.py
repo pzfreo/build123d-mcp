@@ -144,10 +144,92 @@ def test_malformed_spec_fields_return_clean_error(session):
         assert "error" in r and "spec" in r["error"].lower(), bad
 
 
-def test_min_wall_is_deferred_unverified(session):
-    r = _run(session, _PLATE, {"min_wall_mm": 2.0})
+_THIN_TUBE = "show((Pos(0, 0, 10) * Cylinder(10, 20)) - (Pos(0, 0, 10) * Cylinder(9.7, 20)), 'p')\n"
+
+
+def test_min_wall_below_threshold_fails_measured(session):
+    # 0.3 mm tube wall must fail a 2 mm minimum, at the measured tier.
+    r = _run(session, _THIN_TUBE, {"min_wall_mm": 2.0})
+    e = r["conformance"][0]
+    assert e["status"] == "FAIL" and e["tier"] == "measured"
+    assert e["actual"] == pytest.approx(0.3, abs=0.02)
+
+
+def test_min_wall_met_passes(session):
+    r = _run(session, _THIN_TUBE, {"min_wall_mm": 0.2})
+    assert r["conformance"][0]["status"] == "PASS"
+
+
+def test_wall_thickness_at_in_range_passes(session):
+    # _PLATE is 8 mm thick (z ∈ [-4, 4]); probe through it.
+    r = _run(
+        session,
+        _PLATE,
+        {
+            "features": [
+                {
+                    "kind": "wall_thickness_at",
+                    "point": [0, 0, 0],
+                    "direction": [0, 0, 1],
+                    "expect_mm": [7, 9],
+                }
+            ]
+        },
+    )
+    e = r["conformance"][0]
+    assert e["status"] == "PASS" and e["tier"] == "measured"
+    assert e["actual"] == pytest.approx(8.0, abs=0.02)
+
+
+def test_wall_thickness_at_out_of_range_fails(session):
+    r = _run(
+        session,
+        _PLATE,
+        {
+            "features": [
+                {
+                    "kind": "wall_thickness_at",
+                    "point": [0, 0, 0],
+                    "direction": [0, 0, 1],
+                    "expect_mm": [1, 2],
+                }
+            ]
+        },
+    )
+    assert r["conformance"][0]["status"] == "FAIL"
+
+
+def test_wall_thickness_at_no_wall_is_unverified(session):
+    # a point in no wall abstains (augura returns None) — UNVERIFIED, not a false FAIL.
+    r = _run(
+        session,
+        _PLATE,
+        {
+            "features": [
+                {
+                    "kind": "wall_thickness_at",
+                    "point": [500, 0, 0],
+                    "direction": [0, 0, 1],
+                    "expect_mm": [7, 9],
+                }
+            ]
+        },
+    )
     assert r["conformance"][0]["status"] == "UNVERIFIED"
-    assert "deferred" in r["conformance"][0]["note"]
+
+
+def test_wall_thickness_at_malformed_clean_error(session):
+    session.execute(_PLATE)
+    for bad in (
+        {"point": [0, 0], "direction": [0, 0, 1], "expect_mm": [1, 2]},
+        {"point": [0, 0, 0], "direction": [0, 0, 1], "expect_mm": [1]},
+    ):
+        r = json.loads(
+            verify_spec(
+                session, spec=json.dumps({"features": [{"kind": "wall_thickness_at", **bad}]})
+            )
+        )
+        assert "error" in r, bad
 
 
 def test_spec_from_file_path(session, tmp_path):

@@ -41,12 +41,21 @@ dependencies = [
     # Import name remains `build123d_drafting` (install name ≠ import name).
     "build123d-drafting-helpers>=0.10.0",
     "defusedxml>=0.7.1",
-    "augura>=0.1.5",
+    "augura>=0.1.6",
     "scipy",
 ]
 
 [project.optional-dependencies]
 http = ["uvicorn"]
+
+[tool.uv]
+# build123d 0.11 pulls cadquery-ocp-novtk>=7.9; that resolves to 7.9.3.1.1, whose
+# macOS wheel is broken (ships no OCP.GccEnt module → build123d fails to import).
+# 7.9.3.1 is intact. Constrain away from the bad build — a *constraint* only bites
+# when novtk is actually in the resolution (build123d 0.11), so the build123d 0.10
+# matrix, which uses cadquery-ocp instead, is untouched. Remove when upstream fixes
+# or yanks 7.9.3.1.1.
+constraint-dependencies = ["cadquery-ocp-novtk!=7.9.3.1.1"]
 
 [project.urls]
 Homepage = "https://github.com/pzfreo/build123d-mcp"

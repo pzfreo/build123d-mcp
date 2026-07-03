@@ -6,9 +6,10 @@ FAIL / UNVERIFIED and carries the *tier* of evidence behind it. The report prove
 requested-vs-built for geometry-checkable requirements only and never claims the
 design is "correct" — see docs/design-conformance-proposal.md (#335).
 
-MVP scope: envelope, solid count/validity, volume, hole/hole-pattern/boss features,
-and top-level numeric parameter ranges. Deferred (reported UNVERIFIED, not silently
-ignored): min_wall_mm, parameter robustness (design_audit), non-geometry targets.
+Scope: envelope, solid count/validity, volume, hole/hole-pattern/boss/countersink
+features, material_at_point and wall_thickness_at probes, top-level numeric parameter
+ranges, and global min_wall_mm (augura). Deferred (reported UNVERIFIED, not silently
+ignored): parameter robustness (design_audit), non-geometry targets.
 """
 
 import json
@@ -90,6 +91,14 @@ def _spec_shape_error(data: dict) -> str | None:
                     return f"features[{i}].point must be [x, y, z] numbers"
                 if "expect" in f and f["expect"] not in ("solid", "void"):
                     return f'features[{i}].expect must be "solid" or "void"'
+            if f.get("kind") == "wall_thickness_at":
+                for key in ("point", "direction"):
+                    v = f.get(key)
+                    if not (isinstance(v, list) and len(v) == 3 and all(_is_num(x) for x in v)):
+                        return f"features[{i}].{key} must be [x, y, z] numbers"
+                em = f.get("expect_mm")
+                if not (isinstance(em, list) and len(em) == 2 and all(_is_num(x) for x in em)):
+                    return f"features[{i}].expect_mm must be [lo, hi] numbers"
             for k in (
                 "diameter_mm",
                 "depth_mm",
@@ -445,6 +454,62 @@ def _check_material_at_point(shape, resolve_err, f: dict, out: list) -> None:
     out.append(entry)
 
 
+def _check_wall_thickness_at(shape, resolve_err, f: dict, out: list) -> None:
+    """Measure the local wall thickness along a line through a point and range-check it.
+
+    Fills the dominant thin-wall blind spot: a rib/pocket/shell wall can be well off
+    the drawing callout while every hole/envelope check passes. Uses augura's
+    BREP-exact ray query (measured tier). Like material_at_point this is
+    **frame-dependent** — point/direction are absolute in the part's own frame.
+    """
+    point = f["point"]
+    lo, hi = f["expect_mm"]
+    req = f"wall ∈ [{lo}, {hi}] mm at {point}"
+    if resolve_err is not None or shape is None:
+        out.append(
+            {
+                "requirement": req,
+                "status": "UNVERIFIED",
+                "tier": "unverified",
+                "note": resolve_err or "no shape",
+            }
+        )
+        return
+    from augura import wall_thickness_at
+
+    try:
+        thickness = wall_thickness_at(shape, point, f["direction"])
+    except Exception as exc:  # noqa: BLE001 - a bad probe must not crash the report
+        out.append(
+            {
+                "requirement": req,
+                "status": "UNVERIFIED",
+                "tier": "unverified",
+                "note": f"probe failed: {exc}",
+            }
+        )
+        return
+    if thickness is None:
+        out.append(
+            {
+                "requirement": req,
+                "status": "UNVERIFIED",
+                "tier": "unverified",
+                "note": "no wall found along the direction — place the point in/on the wall and aim across it",
+            }
+        )
+        return
+    out.append(
+        {
+            "requirement": req,
+            "status": "PASS" if lo <= thickness <= hi else "FAIL",
+            "tier": "measured",
+            "actual": round(thickness, 4),
+            "note": "frame-dependent (absolute point/direction, tied to the part's own frame)",
+        }
+    )
+
+
 def _check_features(session, object_name: str, features: list, out: list) -> None:
     from build123d_mcp.tools.find_features import find_bosses, find_hole_patterns, find_holes
     from build123d_mcp.tools.recognizers.countersink import find_countersinks
@@ -477,6 +542,10 @@ def _check_features(session, object_name: str, features: list, out: list) -> Non
             if shape is unset:
                 shape, shape_err = _resolve_shape(session, object_name)
             _check_material_at_point(shape, shape_err, f, out)
+        elif kind == "wall_thickness_at":
+            if shape is unset:
+                shape, shape_err = _resolve_shape(session, object_name)
+            _check_wall_thickness_at(shape, shape_err, f, out)
         else:
             out.append(
                 {
@@ -519,16 +588,48 @@ def _check_parameters(session, params_spec: list, out: list) -> None:
         )
 
 
-def _check_deferred(spec: dict, out: list) -> None:
-    if "min_wall_mm" in spec:
+def _check_min_wall(shape, spec: dict, out: list) -> None:
+    """Global minimum wall thickness ≥ a threshold, via augura's sampled ray query."""
+    if "min_wall_mm" not in spec:
+        return
+    want = spec["min_wall_mm"]
+    req = f"min wall ≥ {want} mm"
+    from augura import min_wall_thickness
+
+    try:
+        thinnest = min_wall_thickness(shape)
+    except Exception as exc:  # noqa: BLE001
         out.append(
             {
-                "requirement": f"min wall ≥ {spec['min_wall_mm']} mm",
+                "requirement": req,
                 "status": "UNVERIFIED",
                 "tier": "unverified",
-                "note": "min-wall checking is not implemented yet (deferred); use analyze_printability",
+                "note": f"probe failed: {exc}",
             }
         )
+        return
+    if thinnest is None:
+        out.append(
+            {
+                "requirement": req,
+                "status": "UNVERIFIED",
+                "tier": "unverified",
+                "note": "no opposed surfaces to sample (e.g. a 2D sketch)",
+            }
+        )
+        return
+    out.append(
+        {
+            "requirement": req,
+            "status": "PASS" if thinnest >= want else "FAIL",
+            "tier": "measured",
+            "actual": round(thinnest, 4),
+            "note": "sampled minimum over face probes; approximate (curved/large faces may be under-sampled)",
+        }
+    )
+
+
+def _check_deferred(spec: dict, out: list) -> None:
     for t in spec.get("targets", []) or []:
         name = t.get("name")
         note = (
@@ -578,6 +679,7 @@ def verify_spec(session, spec: str = "", spec_path: str = "", object_name: str =
             _check_features(session, object_name, data["features"], out)
         if data.get("parameters"):
             _check_parameters(session, data["parameters"], out)
+        _check_min_wall(shape, data, out)
         _check_deferred(data, out)
     except Exception as exc:  # backstop: a spec quirk must return JSON, not crash the worker
         return json.dumps({"error": f"Could not evaluate spec against the shape: {exc}"})
