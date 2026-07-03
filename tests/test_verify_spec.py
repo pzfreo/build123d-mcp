@@ -343,3 +343,64 @@ def test_countersink_non_numeric_field_clean_error(session):
         )
     )
     assert "error" in r and "included_angle_deg" in r["error"]
+
+
+# A plate (40×40×10) with a Ø8 boss protruding at x=+20 (material ADDED there).
+_BOSS_AT_X = (
+    "b = Box(40, 40, 10)\n"
+    "b = b + Cylinder(4, 20).rotate(Axis.Y, 90).translate((20, 0, 0))\n"
+    "show(b, 'p')\n"
+)
+_PLATE_PLAIN = "show(Box(40, 40, 10), 'p')\n"
+
+
+def test_material_at_point_discriminates_add_vs_remove(session):
+    # the point sits where a boss adds material but a plain plate is empty
+    spec = {"features": [{"kind": "material_at_point", "point": [22, 0, 0], "expect": "solid"}]}
+    added = _run(session, _BOSS_AT_X, spec)["conformance"][0]
+    assert added["status"] == "PASS" and added["actual"] == "solid" and added["tier"] == "measured"
+    session2 = Session()
+    session2.execute("from build123d import *")
+    empty = _run(session2, _PLATE_PLAIN, spec)["conformance"][0]
+    assert empty["status"] == "FAIL" and empty["actual"] == "void"
+
+
+def test_material_at_point_void_expectation(session):
+    # a point outside the plate but inside its bbox extent along z is void
+    r = _run(
+        session,
+        _PLATE_PLAIN,
+        {"features": [{"kind": "material_at_point", "point": [22, 0, 0], "expect": "void"}]},
+    )
+    assert r["conformance"][0]["status"] == "PASS"
+    assert r["summary"]["conforms"] is True  # a measured PASS counts as checked
+
+
+def test_material_at_point_on_2d_sketch_is_unverified(session):
+    r = _run(
+        session,
+        "show(Rectangle(10, 10), 'flat')\n",
+        {"features": [{"kind": "material_at_point", "point": [0, 0, 0], "expect": "solid"}]},
+    )
+    assert r["conformance"][0]["status"] == "UNVERIFIED"
+
+
+def test_material_at_point_vacuous_void_warns(session):
+    r = _run(
+        session,
+        _PLATE_PLAIN,
+        {"features": [{"kind": "material_at_point", "point": [500, 0, 0], "expect": "void"}]},
+    )
+    e = r["conformance"][0]
+    assert e["status"] == "PASS" and "hint" in e and "vacuous" in e["hint"]
+
+
+def test_material_at_point_malformed_clean_error(session):
+    session.execute(_PLATE_PLAIN)
+    for bad in ({"point": [1, 2]}, {"point": "0,0,0"}, {"point": [0, 0, 0], "expect": "maybe"}):
+        r = json.loads(
+            verify_spec(
+                session, spec=json.dumps({"features": [{"kind": "material_at_point", **bad}]})
+            )
+        )
+        assert "error" in r, bad

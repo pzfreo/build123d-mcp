@@ -194,6 +194,7 @@ Check the built solid against a **declared design-intent spec** — the "did I b
 - `{kind:"hole_pattern", pattern:"bolt_circle"|"linear_array", holes, bcd_mm (bolt_circle) | pitch_mm (linear_array), diameter_mm}`
 - `{kind:"boss", diameter_mm, height_mm}`
 - `{kind:"countersink", count, major_diameter_mm, drill_diameter_mm, included_angle_deg, depth_mm}` — any subset; conical screw-head recesses (see `find_countersinks`). A shallow lead-in/deburr chamfer also registers as a small countersink.
+- `{kind:"material_at_point", point:[x,y,z], expect:"solid"|"void"}` — asks *is this point inside the solid?* (`measured` tier). Sidesteps face recognition, so it verifies features the recognizers can't see — e.g. an **add-vs-remove ambiguity** (boss vs pocket cut into a curved rim): pick a point that is solid under one reading and void under the other. **Frame-dependent** (unlike every other check): the point is an absolute coordinate in the part's own frame, so it verifies a same-session build but is not portable across a repositioned part. A `void` assertion at a point outside the bbox is vacuous (the report warns).
 
 `min_wall_mm` and `targets: [{name, verifiable:false}]` are reported UNVERIFIED (deferred / out of scope), not silently dropped. Feature kinds beyond hole/hole_pattern/boss (pocket, fillet, chamfer, rib, …) need new recognizers and currently read UNVERIFIED.
 

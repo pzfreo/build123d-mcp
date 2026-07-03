@@ -84,6 +84,12 @@ def _spec_shape_error(data: dict) -> str | None:
         for i, f in enumerate(feats):
             if not isinstance(f, dict) or "kind" not in f:
                 return f"features[{i}] must be an object with a 'kind'"
+            if f.get("kind") == "material_at_point":
+                pt = f.get("point")
+                if not (isinstance(pt, list) and len(pt) == 3 and all(_is_num(v) for v in pt)):
+                    return f"features[{i}].point must be [x, y, z] numbers"
+                if "expect" in f and f["expect"] not in ("solid", "void"):
+                    return f'features[{i}].expect must be "solid" or "void"'
             for k in (
                 "diameter_mm",
                 "depth_mm",
@@ -355,12 +361,96 @@ def _check_countersink(f: dict, csinks: list, err, out: list) -> None:
     )
 
 
+def _check_material_at_point(shape, resolve_err, f: dict, out: list) -> None:
+    """Classify which side of the material boundary a declared point falls on.
+
+    Sidesteps face recognition entirely (a partial cylindrical face trimmed by a
+    curved surface is invisible to find_holes/find_bosses) — asks the kernel a
+    single declarative question: is this point inside the solid? Ideal for
+    disambiguating add-vs-remove features (boss vs pocket) the recognizers can't
+    see. NOTE: unlike the other feature checks this is **frame-dependent** — the
+    point is an absolute coordinate tied to the part's own frame, so it verifies
+    a same-session build reliably but is not portable across a repositioned part.
+    """
+    point: list = f["point"]  # validated as [x, y, z] by _spec_shape_error
+    expect = f.get("expect", "solid")
+    req = f"material {expect} at {point}"
+    note = "frame-dependent (absolute coordinate, tied to the part's own frame)"
+    if resolve_err is not None or shape is None:
+        out.append(
+            {
+                "requirement": req,
+                "status": "UNVERIFIED",
+                "tier": "unverified",
+                "note": resolve_err or "no shape",
+            }
+        )
+        return
+    # A 2D sketch/face is a Compound too (it has is_inside, but always reports void
+    # since it has no volume) — gate on actual solids so it reads UNVERIFIED, not a
+    # misleading FAIL.
+    try:
+        has_solid = len(shape.solids()) > 0
+    except Exception:  # noqa: BLE001
+        has_solid = False
+    if not has_solid:
+        out.append(
+            {
+                "requirement": req,
+                "status": "UNVERIFIED",
+                "tier": "unverified",
+                "note": "material_at_point needs a solid; the current shape has none (e.g. a 2D sketch)",
+            }
+        )
+        return
+    from build123d import Vector
+
+    try:
+        inside = shape.is_inside(Vector(*point))
+    except Exception as exc:  # noqa: BLE001 - a bad point must not crash the whole report
+        out.append(
+            {
+                "requirement": req,
+                "status": "UNVERIFIED",
+                "tier": "unverified",
+                "note": f"is_inside failed: {exc}",
+            }
+        )
+        return
+    actual = "solid" if inside else "void"
+    entry = {
+        "requirement": req,
+        "status": "PASS" if actual == expect else "FAIL",
+        "tier": "measured",
+        "actual": actual,
+        "note": note,
+    }
+    # A "void" assertion at a point outside the part is trivially satisfied — warn,
+    # in the same spirit as the no-vacuous-conforms guard.
+    try:
+        bb = shape.bounding_box()
+        outside_bbox = any(
+            point[i] < getattr(bb.min, "XYZ"[i]) or point[i] > getattr(bb.max, "XYZ"[i])
+            for i in range(3)
+        )
+    except Exception:  # noqa: BLE001
+        outside_bbox = False
+    if expect == "void" and outside_bbox:
+        entry["hint"] = (
+            "point is outside the part's bounding box — a 'void' pass here is vacuous; "
+            "choose a point within the nominal envelope where the readings differ"
+        )
+    out.append(entry)
+
+
 def _check_features(session, object_name: str, features: list, out: list) -> None:
     from build123d_mcp.tools.find_features import find_bosses, find_hole_patterns, find_holes
     from build123d_mcp.tools.recognizers.countersink import find_countersinks
 
     holes = pats = bosses = csinks = None
     holes_err = pats_err = bosses_err = csinks_err = None
+    unset = object()
+    shape = shape_err = unset  # resolved lazily for material_at_point
     for f in features:
         kind = f.get("kind")
         if kind == "hole_pattern":
@@ -381,6 +471,10 @@ def _check_features(session, object_name: str, features: list, out: list) -> Non
                     find_countersinks, session, object_name, "countersinks"
                 )
             _check_countersink(f, csinks, csinks_err, out)
+        elif kind == "material_at_point":
+            if shape is unset:
+                shape, shape_err = _resolve_shape(session, object_name)
+            _check_material_at_point(shape, shape_err, f, out)
         else:
             out.append(
                 {

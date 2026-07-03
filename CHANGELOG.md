@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.63
+
+### Added
+
+- **`verify_spec` gains a `{kind:"material_at_point", point:[x,y,z], expect:"solid"|"void"}` feature** (#351). Some features are invisible to the recognizers: a cylinder or profile **trimmed by an intersecting curved surface** (a pocket cut into a curved rim, a lobe blended onto one) leaves a *partial* cylindrical face, and `find_holes`/`find_bosses` only accept full 360° cylinders — deliberately, since loosening that gate would misread ordinary fillets as holes/bosses. Instead of extending face recognition, this check asks the kernel one declarative question — *is this point inside the solid?* (`shape.is_inside`, `measured` tier) — which is exactly enough to disambiguate an **add-vs-remove** feature (boss vs pocket): pick a point solid under one reading and void under the other. Guards: a 2D sketch → UNVERIFIED (not a misleading FAIL); a `void` assertion at a point outside the bounding box is flagged vacuous. **Frame-dependent** (unlike every other feature check, which is frame-independent): the point is an absolute coordinate in the part's own frame — reliable for same-session self-verification, not portable across a repositioned part.
+
 ## v0.3.62
 
 ### Added
