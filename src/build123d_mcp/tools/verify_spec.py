@@ -371,6 +371,8 @@ def _check_material_at_point(shape, resolve_err, f: dict, out: list) -> None:
     see. NOTE: unlike the other feature checks this is **frame-dependent** — the
     point is an absolute coordinate tied to the part's own frame, so it verifies
     a same-session build reliably but is not portable across a repositioned part.
+    Like volume/envelope, point classification assumes a valid (watertight) solid;
+    on a non-manifold shell is_inside can misclassify — check the ``solid`` gate too.
     """
     point: list = f["point"]  # validated as [x, y, z] by _spec_shape_error
     expect = f.get("expect", "solid")
