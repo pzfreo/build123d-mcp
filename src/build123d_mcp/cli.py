@@ -185,6 +185,13 @@ Part library file format (Python, any .py file under --library path):
         "Overrides BUILD123D_CPU_LIMIT_S env var.",
     )
     parser.add_argument(
+        "--experimental",
+        action="store_true",
+        default=os.environ.get("BUILD123D_EXPERIMENTAL", "").lower() in ("1", "true", "yes"),
+        help="Enable experimental, not-yet-production-ready tools (currently verify_spec "
+        "and suggest_spec). Off by default. Overrides BUILD123D_EXPERIMENTAL env var.",
+    )
+    parser.add_argument(
         "--viewer-socket",
         metavar="PATH",
         default=os.environ.get("BUILD123D_VIEWER_SOCKET", ""),
@@ -248,6 +255,9 @@ Part library file format (Python, any .py file under --library path):
             file=sys.stderr,
         )
     server.configure(session_cls(**session_kwargs))
+
+    if args.experimental:
+        server.register_experimental_tools()
 
     if args.viewer_socket:
         server.start_viewer(args.viewer_socket)

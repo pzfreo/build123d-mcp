@@ -203,16 +203,31 @@ def design_audit(epsilon: float = 0.1, max_params: int = 8) -> str:
     return _resolve_session().design_audit(epsilon, max_params)
 
 
-@mcp.tool()
+# --- Experimental tools (off by default) ------------------------------------ #
+# verify_spec / suggest_spec are NOT registered at import — they are gated behind
+# --experimental / BUILD123D_EXPERIMENTAL and only wired in by
+# register_experimental_tools() below. Not production-ready: field data shows a
+# `conforms: true` verdict can read to an autonomous agent as a stop signal, so we
+# keep them out of the default tool set until that's addressed (#362).
 def verify_spec(spec: str = "", spec_path: str = "", object_name: str = "") -> str:
     """Verify the built solid against a declared design-intent spec — did you build what was requested? Checks requested features/constraints against the actual geometry and returns an evidence-tiered conformance report; unlike validate() (is the solid valid?) this answers requested-vs-built. Provide the spec as inline JSON (spec=) or a .json file path (spec_path=). Supported spec keys: envelope_mm {x/y/z:[lo,hi]} (bbox size in range), solid {count, valid}, volume_mm3 {min,max}, features:[{kind:"hole_pattern",pattern:"bolt_circle"|"linear_array",holes,bcd_mm|pitch_mm,diameter_mm} | {kind:"hole",count,diameter_mm,depth_mm,through:bool,counterbore:{diameter_mm,depth_mm}|true|false,spotface:{...}} | {kind:"boss",diameter_mm,height_mm} | {kind:"countersink",count,major_diameter_mm,drill_diameter_mm,included_angle_deg,depth_mm} | {kind:"material_at_point",point:[x,y,z],expect:"solid"|"void"} | {kind:"wall_thickness_at",point:[x,y,z],direction:[dx,dy,dz],expect_mm:[lo,hi]}] (counterbore/spotface: true=present, false=absent; a depth_mm matches the recognizer-measured depth which may differ from a drawing callout; material_at_point asks is-this-point-inside-the-solid to disambiguate add-vs-remove features the recognizers can't see; wall_thickness_at measures the local wall thickness along a line through the point and range-checks it — the thin-wall blind spot; both are measured-tier but frame-DEPENDENT: absolute coordinates tied to the part's own frame, verifying a same-session build, not portable across a repositioned part; a point in no wall reads UNVERIFIED), parameters:[{name,min,max}] (top-level numeric assignment in range), min_wall_mm (global minimum wall ≥ value, measured tier via augura), targets:[{name,verifiable:false}] (→UNVERIFIED). Returns JSON: {conformance:[{requirement, status:PASS|FAIL|UNVERIFIED, tier:measured|structural|recognised|unverified, actual/found/hint}], summary:{pass,fail,unverified,conforms}, note}. conforms = no FAILs; UNVERIFIED requirements are NOT met (out of scope), never counted as passing. Dimensions match within max(0.1mm, 1%); counts exact; an unrecognised feature kind is UNVERIFIED, not a false FAIL. Not a certification. Re-run after edits as a regression/acceptance gate. object_name: named object from show() (default: current shape)."""
     return _resolve_session().verify_spec(spec, spec_path, object_name)
 
 
-@mcp.tool()
 def suggest_spec(object_name: str = "") -> str:
     """Draft a starter design-intent spec from the current (or named) shape, so you can edit detected values instead of authoring a verify_spec spec from scratch. Introspects the shape with the same primitives verify_spec checks against — bounding box (→ envelope_mm), the validity gate (→ solid), volume, feature recognition (→ hole/hole_pattern/boss features), and top-level numeric parameters — and returns JSON {spec, note}. The `spec` describes what was BUILT (envelope/volume use a ±2% band, parameters ±10% — editable defaults); review and edit each value against your intended drawing, then pass the `spec` object to verify_spec(). NOT captured: absolute positions, and cosmetic/other features (fillets, chamfers, pockets, ribs) the recognizers don't cover — add those manually. object_name: named object from show() (default: current shape)."""
     return _resolve_session().suggest_spec(object_name)
+
+
+def register_experimental_tools() -> None:
+    """Register the experimental, not-yet-production-ready tools (verify_spec,
+    suggest_spec) into the served tool set. Called by ``cli.main()`` ONLY when
+    ``--experimental`` / ``BUILD123D_EXPERIMENTAL`` is set — they are off by default
+    (#362). Idempotent: FastMCP warns on duplicate registration, so guard on it."""
+    existing = {t.name for t in mcp._tool_manager.list_tools()}
+    for fn in (verify_spec, suggest_spec):
+        if fn.__name__ not in existing:
+            mcp.tool()(fn)
 
 
 @mcp.tool()

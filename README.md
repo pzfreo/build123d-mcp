@@ -29,7 +29,7 @@ When using an AI to write build123d scripts, the AI writes blind — it cannot s
 - `find_countersinks` — recognise conical countersinks (major/drill diameter, included angle, depth) that `find_holes` reports only as plain openings
 - `analyze_printability` — BREP-exact FDM printability analysis: overhangs, thin walls, minimum features, bed fit, tip-over risk
 - `design_audit` — audit the session program as a *design*, not just a shape: surface its named numeric parameters and perturb each ±ε in isolation, re-running the validity gate to flag *brittle* parameters where a small edit collapses the solid (Arko-T design-state robustness)
-- `verify_spec` — check the built solid against a declared design-intent spec (envelope, solid count/validity, hole/boss features, parameter ranges): answers *"did I build what was requested?"* with an evidence-tiered PASS/FAIL/UNVERIFIED conformance report; reusable as a regression/acceptance gate after edits
+- `verify_spec` / `suggest_spec` *(experimental — off by default, enable with `--experimental`)* — check the built solid against a declared design-intent spec (envelope, solid count/validity, hole/boss features, parameter ranges): answers *"did I build what was requested?"* with an evidence-tiered PASS/FAIL/UNVERIFIED conformance report; `suggest_spec` drafts a starter spec from the current shape. Gated pending more maturity — see [#362](https://github.com/pzfreo/build123d-mcp/issues/362)
 - `session_state` — full JSON snapshot of active shapes, named objects, snapshot names, and Python namespace variables
 - `last_error` — details of the last failed `execute()`: type, message, line number, and code excerpt
 
@@ -153,6 +153,10 @@ Two CLI flags let you adjust the import policy without giving up the rest of the
 These flags also accept their values via env var (`BUILD123D_ALLOW_IMPORTS`, `BUILD123D_ALLOW_ALL_IMPORTS`, `BUILD123D_NO_SANDBOX`).
 
 > Note: `hasattr()` and `dir()` are permitted by the default sandbox; `getattr`/`vars`/`eval`/`exec`/`open` and explicit dunder access are blocked. Use `--no-sandbox` if you need the blocked ones.
+
+### Experimental tools
+
+`--experimental` (or `BUILD123D_EXPERIMENTAL=1`) enables tools that aren't production-ready yet — currently `verify_spec` and `suggest_spec`. They are **not registered without this flag**, so a default deployment never exposes them. They're gated because field data shows a `conforms: true` verdict can read to an autonomous agent as a stop signal, overriding the tool's own "not a certification" caveat ([#362](https://github.com/pzfreo/build123d-mcp/issues/362)).
 
 ### Stronger isolation: OS-level sandboxing
 

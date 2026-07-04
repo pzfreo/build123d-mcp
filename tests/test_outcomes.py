@@ -839,13 +839,13 @@ _skip_mcp_on_win = pytest.mark.skipif(
 )
 
 
-async def _mcp_session(coro, cwd=None):
+async def _mcp_session(coro, cwd=None, extra_args=()):
     from mcp.client.session import ClientSession
     from mcp.client.stdio import StdioServerParameters, stdio_client
 
     params = StdioServerParameters(
         command="uv",
-        args=["run", "build123d-mcp"],
+        args=["run", "build123d-mcp", *extra_args],
         cwd=cwd or SERVER_DIR,
     )
     async with stdio_client(params) as (read, write):
@@ -868,8 +868,8 @@ def test_mcp_lists_all_tools():
         "validate",
         "locate_gate_defects",
         "design_audit",
-        "verify_spec",
-        "suggest_spec",
+        # verify_spec / suggest_spec are experimental and off by default (#362);
+        # test_mcp_experimental_flag_enables_verify_tools covers the --experimental path.
         "export",
         "reset",
         "save_snapshot",
@@ -903,6 +903,44 @@ def test_mcp_lists_all_tools():
         "suggest_view_layout",
         "analyze_printability",
     }
+    # Experimental tools must NOT appear without the flag (#362).
+    assert "verify_spec" not in names and "suggest_spec" not in names
+
+
+@_skip_mcp_on_win
+def test_mcp_experimental_flag_enables_verify_tools():
+    async def run(mcp):
+        result = await mcp.list_tools()
+        return {t.name for t in result.tools}
+
+    names = asyncio.run(_mcp_session(run, extra_args=("--experimental",)))
+    assert {"verify_spec", "suggest_spec"} <= names
+
+
+def test_register_experimental_tools_gating():
+    # Fast, cross-platform (the stdio tests above are Unix-only): off at import,
+    # added by register_experimental_tools(), idempotent. Cleans up so the shared
+    # server.mcp singleton is left in its default (off) state for other tests.
+    from build123d_mcp import server
+
+    def names():
+        return {t.name for t in server.mcp._tool_manager.list_tools()}
+
+    assert "verify_spec" not in names() and "suggest_spec" not in names()
+    try:
+        server.register_experimental_tools()
+        assert {"verify_spec", "suggest_spec"} <= names()
+        server.register_experimental_tools()  # idempotent — no duplicate-registration error
+        assert {"verify_spec", "suggest_spec"} <= names()
+    finally:
+        # Restore the shared singleton for other in-process tests; tolerate a
+        # partially-registered state so cleanup can't mask an earlier assertion.
+        for name in ("verify_spec", "suggest_spec"):
+            try:
+                server.mcp.remove_tool(name)
+            except Exception:  # noqa: BLE001 - tool may not have been registered
+                pass
+    assert "verify_spec" not in names() and "suggest_spec" not in names()
 
 
 @_skip_mcp_on_win

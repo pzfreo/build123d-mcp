@@ -182,6 +182,8 @@ If no named parameters are found, the program uses inline magic constants and th
 ---
 
 ### `suggest_spec`
+> **Experimental — off by default.** Not registered unless the server was started with `--experimental` / `BUILD123D_EXPERIMENTAL=1`; a default deployment does not expose this tool (#362).
+
 Draft a starter `verify_spec` spec from the current (or named) shape, so you edit detected values instead of authoring one from scratch.
 
 **Input:** `object_name` (string, default `""`) — named object from `show()`; empty = current shape.
@@ -191,6 +193,8 @@ Draft a starter `verify_spec` spec from the current (or named) shape, so you edi
 ---
 
 ### `verify_spec`
+> **Experimental — off by default.** Not registered unless the server was started with `--experimental` / `BUILD123D_EXPERIMENTAL=1`; a default deployment does not expose this tool (#362).
+
 Check the built solid against a **declared design-intent spec** — the "did I build what was requested?" gate. Where `validate` proves the solid is *valid* and `design_audit` probes its *parameters*, `verify_spec` proves requested-vs-built: it checks each requested feature/constraint against the actual geometry and returns an **evidence-tiered conformance report** (implements Arko-T's feature-realization idea, rec #3).
 
 **Inputs:**
