@@ -1,10 +1,11 @@
 """Timeout-tier routing and session-loss messaging in WorkerSession (issues #214-#216).
 
-A timeout on any worker op SIGKILLs the worker and destroys all session state,
-so geometry-heavy ops must get a budget that complex parts can actually meet
-(#214), every restart path must tell the caller that state was lost (#215),
-and the macOS VTK subprocess guard must fire before the parent's render poll
-so a VTK hang surfaces as a clean error instead of a dead session (#216).
+A timeout on any worker op SIGKILLs the worker, so geometry-heavy ops must get a
+budget that complex parts can actually meet (#214); every restart path replays the
+parent-side execute() history to rebuild session state and reports what was
+restored/reset rather than a bare "state lost" (#215, #359); and the macOS VTK
+subprocess guard must fire before the parent's render poll so a VTK hang surfaces
+as a clean error instead of a dead session (#216).
 
 These tests stub the pipe/process layer — no worker subprocess is spawned.
 """
@@ -22,8 +23,6 @@ from build123d_mcp.worker import (
     _SHORT_TIMEOUT,
     WorkerSession,
 )
-
-_STATE_LOSS_MARKER = "has been lost"
 
 
 def _proxy_session(record, exec_timeout=120):
@@ -148,39 +147,64 @@ class _StubProc:
         return self._alive
 
 
-def _stubbed_session(conn, alive=True):
+def _stubbed_session(conn, alive=True, history=None):
     ws = WorkerSession.__new__(WorkerSession)
     ws._conn = conn
     ws._proc = _StubProc(alive=alive)
     ws._exec_timeout = 120
     ws._lock = threading.Lock()
+    ws._execute_history = list(history or [])
     ws._kill_worker = lambda: None
     ws._start_worker = lambda: None
     return ws
 
 
-def test_generic_timeout_message_reports_session_loss():
+def test_generic_timeout_message_reports_recovery():
+    # An empty history restarts to an empty session and says so (no more "lost").
     ws = _stubbed_session(_StubConn(poll_result=False))
-    with pytest.raises(RuntimeError, match=_STATE_LOSS_MARKER):
+    with pytest.raises(RuntimeError, match="restarted"):
         ws._call("measure", {}, 1)
 
 
-def test_execute_timeout_message_reports_session_loss():
+def test_execute_timeout_message_reports_dropped_step():
     ws = _stubbed_session(_StubConn(poll_result=False))
-    with pytest.raises(ExecutionTimeout, match=_STATE_LOSS_MARKER):
+    with pytest.raises(ExecutionTimeout, match="the step was dropped"):
         ws._call("execute", {"code": "pass"}, 1)
 
 
-def test_dead_worker_message_reports_session_loss():
+def test_dead_worker_message_reports_restart():
     ws = _stubbed_session(_StubConn(), alive=False)
-    with pytest.raises(RuntimeError, match=_STATE_LOSS_MARKER):
+    with pytest.raises(RuntimeError, match="restarted"):
         ws._call("measure", {}, 1)
 
 
-def test_mid_call_crash_message_reports_session_loss():
+def test_execute_timeout_with_unreplayable_history_reports_reset():
+    # A non-empty history whose replay can't complete (the stub pipe never yields a
+    # reply) must reset to a clean empty session, not a half-rebuilt one.
+    ws = _stubbed_session(_StubConn(poll_result=False), history=["x = 1"])
+    with pytest.raises(ExecutionTimeout, match="could not be rebuilt"):
+        ws._call("execute", {"code": "pass"}, 1)
+    assert ws._execute_history == []  # cleared on failed replay
+
+
+def test_mid_call_crash_message_reports_restart():
     ws = _stubbed_session(_StubConn(recv_exc=EOFError()))
-    with pytest.raises(RuntimeError, match=_STATE_LOSS_MARKER):
+    with pytest.raises(RuntimeError, match="crashed during"):
         ws._call("measure", {}, 1)
+
+
+def test_sigalrm_timeout_result_is_not_logged_but_normal_result_is():
+    # A worker-side SIGALRM timeout comes back as ok=True with an "ExecutionTimeout"
+    # result string; it carries no state and would re-hang the replay budget, so it
+    # must NOT be logged. A normal execute IS logged (under the lock, in _do_call).
+    ws = _stubbed_session(_StubConn())
+    ws._conn.recv = lambda: {"ok": True, "result": "Error: ExecutionTimeout: Code exceeded"}
+    ws._call("execute", {"code": "while True: pass"}, 1)
+    assert ws._execute_history == []
+
+    ws._conn.recv = lambda: {"ok": True, "result": "OK"}
+    ws._call("execute", {"code": "x = 1"}, 1)
+    assert ws._execute_history == ["x = 1"]
 
 
 def test_vtk_subprocess_timeout_below_render_poll():

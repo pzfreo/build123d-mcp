@@ -630,14 +630,18 @@ BUILD123D-MCP WORKFLOW GUIDE
    Use CounterSinkHole/TapHole/ClearanceHole/CounterBoreHole with the fastener object —
    never compute head geometry or tap-drill diameters manually.
 
-10. RECOMMENDED WORKFLOW FOR COMPLEX BUILDS
-   The execute() timeout (default 120s) hard-limits what can be built in a single call.
-   For builds with many booleans (IsoThread, multi-body fillets, high face counts):
-     a) Probe the API here: small execute() calls, dir(), inspect.signature(), size lookups.
-     b) Write the actual build as a Python script; run it with Bash.
-     c) Import the result: import_cad_file("part.step", "part")
-     d) Verify and visualise: measure("part"), render_view(objects="part")
-   The timeout ceiling can be raised with --exec-timeout N or BUILD123D_EXEC_TIMEOUT=N.
+10. COMPLEX / HEAVY BUILDS
+   The execute() timeout (default 120s) hard-limits a SINGLE call, not the session: if a
+   call times out only that step is dropped and the session is rebuilt from your prior
+   execute() history (variables, shapes, named objects come back). So the first move is to
+   stay in-session and go smaller/longer, NOT to leave for Bash:
+     a) Build incrementally in several smaller execute() calls (a timed-out step is dropped,
+        the rest of the session survives), and/or
+     b) Raise the ceiling: --exec-timeout N or BUILD123D_EXEC_TIMEOUT=N (also extends the
+        import budget for heavy STEP files).
+   Only if a single unavoidable op (IsoThread, a multi-body fillet, a very high-face-count
+   boolean) still won't fit, drop out for that one op: write it as a Python script, run it
+   with Bash, then import_cad_file("part.step", "part") and verify with measure()/render_view().
 
 11.5. 2D DRAWINGS — TWO FLAVOURS
    For dimensioned 2D drawings, use build123d.drafting (Draft / ExtensionLine /

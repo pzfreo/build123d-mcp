@@ -112,23 +112,26 @@ Finish by running `design_audit()` (Step 6) to prove the parameters are robust.
   restored — re-run assignments).
 - For "what if?" questions, use the loop: snapshot → mutate → measure/render →
   restore. It is cheaper and more accurate than rebuilding.
-- If an `execute()` times out, the worker restarts and **all session state is
-  lost** — re-run your setup. Keep the build reproducible (Step 6's script) so
-  this costs one paste, not a rebuild from memory. `script()` returns the
-  executed history if you need to reconstruct.
+- If an `execute()` times out, only that one step is dropped: the worker restarts
+  and the session is **rebuilt from your prior `execute()` history** — variables,
+  shapes and named objects come back (snapshots and geometry imported via other
+  tools do not). Just retry the step, smaller. Very long sessions may rebuild only
+  partially if replay runs out of budget; `script()` returns the executed history.
 
 ## Step 5 — Heavy builds (threads, gears, many fillets)
 
-The `execute()` timeout (default 120 s) hard-limits a single call. For builds
-with expensive booleans (IsoThread, multi-body fillets, very high face counts):
+The `execute()` timeout (default 120 s) hard-limits a single call. First, split the
+heavy step into smaller `execute()` calls (build up incrementally — a timed-out step
+is dropped, not the session) and/or raise the ceiling with `--exec-timeout N` or
+`BUILD123D_EXEC_TIMEOUT=N` (this also extends the import budget for heavy STEP files).
+
+Only if a single unavoidable operation (IsoThread, a multi-body fillet, a very
+high-face-count boolean) still can't fit, drop out of the session for that one op:
 
 1. Probe the API in-session with small `execute()` calls.
 2. Write the build as a script and run it with your shell tool.
 3. `import_cad_file("part.step", "part")` to bring the result back in.
 4. Verify as usual: `measure("part")`, `render_view(objects="part")`.
-
-The ceiling can be raised with `--exec-timeout N` or `BUILD123D_EXEC_TIMEOUT=N`
-(this also extends the import budget for heavy STEP files).
 
 ## Step 6 — Finish
 

@@ -417,6 +417,15 @@ class WorkerSession:
         # clients clear their now-stale scene. Not fired on the first start.
         self._on_restart: Callable[[], None] | None = None
         self._started_once = False
+        # Parent-side log of every execute() code string that ran to completion,
+        # appended under the lock in _do_call (excluding rolled-back timeouts). It
+        # survives a worker SIGKILL (the worker's own Session — namespace, snapshots,
+        # execute_history — dies with the child), so after a timeout/crash restart we
+        # replay it into the fresh worker to rebuild session state rather than
+        # returning a wiped one. The op that died is never here (a raised timeout/
+        # crash skips the append), so replay can't re-hit it. Only execute()-driven
+        # state is covered — not snapshots or import_cad_file/load_part geometry. (#359)
+        self._execute_history: list[str] = []
         self._start_worker()
 
     @property
@@ -524,6 +533,74 @@ class WorkerSession:
         except Exception:
             pass
 
+    def _replay_execute_history(self, history: list[str]) -> int:
+        """Re-run `history` (a snapshot) into the freshly-started worker; return how
+        many steps re-applied. Each op gets its own _exec_timeout (they already ran
+        under it, so a successful op won't re-hit it — timed-out ops are never
+        logged), and the whole replay is capped so recovery can't run unbounded.
+
+        Keeps the rebuilt PREFIX: if the cap is reached, it stops with whatever
+        re-applied so far (still live in the worker) rather than wiping everything —
+        the more you've built, the more a total-only budget would have destroyed. A
+        mid-replay hang/crash is different: it kills the worker holding the rebuilt
+        state, so there the prefix is unrecoverable and it resets to empty (return 0).
+        Lock held."""
+        import time
+
+        deadline = time.monotonic() + max(300, 2 * self._exec_timeout)
+        restored = 0
+        for code in history:
+            if not self._proc.is_alive() or time.monotonic() >= deadline:
+                break  # cap reached — keep the prefix already applied to the live worker
+            try:
+                self._conn.send({"op": "execute", "args": {"code": code}})
+                if not self._conn.poll(self._exec_timeout):
+                    # this op is hanging on the fresh worker; killing it discards the
+                    # rebuilt prefix with it, so we can only fall back to empty.
+                    self._kill_worker()
+                    self._start_worker()
+                    return 0
+                self._conn.recv()
+                restored += 1
+            except Exception:  # noqa: BLE001 - pipe/worker died mid-replay → empty session
+                self._kill_worker()
+                self._start_worker()
+                return 0
+        return restored
+
+    def _restart_and_replay(self) -> tuple[int, int]:
+        """Start a fresh worker and replay the execute() history into it. Returns
+        (restored, total). History is truncated to the steps actually re-applied so
+        it stays consistent with the live worker. Lock held. If the worker can't be
+        started at all, the history is cleared and (0, 0) returned."""
+        try:
+            self._start_worker()
+        except Exception:  # noqa: BLE001 - host can't spawn a worker (e.g. #143)
+            self._execute_history.clear()
+            return 0, 0
+        history = list(self._execute_history)  # snapshot: a concurrent reset() can't truncate it
+        restored = self._replay_execute_history(history)
+        self._execute_history = history[:restored]
+        return restored, len(history)
+
+    def _recovery_detail(self, restored: int, total: int) -> str:
+        # Note the honest limits: only execute()-driven state is replayed, so
+        # snapshots and geometry imported via other tools (import_cad_file/load_part)
+        # do not come back, and non-deterministic code may rebuild to a different state.
+        if total == 0:
+            return "the session had no prior steps, so it is now empty"
+        if restored >= total:
+            return (
+                f"the session was rebuilt from history ({total} prior step{'s' if total != 1 else ''} "
+                "restored; snapshots and tool-imported geometry are not restored)"
+            )
+        if restored:
+            return (
+                f"the session was partially rebuilt — {restored} of {total} prior steps restored before "
+                "the recovery budget ran out (snapshots and tool-imported geometry are not restored)"
+            )
+        return "the session could not be rebuilt within the recovery budget and has been reset"
+
     def _call(self, op: str, args: dict, timeout: int) -> Any:
         # Serialise the IPC critical section so concurrent callers (HTTP shared
         # session, pipelined clients) can't interleave on the pipe. Subclasses
@@ -533,48 +610,56 @@ class WorkerSession:
 
     def _do_call(self, op: str, args: dict, timeout: int) -> Any:
         if not self._proc.is_alive():
-            self._start_worker()
+            restored, n = self._restart_and_replay()
             raise RuntimeError(
-                "Worker crashed; session restarted. All session state (variables, "
-                "shapes, named objects, snapshots) has been lost — re-run your setup code."
+                f"Worker was not running; restarted — {self._recovery_detail(restored, n)}."
             )
 
         self._conn.send({"op": op, "args": args})
 
         if not self._conn.poll(timeout):
             self._kill_worker()
-            self._start_worker()
+            restored, n = self._restart_and_replay()
+            detail = self._recovery_detail(restored, n)
             from build123d_mcp.security import ExecutionTimeout
 
             if op == "execute":
+                # The timed-out step is dropped; prior state is rebuilt from history.
+                # Guide toward smaller steps / a bigger budget, not the session-
+                # bypassing Bash escape (mentioned only as a genuine last resort).
                 raise ExecutionTimeout(
-                    f"Code exceeded the {timeout}s execution time limit. "
-                    f"All session state (variables, shapes, named objects) has been lost — "
-                    f"the worker was restarted.\n"
-                    f"For complex builds with many booleans (IsoThread, multi-body fillets, "
-                    f"high-face-count solids): write the build as a plain Python script and "
-                    f"run it with Bash, then load the result with import_cad_file() and use "
-                    f"render_view() / measure() here. "
-                    f"The timeout limit can be raised with the --exec-timeout flag or "
-                    f"BUILD123D_EXEC_TIMEOUT env var."
+                    f"The operation exceeded the {timeout}s time limit and the step was dropped — "
+                    f"{detail}. Retry it in smaller steps (split a heavy boolean/fillet, lower the "
+                    f"fillet count, or build up incrementally), or raise the limit with the "
+                    f"--exec-timeout flag / BUILD123D_EXEC_TIMEOUT env var. Only for a genuinely "
+                    f"huge one-shot build, run it as a standalone script and import_cad_file() the "
+                    f"result."
                 )
             raise RuntimeError(
-                f"Operation '{op}' timed out after {timeout}s. The worker was killed "
-                f"and restarted — all session state (variables, shapes, named objects, "
-                f"snapshots) has been lost. Re-run your setup code."
+                f"Operation '{op}' timed out after {timeout}s; the worker was restarted — {detail}."
             )
 
         try:
             response = self._conn.recv()
         except EOFError:
-            self._start_worker()
+            restored, n = self._restart_and_replay()
             raise RuntimeError(
-                "Worker process crashed unexpectedly; session restarted. All session "
-                "state (variables, shapes, named objects, snapshots) has been lost — "
-                "re-run your setup code."
+                f"The worker crashed during '{op}'; restarted — {self._recovery_detail(restored, n)}. "
+                f"If it recurs, the operation may be hitting a build123d/OCC defect — try a "
+                f"different approach or simpler geometry."
             )
 
         if response["ok"]:
+            # Log successful execute() code for replay recovery — under the lock, so
+            # the log order matches execution order (#322). Skip a rolled-back
+            # SIGALRM timeout result: it carries no state and would just re-hang the
+            # whole budget on replay (Session.execute returns "Error: ExecutionTimeout").
+            if op == "execute" and not (
+                isinstance(response["result"], str) and "ExecutionTimeout" in response["result"]
+            ):
+                self._execute_history.append(args["code"])
+            elif op == "reset":
+                self._execute_history.clear()
             return response["result"]
         raise RuntimeError(response["error"])
 
@@ -587,6 +672,9 @@ class WorkerSession:
     # "send and wait" (execute, reset) are written out by hand.
 
     def execute(self, code: str) -> str:
+        # Successful code is logged for replay recovery inside _do_call (under the
+        # lock, and excluding rolled-back timeouts); a raised timeout/crash never
+        # reaches that append, so the failed op is correctly left out of the history.
         from build123d_mcp.security import ExecutionTimeout
 
         try:
@@ -595,6 +683,7 @@ class WorkerSession:
             return f"Error: {e}"
 
     def reset(self) -> str:
+        self._execute_history.clear()
         if not self._proc.is_alive():
             self._start_worker()
             return "Session reset."
@@ -832,6 +921,7 @@ class InProcessSession(WorkerSession):
     def reset(self) -> str:
         # The base method short-circuits via self._proc.is_alive(); there is
         # no process here, so always dispatch the real reset.
+        self._execute_history.clear()
         return self._call("reset", {}, _SHORT_TIMEOUT)
 
     def _do_call(self, op: str, args: dict, timeout: int) -> Any:

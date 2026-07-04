@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.67
+
+### Fixed
+
+- **A slow `execute()` no longer wipes the session (#359).** The primary geometry tool had the same session-destroying timeout as pre-#358 `render_view`: an uninterruptible OCC call (heavy boolean, multi-body fillet, high-face-count mesh) that outran `_exec_timeout` got stopped by SIGKILL-ing the whole worker — taking every variable, named object and snapshot with it (the worker owns the `Session`, so it all dies with the child). Models had learned to route heavy work around `execute()` entirely by dropping to raw `python3` scripts via Bash — *outside* the sandbox's AST/import checks — and the timeout message itself was coaching that escape. `WorkerSession` now keeps a **parent-side log of every completed `execute()` call** (which survives the worker SIGKILL) and, on any timeout/crash restart, **replays it into the fresh worker to rebuild the session** — variables, shapes and named objects come back; only the one op that died is dropped. Each replayed step gets its own budget (a rolled-back SIGALRM timeout is never logged, so replay can't re-hit it), and on a long session the **rebuilt prefix is kept** if replay runs out of budget rather than all-or-nothing wiping. The timeout message reports exactly what was restored (`N of M steps`), and points at smaller steps / a bigger `--exec-timeout` first — the standalone-script route is demoted to a genuine last resort in the message, the `SKILL.md` guidance, and the server instructions (models had been trained toward the Bash escape by that guidance). Honest about its limits: snapshots and geometry imported via other tools (`import_cad_file`/`load_part`) are not in the log and don't come back, and non-deterministic code may rebuild to a different state — the recovery message says so.
+
 ## v0.3.66
 
 ### Fixed
