@@ -725,11 +725,16 @@ class WorkerSession:
     def export_file(self, filename: str, format: str = "step", object_name: str = "") -> str:
         raise NotImplementedError
 
-    @_op(_tool(f"{_T}.measure:measure"), _GEOMETRY_TIMEOUT)
+    # measure/validate/clearance/cross_sections isolate a large shape's native
+    # analysis in a bounded subprocess (tools/_bounded.py, #360). That subprocess is
+    # bounded by op_budget() == _export_budget, so the parent watchdog must be the
+    # same (not a smaller fixed _GEOMETRY_TIMEOUT) or it could SIGKILL the worker
+    # while the child is still legitimately running — matching locate/shape_compare.
+    @_op(_tool(f"{_T}.measure:measure"), _export_budget)
     def measure(self, object_name: str = "", density: float = 0.0, material: str = "") -> str:
         raise NotImplementedError
 
-    @_op(_tool(f"{_T}.validate:validate"), _GEOMETRY_TIMEOUT)
+    @_op(_tool(f"{_T}.validate:validate"), _export_budget)
     def validate(self, object_name: str = "") -> str:
         raise NotImplementedError
 
@@ -741,19 +746,23 @@ class WorkerSession:
     def design_audit(self, epsilon: float = 0.1, max_params: int = 8) -> str:
         raise NotImplementedError
 
-    @_op(_tool(f"{_T}.verify_spec:verify_spec"), _GEOMETRY_TIMEOUT)
+    # verify_spec/suggest_spec compose measure() and the validity gate on the current
+    # shape, so a large shape routes their nested measure() through the same bounded
+    # subprocess (op_budget == _export_budget). Their watchdog must scale the same way,
+    # or the parent could SIGKILL the worker at a fixed 60s while that child still runs.
+    @_op(_tool(f"{_T}.verify_spec:verify_spec"), _export_budget)
     def verify_spec(self, spec: str = "", spec_path: str = "", object_name: str = "") -> str:
         raise NotImplementedError
 
-    @_op(_tool(f"{_T}.verify_spec:suggest_spec"), _GEOMETRY_TIMEOUT)
+    @_op(_tool(f"{_T}.verify_spec:suggest_spec"), _export_budget)
     def suggest_spec(self, object_name: str = "") -> str:
         raise NotImplementedError
 
-    @_op(_tool(f"{_T}.measure:clearance"), _GEOMETRY_TIMEOUT)
+    @_op(_tool(f"{_T}.measure:clearance"), _export_budget)
     def clearance(self, object_a: str, object_b: str) -> str:
         raise NotImplementedError
 
-    @_op(_tool(f"{_T}.cross_sections:cross_sections"), _GEOMETRY_TIMEOUT)
+    @_op(_tool(f"{_T}.cross_sections:cross_sections"), _export_budget)
     def cross_sections(self, object_name: str = "", axis: str = "Z", num_slices: int = 10) -> str:
         raise NotImplementedError
 

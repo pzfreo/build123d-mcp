@@ -42,9 +42,6 @@ def test_geometry_heavy_ops_use_geometry_timeout():
     record = []
     ws = _proxy_session(record)
 
-    ws.measure("a")
-    ws.clearance("a", "b")
-    ws.cross_sections("a")
     ws.align_check("a", "b")
     ws.analyze_printability("a")
     ws.save_snapshot("s")
@@ -54,6 +51,42 @@ def test_geometry_heavy_ops_use_geometry_timeout():
 
     assert all(t == _GEOMETRY_TIMEOUT for _op, t in record), record
     assert _GEOMETRY_TIMEOUT > _SHORT_TIMEOUT
+
+
+def test_bounded_geometry_ops_honour_exec_timeout():
+    # measure/validate/clearance/cross_sections isolate a large shape's native call in
+    # a bounded subprocess bounded by op_budget == _export_budget (#360), so their
+    # parent watchdog must scale with --exec-timeout like shape_compare/locate — not a
+    # fixed 60s that could SIGKILL the worker while the child still runs legitimately.
+    record = []
+    ws = _proxy_session(record, exec_timeout=300)
+    ws.measure("a")
+    ws.validate("a")
+    ws.clearance("a", "b")
+    ws.cross_sections("a")
+    # verify_spec/suggest_spec compose measure()/the gate, so their watchdog must
+    # scale the same way (the nested measure() subprocess assumes op_budget).
+    ws.verify_spec(spec="{}", object_name="a")
+    ws.suggest_spec("a")
+    assert record == [
+        ("measure", 300),
+        ("validate", 300),
+        ("clearance", 300),
+        ("cross_sections", 300),
+        ("verify_spec", 300),
+        ("suggest_spec", 300),
+    ]
+
+
+def test_bounded_geometry_ops_keep_export_floor():
+    # A short exec timeout must not shrink the budget below the export floor.
+    record = []
+    ws = _proxy_session(record, exec_timeout=10)
+    ws.measure("a")
+    ws.validate("a")
+    ws.clearance("a", "b")
+    ws.cross_sections("a")
+    assert all(t == _EXPORT_TIMEOUT for _op, t in record), record
 
 
 def test_import_cad_file_honours_exec_timeout():

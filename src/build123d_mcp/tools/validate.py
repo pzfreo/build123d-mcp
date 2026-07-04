@@ -967,9 +967,21 @@ def validate(session, object_name: str = "") -> str:
     a STEP/STL export of this shape would be rejected by a CAD scorer (and score
     zero), so fix it before exporting.
     """
+    from build123d_mcp.tools._bounded import run_bounded_shape_op
+
     shape, err = _resolve_shape(session, object_name)
     if err is not None:
         return err
+    return run_bounded_shape_op(
+        session,
+        "validate",
+        {"": shape},
+        {},
+        in_process=lambda: _validate_report(shape),
+    )
+
+
+def _validate_report(shape) -> str:
     report = _gate_report(shape)
     verdict = "PASS" if report["passes_gate"] else "FAIL"
     summary = f"Validity gate: {verdict}"
