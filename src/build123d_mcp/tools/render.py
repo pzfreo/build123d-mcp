@@ -80,6 +80,22 @@ _VALID_FORMATS = ("png", "svg", "dxf", "both")
 # OCC BRepMesh is un-interruptible, so this is the only way to bound it; the
 # worker is a daemon, so it must be a real subprocess, not multiprocessing.
 _TESS_BUDGET_S = 75
+# VTK's macOS render, likewise bounded in a real subprocess (#357). The two stages
+# run sequentially, so _TESS_BUDGET_S + _VTK_BUDGET_S + _RENDER_OVERHEAD_MARGIN_S
+# must stay <= WorkerSession._RENDER_TIMEOUT, so an overrun in either fires its own
+# clean guard before the parent's watchdog SIGKILLs the whole session. The margin
+# covers parent-side work (per-shape STEP export, pickle, subprocess spawn, PNG
+# read) that runs outside either budget; test_worker_timeouts pins the inequality.
+_VTK_BUDGET_S = 60
+_RENDER_OVERHEAD_MARGIN_S = 15
+
+
+class _RenderBudgetExceeded(RuntimeError):
+    """A render stage (tessellation or VTK) blew its own subprocess budget. Raised
+    instead of a bare RuntimeError so render_view can surface it directly rather
+    than spending the *remaining* op-budget on the unbounded SVG fallback — which,
+    after both stages are already near their limits, could push the op past the
+    parent watchdog and SIGKILL the session (the very failure the budgets prevent)."""
 
 
 def _resolve_shapes(session, objects: str):
@@ -383,21 +399,6 @@ def _vtk_render_tesselated(
             return f.read()
 
 
-def _vtk_subprocess_worker(
-    conn, shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels
-):
-    """Module-level worker for multiprocessing.Process (must be top-level to be picklable)."""
-    try:
-        png_bytes = _vtk_render_tesselated(
-            shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels
-        )
-        conn.send(("ok", png_bytes))
-    except Exception as exc:
-        conn.send(("error", f"{type(exc).__name__}: {exc}"))
-    finally:
-        conn.close()
-
-
 def _tessellate_in_process(shapes, tess) -> tuple[dict, list[str]]:
     """Tessellate in the current process — the fallback for hosts that block
     child-process creation (#143 / InProcessSession), where ``subprocess.run``
@@ -467,7 +468,7 @@ def _tessellate_shapes_bounded(shapes, tess) -> tuple[dict, list[str]]:
                 timeout=_TESS_BUDGET_S,
             )
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(
+            raise _RenderBudgetExceeded(
                 f"Rendering exceeded the {_TESS_BUDGET_S}s tessellation budget — this part is too "
                 "complex to render at this quality. Try quality='standard', render fewer objects, "
                 "or inspect it numerically with measure()/cross_sections()."
@@ -535,54 +536,84 @@ def _do_render_png(
 
 
 def _vtk_render_subprocess(
-    shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels, timeout=100
+    shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels, timeout=_VTK_BUDGET_S
 ) -> bytes:
-    """Run VTK rendering in an isolated subprocess on macOS.
+    """Render the tessellated shapes with VTK in an isolated subprocess (macOS).
 
-    VTK's Cocoa backend touches the macOS window server on first context
-    creation, which freezes all GUI applications when called from a non-
-    foreground process. Isolating the render in a child process prevents the
-    freeze from locking the MCP server itself, and the timeout+kill ensures
-    the server always recovers even if VTK hangs permanently.
+    VTK's Cocoa backend touches the macOS window server on first context creation,
+    which can freeze GUI apps — and hang — when called from a non-foreground
+    process. Running it in a real ``subprocess.run`` child (a daemon worker cannot
+    spawn ``multiprocessing`` children — the #357 bug, where this whole isolation
+    silently degraded to an unbounded in-process render) both isolates the freeze
+    and hard-bounds the render: on ``timeout`` the child is killed and a clean
+    ``RuntimeError`` is raised, so the worker and its session survive instead of
+    the parent's ``_RENDER_TIMEOUT`` watchdog SIGKILLing the whole session.
 
-    The default timeout must stay below WorkerSession._RENDER_TIMEOUT (120s):
-    if both expire together, the parent wins the race and SIGKILLs the whole
-    worker — destroying session state — instead of this guard returning a
-    clean error with the session intact (issue #216).
+    ``timeout`` (``_VTK_BUDGET_S``) + ``_TESS_BUDGET_S`` must stay under
+    ``WorkerSession._RENDER_TIMEOUT`` so this guard always fires first.
     """
-    import multiprocessing
+    import os
+    import pickle
+    import subprocess
+    import sys
+    import tempfile
 
-    # Daemon processes cannot spawn children (Python restriction). When
-    # render_view is called from inside WorkerSession (which runs as daemon=True),
-    # fall back to running VTK directly in the current process.
-    if multiprocessing.current_process().daemon:
-        return _vtk_render_tesselated(
-            shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels
-        )
-
-    parent_conn, child_conn = multiprocessing.Pipe(duplex=False)
-    p = multiprocessing.Process(
-        target=_vtk_subprocess_worker,
-        args=(child_conn, shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels),
-        daemon=True,
-    )
-    p.start()
-    child_conn.close()
-
+    work = tempfile.mkdtemp(prefix="b123d_vtk_")
+    in_pkl = os.path.join(work, "in.pkl")
+    out_png = os.path.join(work, "out.png")
     try:
-        if parent_conn.poll(timeout):
-            try:
-                kind, data = parent_conn.recv()
-            except (EOFError, OSError) as exc:
-                raise RuntimeError(f"VTK render subprocess died unexpectedly: {exc}") from exc
-            if kind == "error":
-                raise RuntimeError(data)
-            return data
-        raise RuntimeError(f"VTK render subprocess timed out after {timeout}s")
+        with open(in_pkl, "wb") as f:
+            pickle.dump(
+                {
+                    "shape_data": shape_data,
+                    "direction": direction,
+                    "clip_plane": clip_plane,
+                    "clip_at": clip_at,
+                    "azimuth": azimuth,
+                    "elevation": elevation,
+                    "labels": labels,
+                },
+                f,
+                protocol=pickle.HIGHEST_PROTOCOL,
+            )
+        try:
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "build123d_mcp._vtk_render_subprocess_worker",
+                    in_pkl,
+                    out_png,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise _RenderBudgetExceeded(
+                f"VTK rendering exceeded the {timeout}s budget — the offscreen render did not "
+                "complete. Try quality='standard', render fewer objects, or a different direction."
+            ) from exc
+        except OSError:
+            # Host blocks child-process creation (#143 / InProcessSession): no
+            # subprocess, and no worker op-timeout to kill us — render in-process.
+            return _vtk_render_tesselated(
+                shape_data, direction, clip_plane, clip_at, azimuth, elevation, labels
+            )
+        if proc.returncode != 0 or not os.path.exists(out_png):
+            raise RuntimeError("VTK render subprocess failed: " + (proc.stderr or "")[-300:])
+        with open(out_png, "rb") as f:
+            return f.read()
     finally:
-        if p.is_alive():
-            p.kill()
-        p.join(timeout=5)
+        for p in (in_pkl, out_png):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        try:
+            os.rmdir(work)
+        except OSError:
+            pass
 
 
 def _viewport_origin_for(direction: str, shapes, azimuth: float, elevation: float):
@@ -1158,6 +1189,11 @@ def render_view(
                 result["png_warnings"] = [
                     f"Skipped shapes (tessellation failed): {', '.join(png_failed)}"
                 ]
+        except _RenderBudgetExceeded:
+            # The render already consumed its hard budget; the unbounded SVG (HLR)
+            # fallback below could push the op past the parent watchdog and kill the
+            # session. Surface the clean budget error instead, session intact (#357).
+            raise
         except Exception as exc:
             if format == "png":
                 # Auto-fallback: produce SVG so the AI still gets a visual.

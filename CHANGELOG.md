@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.66
+
+### Fixed
+
+- **`render_view` no longer destroys the session on a slow macOS VTK render (#357).** The VTK isolation subprocess never actually engaged in production: `_vtk_render_subprocess` short-circuited to an unbounded in-process render whenever `multiprocessing.current_process().daemon` was true — which is *always*, since the worker runs `daemon=True`, and a daemon can't spawn `multiprocessing` children. So every macOS `render_view` ran VTK in-process with no per-call timeout; the only backstop was the 120 s op-watchdog, which SIGKILLs the whole worker and wipes session state (variables, snapshots, named objects) when it fires. VTK now runs in a real `subprocess.run` (a `_vtk_render_subprocess_worker` entry point, mirroring the `_tessellate_subprocess` fix from #308) bounded by its own **`_VTK_BUDGET_S = 60`**; on overrun it raises a clean `RuntimeError` with the session intact. The in-process path is kept only for the genuine degraded-host case (`OSError` on subprocess creation, e.g. InProcessSession), not the daemon check. The op-watchdog `_RENDER_TIMEOUT` is raised 120 → 150 s so tessellation (75 s) + VTK (60 s) + a named 15 s margin stay under it and each stage's own guard always fires first. A budget timeout in either stage now surfaces directly instead of triggering `render_view`'s unbounded SVG (HLR) auto-fallback — after both stages are near their limits, running that fallback in the same op could itself blow the watchdog and defeat the guarantee. This also removes an intermittent `render_view` flake in the test suite (VTK state leaking across in-process renders).
+
 ## v0.3.65
 
 ### Fixed

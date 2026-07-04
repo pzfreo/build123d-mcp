@@ -8,6 +8,7 @@ timeout it returns a clean error and the worker survives.
 """
 
 import subprocess
+import sys
 
 import pytest
 from build123d import Box
@@ -86,3 +87,96 @@ def test_tessellate_bounded_unreadable_pickle_is_clean_error(monkeypatch, tmp_pa
     monkeypatch.setattr(subprocess, "run", _run)
     with pytest.raises(RuntimeError, match="unreadable result"):
         _tessellate_shapes_bounded([("box", Box(10, 10, 10), None)], render._QUALITY["standard"])
+
+
+# --------------------------------------------------------------------------- #
+# VTK render is likewise bounded out-of-process (#357): the daemon worker can't
+# spawn a multiprocessing child, so isolation must go through subprocess.run —
+# the old daemon-check fallback silently ran VTK unbounded in-process, letting a
+# hung render blow the op-timeout and SIGKILL the whole session.
+# --------------------------------------------------------------------------- #
+
+from build123d_mcp.tools.render import _vtk_render_subprocess
+
+
+def _box_shape_data():
+    meshes, _ = _tessellate_shapes_bounded(
+        [("box", Box(10, 10, 10), None)], render._QUALITY["standard"]
+    )
+    return [("box", meshes["box"][0], meshes["box"][1], None)]
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="_vtk_render_subprocess is the macOS-only render path; Linux/Windows render in-process",
+)
+def test_vtk_render_subprocess_returns_png():
+    """A normal render goes through the real subprocess and returns valid PNG bytes."""
+    png = _vtk_render_subprocess(_box_shape_data(), "iso", "", None, 0.0, 0.0, None)
+    assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 100
+
+
+def test_vtk_render_timeout_is_graceful(monkeypatch):
+    """A VTK render that overruns its budget raises a clean RuntimeError (child
+    killed) — it does NOT hang until the parent SIGKILLs the session."""
+    shape_data = _box_shape_data()  # tessellate for real BEFORE mocking subprocess.run
+
+    def _timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="vtk", timeout=render._VTK_BUDGET_S)
+
+    monkeypatch.setattr(subprocess, "run", _timeout)
+    with pytest.raises(RuntimeError, match="VTK rendering exceeded"):
+        _vtk_render_subprocess(shape_data, "iso", "", None, 0.0, 0.0, None)
+
+
+def test_vtk_render_reports_subprocess_failure(monkeypatch):
+    """A non-zero VTK subprocess exit surfaces a clear error, not a silent blank."""
+    shape_data = _box_shape_data()
+
+    class _Proc:
+        returncode = 1
+        stderr = "boom in the vtk worker"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Proc())
+    with pytest.raises(RuntimeError, match="VTK render subprocess failed"):
+        _vtk_render_subprocess(shape_data, "iso", "", None, 0.0, 0.0, None)
+
+
+def test_vtk_render_falls_back_in_process_when_subprocess_blocked(monkeypatch):
+    """On a host that blocks child-process creation (#143 / InProcessSession),
+    subprocess.run raises OSError — VTK must fall back to in-process rendering
+    (the genuine degraded-host case), NOT the old always-on daemon fallback."""
+    shape_data = _box_shape_data()
+
+    def _blocked(*args, **kwargs):
+        raise OSError("child processes disabled")
+
+    monkeypatch.setattr(subprocess, "run", _blocked)
+    monkeypatch.setattr(render, "_vtk_render_tesselated", lambda *a, **k: b"IN_PROCESS_PNG")
+    out = _vtk_render_subprocess(shape_data, "iso", "", None, 0.0, 0.0, None)
+    assert out == b"IN_PROCESS_PNG"
+
+
+def test_render_budget_timeout_does_not_trigger_svg_fallback(monkeypatch):
+    """A budget timeout surfaces cleanly — it must NOT run the unbounded SVG (HLR)
+    fallback, which after both stages are near their limits could push the op past
+    the parent watchdog and SIGKILL the session (#357)."""
+    from build123d_mcp.session import Session
+    from build123d_mcp.tools.render import _RenderBudgetExceeded, render_view
+
+    s = Session()
+    s.execute("from build123d import *")
+    s.execute("show(Box(10, 10, 10), 'b')\n")
+
+    def _budget_timeout(*a, **k):
+        raise _RenderBudgetExceeded("VTK rendering exceeded the 60s budget — too complex")
+
+    svg_called = []
+    monkeypatch.setattr(render, "_do_render_png", _budget_timeout)
+    monkeypatch.setattr(
+        render, "_do_render_svg", lambda *a, **k: (svg_called.append(True), b"<svg/>")[1]
+    )
+
+    with pytest.raises(_RenderBudgetExceeded, match="budget"):
+        render_view(s)
+    assert svg_called == []  # the unbounded SVG fallback must not have run

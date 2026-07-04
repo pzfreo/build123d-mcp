@@ -184,9 +184,19 @@ def test_mid_call_crash_message_reports_session_loss():
 
 
 def test_vtk_subprocess_timeout_below_render_poll():
-    # If the inner guard and the parent's poll expire together, the parent
-    # SIGKILLs the worker and the session dies; the inner guard must win.
-    from build123d_mcp.tools.render import _vtk_render_subprocess
+    # If an inner guard and the parent's poll expire together, the parent SIGKILLs
+    # the worker and the session dies; both inner guards must win. render_view runs
+    # tessellation then VTK sequentially, so their budgets ADD against the parent's
+    # watchdog — the sum (plus margin) must stay under _RENDER_TIMEOUT.
+    from build123d_mcp.tools.render import (
+        _RENDER_OVERHEAD_MARGIN_S,
+        _TESS_BUDGET_S,
+        _VTK_BUDGET_S,
+        _vtk_render_subprocess,
+    )
 
     inner = inspect.signature(_vtk_render_subprocess).parameters["timeout"].default
-    assert inner < _RENDER_TIMEOUT
+    assert inner == _VTK_BUDGET_S
+    # The two stages run sequentially, so their budgets ADD, plus parent-side
+    # overhead — the sum + margin must stay within the parent watchdog.
+    assert _TESS_BUDGET_S + _VTK_BUDGET_S + _RENDER_OVERHEAD_MARGIN_S <= _RENDER_TIMEOUT

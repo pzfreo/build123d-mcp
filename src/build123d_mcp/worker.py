@@ -148,7 +148,15 @@ def worker_main(
 # 10s on complex parts, and a timeout here kills the worker and destroys all
 # session state — so the budget errs generous (issue #214). _SHORT_TIMEOUT is
 # only for ops that read session bookkeeping without touching geometry kernels.
-_RENDER_TIMEOUT = 120
+# Shared by render_view, render_drawing, health_check, and pull_viewer_deltas.
+# render_view is the binding case: it runs two hard-bounded subprocess stages back
+# to back — tessellation (_TESS_BUDGET_S=75) then VTK (_VTK_BUDGET_S=60) — so this
+# parent watchdog must exceed their sum + margin (150 = 75+60+15) for each stage's
+# own guard to fire first with the session intact; it never SIGKILLs a render on
+# time now, only a genuine hang elsewhere. The other three inherit it as pure slack
+# (render_drawing has no inner subprocess bound; the raster/input-size checks gate
+# it at ingest instead). (#357)
+_RENDER_TIMEOUT = 150
 # The export/geometry floor is shared with the tool side (tools/_budget.py) so a
 # worker-run tool's self-imposed budget provably tracks this parent op budget.
 _EXPORT_TIMEOUT = OP_BUDGET_FLOOR_S
