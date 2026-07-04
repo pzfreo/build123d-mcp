@@ -98,45 +98,76 @@ def _write_svg(shape, abs_path: str) -> None:
 
 
 def _write_step(shape, abs_path: str) -> None:
-    """Write a STEP, resilient to build123d's high-level writer failing.
+    """Write a STEP, working around build123d's high-level writer failing.
 
-    build123d's ``export_step`` goes through ``STEPCAFControl_Writer`` (the CAF
-    writer that carries colours/layers/names). On build123d 0.11.0 that path
-    raises ``RuntimeError: Failed to write STEP file`` on a solid that came
-    straight from ``import_step`` (gumyr/build123d#1356) — observed on ~38% of
-    editing-fixture runs, where the agent imports a STEP and exports the (valid)
-    edited solid. Two fallbacks, best first:
+    ``export_step`` goes through ``STEPCAFControl_Writer`` (the CAF writer that
+    carries names/colours). On build123d 0.11 that path raises
+    ``RuntimeError: Failed to write STEP file`` on a solid that came straight from
+    ``import_step`` (gumyr/build123d#1356) — hit ~38% of editing-fixture runs,
+    where the agent imports a STEP and re-exports the edited solid.
 
-    1. **Wrap in a ``Compound`` and retry ``export_step``.** The same solid
-       writes through the CAF path once wrapped, so body names/colours survive.
-    2. **Raw ``STEPControl_Writer``.** Writes the geometry but drops CAF
-       names/colours.
+    The obvious retry — wrap the solid in a ``Compound`` — gets it through the CAF
+    path, but a ``Compound`` with one child is written as an *assembly*
+    (``PRODUCT('COMPOUND')`` -> child + ``NEXT_ASSEMBLY_USAGE_OCCURRENCE``). A CAD
+    kernel (SolidWorks, Inventor) then opens the file as a one-component assembly,
+    not a part: the body sits off the part origin under a nested component and can
+    import blank in a stock document. Mesh viewers hide this because they flatten
+    product structure, so it only bites in a real kernel.
 
-    Geometry round-trips identically in all three; a CAD scorer needs the
-    geometry, and the wrap retry additionally keeps the CAF metadata when it can.
+    #1356 is about the build123d ``Solid`` wrapper, not the geometry: a fresh
+    ``Solid`` over the same ``TopoDS`` gets the CAF writer to accept it and stays a
+    single product with the name intact. So for one solid we reconstruct and retry;
+    a genuine multi-solid keeps its ``Compound``, where the assembly structure is
+    correct. Raw ``STEPControl_Writer`` is the last resort — single product, but
+    drops CAF names/colours.
     """
     from build123d import export_step
 
     try:
         export_step(shape, abs_path)
         return
-    except Exception:  # noqa: BLE001 - high-level-writer failure → try the wrap retry
+    except Exception:  # noqa: BLE001 - CAF writer failed; work around #1356 below
         pass
 
-    # Wrap-and-retry (gumyr/build123d#1356). Constructing a Compound reparents its
-    # children, so save/restore ``shape.parent`` to keep the fallback free of side
-    # effects on the caller's shape (which may be the live session object).
     try:
-        from build123d import Compound
+        n_solids = len(shape.solids())
+    except Exception:  # noqa: BLE001 - no solid topology to reason about
+        n_solids = 0
 
-        _saved_parent = shape.parent
+    if n_solids == 1:
+        # Single part: reconstruct the ``Solid`` so the CAF writer takes it. Keeps
+        # the file a single product (no phantom ``NEXT_ASSEMBLY_USAGE_OCCURRENCE``)
+        # and the name/colour. Reconstructing from ``.wrapped`` does not touch
+        # ``shape``, so unlike the ``Compound`` wrap below there is no parent to
+        # save/restore.
+        from build123d import Solid
+
         try:
-            export_step(Compound(children=[shape]), abs_path)
+            recon = Solid(shape.solids()[0].wrapped)
+            recon.label = getattr(shape, "label", "") or ""
+            color = getattr(shape, "color", None)
+            if color is not None:
+                recon.color = color
+            export_step(recon, abs_path)
             return
-        finally:
-            shape.parent = _saved_parent
-    except Exception:  # noqa: BLE001 - still failing → raw geometry-only fallback
-        pass
+        except Exception:  # noqa: BLE001 - fall through to the raw writer
+            pass
+    else:
+        # Genuine multi-solid: a ``Compound`` is the right structure, and wrapping
+        # also gets it through #1356 with names intact. Constructing a ``Compound``
+        # reparents its children, so save/restore ``shape.parent`` to leave the
+        # caller's live session object untouched.
+        try:
+            from build123d import Compound
+
+            saved_parent = shape.parent
+            try:
+                export_step(Compound(children=[shape]), abs_path)
+                return
+            finally:
+                shape.parent = saved_parent
+        except Exception:  # noqa: BLE001 - raw geometry-only fallback
+            pass
 
     from OCP.IFSelect import IFSelect_ReturnStatus
     from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
@@ -145,8 +176,9 @@ def _write_step(shape, abs_path: str) -> None:
     writer.Transfer(shape.wrapped, STEPControl_AsIs)
     if writer.Write(abs_path) != IFSelect_ReturnStatus.IFSelect_RetDone:
         raise RuntimeError(
-            "Failed to write STEP file (build123d export_step, the Compound-wrap "
-            "retry, and the raw STEPControl_Writer fallback all failed)"
+            "Failed to write STEP file (build123d export_step, the single-solid "
+            "reconstruct retry / multi-solid Compound-wrap retry, and the raw "
+            "STEPControl_Writer fallback all failed)"
         )
 
 
@@ -161,6 +193,16 @@ def _write_one(shape, abs_path: str, fmt: str) -> None:
         _write_svg(shape, abs_path)
     else:
         raise ValueError(f"Unknown format '{fmt}'")
+
+
+def _nauo_count(step_path: str) -> int:
+    """How many assembly component links (``NEXT_ASSEMBLY_USAGE_OCCURRENCE``) a
+    STEP file declares. Zero means a flat, single-product part."""
+    try:
+        with open(step_path, encoding="utf-8", errors="ignore") as f:
+            return f.read().count("NEXT_ASSEMBLY_USAGE_OCCURRENCE")
+    except Exception:  # noqa: BLE001 - unreadable file is flagged by the gate already
+        return 0
 
 
 def export_file(session, filename: str, format: str = "step", object_name: str = "") -> str:
@@ -277,6 +319,22 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
                     + "; ".join(report["reasons"])
                     + ". Fix the solid and re-export (run validate() for detail)."
                 )
+
+        # A single solid must land as a single STEP product. The #1356 ``Compound``
+        # workaround (or any stray wrapper) writes it as ``PRODUCT('COMPOUND')`` ->
+        # child + ``NEXT_ASSEMBLY_USAGE_OCCURRENCE``, which a CAD kernel opens as a
+        # one-component assembly rather than a part. Cheap to check off the file we
+        # re-imported.
+        if step_path is not None and gate_shape is not None:
+            try:
+                if len(gate_shape.solids()) == 1 and _nauo_count(step_path) > 0:
+                    suffix += (
+                        "\n⚠ STRUCTURE — one solid written as a one-component assembly "
+                        "(STEP carries NEXT_ASSEMBLY_USAGE_OCCURRENCE); a CAD kernel opens "
+                        "this as an assembly, not a part. Re-export as a single solid."
+                    )
+            except Exception:  # noqa: BLE001 - structure hint is best-effort
+                pass
     if len(exported) == 1:
         return f"Exported to {exported[0]}{suffix}"
     return "Exported to:\n" + "\n".join(exported) + suffix

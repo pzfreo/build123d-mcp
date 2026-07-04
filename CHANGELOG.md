@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.65
+
+### Fixed
+
+- **`export()` writes a single STEP part as one product, not a one-component assembly.** The build123d 0.11 `export_step` regression (gumyr/build123d#1356) raises on an import-derived solid, and the previous fallback wrapped it in a `Compound` to get through the CAF writer. But a `Compound` with one child is written as an assembly — `PRODUCT('COMPOUND')` -> child + `NEXT_ASSEMBLY_USAGE_OCCURRENCE` — so a CAD kernel (SolidWorks, Inventor) opens the file as a one-component assembly, with the body off the part origin under a nested component, importing blank in a stock document. Mesh viewers hid it by flattening product structure, and the validity gate only checked geometry, so it shipped green. `_write_step` now reconstructs a single solid (`Solid(shape.wrapped)`) and retries the CAF path — which #1356 accepts — keeping the file a single product with the body name/colour intact; the `Compound` wrap is reserved for genuine multi-solid exports, where the assembly structure is correct. The gate also warns when a single-solid export still carries `NEXT_ASSEMBLY_USAGE_OCCURRENCE`, catching a regression before it ships.
+
 ## v0.3.64
 
 ### Added

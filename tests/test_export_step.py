@@ -103,9 +103,10 @@ def test_export_step_raises_clearly_when_both_writers_fail(session, tmp_path, mo
 def test_write_step_handles_reimported_solid(tmp_path):
     """gumyr/build123d#1356: on build123d 0.11 ``export_step`` raises on a solid
     that came straight from ``import_step``; ``_write_step`` must still write a
-    valid STEP (via the Compound-wrap retry) and must NOT mutate the caller's
-    shape. Cross-version: on 0.10 the primary path already works. No monkeypatch
-    — this exercises the real regression where the installed version has it.
+    valid STEP (via the single-solid reconstruct retry) and must NOT mutate the
+    caller's shape. Cross-version: on 0.10 the primary path already works. No
+    monkeypatch — this exercises the real regression where the installed version
+    has it.
     """
     from build123d import Box, export_step, import_step
 
@@ -123,3 +124,30 @@ def test_write_step_handles_reimported_solid(tmp_path):
     back = import_step(str(out))
     assert len(back.solids()) == 1
     assert back.volume == pytest.approx(1000.0, rel=1e-3)
+
+
+def test_export_single_solid_is_not_written_as_assembly(tmp_path):
+    """A single-solid export must be one STEP product, never a one-component
+    assembly. On build123d 0.11 ``export_step`` raises on an import-derived solid
+    (gumyr/build123d#1356); wrapping it in a ``Compound`` to get past that writes
+    ``PRODUCT('COMPOUND')`` -> child + ``NEXT_ASSEMBLY_USAGE_OCCURRENCE``, which a
+    CAD kernel opens as an assembly rather than a part. ``_write_step``
+    reconstructs the solid instead, so the file stays a single product with the
+    body name intact — on 0.10 the primary path already gives that, so this holds
+    on either version.
+    """
+    from build123d import Box, export_step, import_step
+
+    from build123d_mcp.tools.export import _write_step
+
+    seed = tmp_path / "seed.step"
+    export_step(Box(10, 10, 10), str(seed))
+    s = import_step(str(seed))  # bare Solid, label 'COMPOUND' — the #1356 trigger
+    s.label = "widget"
+
+    out = tmp_path / "out.step"
+    _write_step(s, str(out))
+
+    text = out.read_text(errors="ignore")
+    assert "NEXT_ASSEMBLY_USAGE_OCCURRENCE" not in text  # single product, not an assembly
+    assert "widget" in text  # name survived (not dropped to the raw geometry writer)
