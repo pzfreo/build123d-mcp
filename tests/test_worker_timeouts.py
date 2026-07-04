@@ -207,6 +207,19 @@ def test_sigalrm_timeout_result_is_not_logged_but_normal_result_is():
     assert ws._execute_history == ["x = 1"]
 
 
+def test_successful_op_whose_output_contains_timeout_word_is_still_logged():
+    # Only the exact rolled-back sentinel ("Error: ExecutionTimeout:") is excluded —
+    # a SUCCESSFUL op whose captured stdout or `# vars:` summary merely contains the
+    # substring "ExecutionTimeout" must NOT be dropped from the replay log.
+    ws = _stubbed_session(_StubConn())
+    ws._conn.recv = lambda: {
+        "ok": True,
+        "result": "ExecutionTimeout\n# vars: msg='ExecutionTimeout'",
+    }
+    ws._call("execute", {"code": 'msg = "ExecutionTimeout"\nprint(msg)'}, 1)
+    assert ws._execute_history == ['msg = "ExecutionTimeout"\nprint(msg)']
+
+
 def test_vtk_subprocess_timeout_below_render_poll():
     # If an inner guard and the parent's poll expire together, the parent SIGKILLs
     # the worker and the session dies; both inner guards must win. render_view runs

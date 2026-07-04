@@ -92,18 +92,15 @@ Build complexity falls into two tiers and the right approach differs between the
 
 **Simple shapes** (a few primitives, up to ~5 booleans): build entirely in `execute()`.
 
-**Complex shapes** (IsoThread, multi-body fillets, high face counts): the `execute()` timeout (default 120 s) is a hard ceiling. The efficient pattern is:
+**Complex shapes** (IsoThread, multi-body fillets, high face counts): the `execute()` timeout (default 120 s) is a hard ceiling on a *single* call — not the session. The efficient pattern stays in the MCP:
 
-1. **Probe** in the MCP — small `execute()` calls to discover API signatures, size strings, and face counts. Use `dir()` and `import inspect; inspect.signature(ClassName)` freely.
-2. **Build** in a Python script — run it with Bash (or your shell). No timeout, full Python.
-3. **Import and verify** in the MCP:
-   ```
-   import_cad_file("/path/to/part.step", "part")
-   measure("part")          # verify volume, topology, bounding box
-   render_view(objects="part")  # visualise
-   ```
+1. **Build incrementally** — one feature/boolean per `execute()` call. If a call times out, only that step is dropped; the session is rebuilt from your prior `execute()` history (variables, shapes, named objects come back), so you just retry it smaller.
+2. **Raise the ceiling** if one step legitimately needs longer: `--exec-timeout N` or `BUILD123D_EXEC_TIMEOUT=N` (also extends the import budget for heavy STEP files).
+3. **Verify** as you go: `measure("part")`, `render_view(objects="part")`.
 
-> **Timeout note:** the default is 120 s. Raise it with `--exec-timeout N` or `BUILD123D_EXEC_TIMEOUT=N`. When a timeout fires, all session state is lost (worker is restarted) — you must re-run any setup code.
+Only if a single unavoidable op still won't fit, drop out for that one op — build it in a Python script, run it with Bash, then `import_cad_file("/path/to/part.step", "part")` and verify with `measure()` / `render_view()`.
+
+> **Timeout note:** the default is 120 s (raise with `--exec-timeout N` or `BUILD123D_EXEC_TIMEOUT=N`). When a call times out the worker restarts, but the session is **rebuilt by replaying your prior `execute()` history** — only the timed-out step is dropped. Snapshots and geometry imported via other tools aren't in the log, so they don't come back; and a very long session may rebuild only partially.
 
 > **Sandboxed-host note:** if every `execute()` fails with "Worker process failed to start", your MCP host is likely blocking subprocess creation (seen with sandboxed hosts on Windows). Relaunch with `--in-process` or `BUILD123D_IN_PROCESS=1` — a degraded mode that runs the CAD session inside the server process: no crash containment, no operation timeouts.
 

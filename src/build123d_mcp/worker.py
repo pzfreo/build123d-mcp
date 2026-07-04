@@ -547,14 +547,18 @@ class WorkerSession:
         Lock held."""
         import time
 
-        deadline = time.monotonic() + max(300, 2 * self._exec_timeout)
+        deadline = time.monotonic() + max(120, self._exec_timeout)
+        # Each op gets a per-op poll floored well above the fresh worker's one-time
+        # cold-start (build123d import, ~5s+), so a small --exec-timeout can't
+        # false-time-out the FIRST replayed op and wipe an otherwise-valid session.
+        per_op = max(self._exec_timeout, 30)
         restored = 0
         for code in history:
             if not self._proc.is_alive() or time.monotonic() >= deadline:
                 break  # cap reached — keep the prefix already applied to the live worker
             try:
                 self._conn.send({"op": "execute", "args": {"code": code}})
-                if not self._conn.poll(self._exec_timeout):
+                if not self._conn.poll(per_op):
                     # this op is hanging on the fresh worker; killing it discards the
                     # rebuilt prefix with it, so we can only fall back to empty.
                     self._kill_worker()
@@ -584,22 +588,24 @@ class WorkerSession:
         return restored, len(history)
 
     def _recovery_detail(self, restored: int, total: int) -> str:
-        # Note the honest limits: only execute()-driven state is replayed, so
-        # snapshots and geometry imported via other tools (import_cad_file/load_part)
-        # do not come back, and non-deterministic code may rebuild to a different state.
+        # "replayed", not "restored": replay re-runs your code, so snapshots and
+        # geometry imported via other tools (import_cad_file/load_part) do not come
+        # back, and a step that depended on those — or on non-deterministic values —
+        # may re-run to a different result. The count is steps re-run, not verified.
+        caveat = (
+            "snapshots and tool-imported geometry are not restored, and re-run steps may differ"
+        )
         if total == 0:
             return "the session had no prior steps, so it is now empty"
         if restored >= total:
-            return (
-                f"the session was rebuilt from history ({total} prior step{'s' if total != 1 else ''} "
-                "restored; snapshots and tool-imported geometry are not restored)"
-            )
+            n = f"{total} prior step{'s' if total != 1 else ''}"
+            return f"the session was rebuilt by replaying {n} ({caveat})"
         if restored:
             return (
-                f"the session was partially rebuilt — {restored} of {total} prior steps restored before "
-                "the recovery budget ran out (snapshots and tool-imported geometry are not restored)"
+                f"the session was partially rebuilt — {restored} of {total} prior steps replayed "
+                f"before the recovery budget ran out ({caveat})"
             )
-        return "the session could not be rebuilt within the recovery budget and has been reset"
+        return "the session could not be rebuilt and has been reset"
 
     def _call(self, op: str, args: dict, timeout: int) -> Any:
         # Serialise the IPC critical section so concurrent callers (HTTP shared
@@ -651,11 +657,14 @@ class WorkerSession:
 
         if response["ok"]:
             # Log successful execute() code for replay recovery — under the lock, so
-            # the log order matches execution order (#322). Skip a rolled-back
-            # SIGALRM timeout result: it carries no state and would just re-hang the
-            # whole budget on replay (Session.execute returns "Error: ExecutionTimeout").
+            # the log order matches execution order (#322). Skip a rolled-back SIGALRM
+            # timeout: it carries no state and would just re-hang the budget on replay.
+            # Match the exact sentinel Session.execute emits (session.py) — NOT a loose
+            # "ExecutionTimeout" substring, which a successful op's stdout or the
+            # `# vars:` summary could contain, dropping a real state-bearing step.
+            res = response["result"]
             if op == "execute" and not (
-                isinstance(response["result"], str) and "ExecutionTimeout" in response["result"]
+                isinstance(res, str) and res.startswith("Error: ExecutionTimeout:")
             ):
                 self._execute_history.append(args["code"])
             elif op == "reset":
