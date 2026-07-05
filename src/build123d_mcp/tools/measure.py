@@ -356,24 +356,26 @@ def clearance(session, object_a: str, object_b: str) -> str:
     )
 
 
-def _surface_distance(a, b) -> float:
-    # distance_to() (BRepExtrema) collapses to 0 when one shape is a bare Solid that
-    # *contains* the other — its solid-inclusion test fires — but returns the true
-    # surface-to-surface gap for a Compound. Whether a build123d shape is a Solid or a
-    # Compound is unstable (a STEP round-trip flips it EITHER way, so the same op would
-    # otherwise return different answers in vs out of process), so normalise both to
-    # Compounds. This measures the documented "wall thickness" for a containing pair
-    # regardless of how the shape was built or serialised.
+def _as_compound(s):
+    # Normalise a shape's wrapper to a Compound. Whether a build123d shape is a bare
+    # Solid or a Compound is unstable — a STEP round-trip flips it either way, and a
+    # .solids() extraction / moved import yields a Solid — and clearance answers differ
+    # by wrapper: distance_to() reads 0 for a shape contained in a Solid (vs the true
+    # surface gap for a Compound), and on build123d 0.10 an empty boolean (one shape
+    # fully inside the other) returns a ShapeList with no .volume. A modeller shape is
+    # already a Compound, so this is a no-op there and leaves the common case unchanged.
     from build123d import Compound
 
-    def _as_compound(s):
-        return s if type(s.wrapped).__name__ == "TopoDS_Compound" else Compound([s])
-
-    return _as_compound(a).distance_to(_as_compound(b))
+    return s if type(s.wrapped).__name__ == "TopoDS_Compound" else Compound([s])
 
 
 def _clearance_report(a, b) -> str:
-    dist = _surface_distance(a, b)
+    # Normalise both wrappers so the distance AND the containment booleans are computed
+    # the same way regardless of how each shape was built or serialised — clearance is
+    # then identical in vs out of process, and correct for imported/extracted bare solids.
+    a = _as_compound(a)
+    b = _as_compound(b)
+    dist = a.distance_to(b)
 
     # Boolean ops for containment / overlap detection. Each can fail for
     # degenerate or non-solid shapes; None means "couldn't tell".
