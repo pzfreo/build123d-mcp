@@ -31,7 +31,6 @@ def test_read_only_query_tools_are_marked_read_only():
         "align_check",
         "session_state",
         "diff_snapshot",
-        "resolve",
         "design_audit",
         "analyze_printability",
         "render_view",
@@ -65,7 +64,8 @@ def test_mutating_tools_are_not_read_only():
 
 def test_idempotent_mutations_are_flagged():
     a = _annotations()
-    for n in ("export", "save_snapshot", "restore_snapshot"):
+    # resolve(label=) writes session.geometry_refs — mutating, but idempotent (overwrite).
+    for n in ("export", "save_snapshot", "restore_snapshot", "resolve"):
         assert a[n].readOnlyHint is False and a[n].idempotentHint is True, n
 
 

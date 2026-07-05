@@ -549,7 +549,10 @@ def align_check(object_a: str, object_b: str, axis: str = "Z", mode: str = "flus
     return _resolve_session().align_check(object_a, object_b, axis=axis, mode=mode)
 
 
-@mcp.tool(annotations=_READ_ONLY)
+# not read-only: with the optional label= arg it stores the descriptor in
+# session.geometry_refs (persistent, cleared by reset(), shown in session_state()).
+# Idempotent — the same label overwrites.
+@mcp.tool(annotations=_IDEMPOTENT)
 def resolve(object_name: str, selector: str, label: str = "") -> str:
     """Evaluate a selector expression against a named object and return a geometry descriptor. selector is a Python expression suffix applied to the object, e.g. '.faces().filter_by(Axis.Z).last()'. If label is given, the descriptor is stored in session.geometry_refs[label] and appears in session_state(). Returns JSON: {label, ref, object, selector, type, area/length, center, normal (for Face)}. The ref field uses @cad[object#label] format."""
     return _resolve_session().resolve(object_name, selector, label=label)
