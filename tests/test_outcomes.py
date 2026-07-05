@@ -875,8 +875,8 @@ def test_mcp_lists_all_tools():
         "save_snapshot",
         "restore_snapshot",
         "diff_snapshot",
-        "search_library",
-        "load_part",
+        # search_library / load_part auto-hide with no --library (#367); this server
+        # runs without one. test_mcp_library_tools_present_with_library covers the on path.
         "workflow_hints",
         "session_state",
         "health_check",
@@ -915,6 +915,40 @@ def test_mcp_experimental_flag_enables_verify_tools():
 
     names = asyncio.run(_mcp_session(run, extra_args=("--experimental",)))
     assert {"verify_spec", "suggest_spec"} <= names
+
+
+def _tool_names(mcp_result):
+    return {t.name for t in mcp_result.tools}
+
+
+@_skip_mcp_on_win
+def test_mcp_library_tools_present_with_library(tmp_path):
+    # With --library set the part-library tools are registered (they auto-hide only
+    # when no library is configured, #367).
+    async def run(mcp):
+        return _tool_names(await mcp.list_tools())
+
+    names = asyncio.run(_mcp_session(run, extra_args=("--library", str(tmp_path))))
+    assert {"search_library", "load_part"} <= names
+
+
+@_skip_mcp_on_win
+def test_mcp_disable_tool_groups_slims_drawing():
+    # --disable-tool-groups drawing drops the 2D drawing suite; core tools stay (#367).
+    async def run(mcp):
+        return _tool_names(await mcp.list_tools())
+
+    names = asyncio.run(_mcp_session(run, extra_args=("--disable-tool-groups", "drawing")))
+    drawing = {
+        "inspect_drawing",
+        "lint_drawing",
+        "render_drawing",
+        "view_axes",
+        "save_drawing_annotations",
+        "suggest_view_layout",
+    }
+    assert not (drawing & names)
+    assert "measure" in names and "render_view" in names
 
 
 def test_register_experimental_tools_gating():

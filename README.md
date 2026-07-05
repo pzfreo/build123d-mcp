@@ -158,6 +158,15 @@ These flags also accept their values via env var (`BUILD123D_ALLOW_IMPORTS`, `BU
 
 `--experimental` (or `BUILD123D_EXPERIMENTAL=1`) enables tools that aren't production-ready yet — currently `verify_spec` and `suggest_spec`. They are **not registered without this flag**, so a default deployment never exposes them. They're gated because field data shows a `conforms: true` verdict can read to an autonomous agent as a stop signal, overriding the tool's own "not a certification" caveat ([#362](https://github.com/pzfreo/build123d-mcp/issues/362)).
 
+### Slimming the tool surface
+
+Every tool schema is loaded into the client's context on every request, and a heavy list can make clients defer the tools behind a search step. Two non-breaking ways to trim it ([#367](https://github.com/pzfreo/build123d-mcp/issues/367)):
+
+- The part-library tools (`search_library`, `load_part`) **auto-hide when no `--library` is configured** — without a library they only answer "No part library configured".
+- `--disable-tool-groups drawing` (or `BUILD123D_DISABLE_TOOL_GROUPS=drawing`) drops the 2D drawing-authoring suite (`inspect_drawing`, `lint_drawing`, `render_drawing`, `view_axes`, `save_drawing_annotations`, `suggest_view_layout`) — useful for modeling-only fleets or benchmark harnesses. Comma-separate multiple groups. Everything is on by default.
+
+> Trimming hides the *tools* only; the guidance that references them (the `workflow_hints()` guide, the `build123d://skill/drawing` resource) isn't gated yet — so don't install/read the drawing skill in a drawing-disabled deployment ([#374](https://github.com/pzfreo/build123d-mcp/issues/374)).
+
 ### Stronger isolation: OS-level sandboxing
 
 For deployments that need stronger guarantees than Python-level checks (e.g. exposing the server to truly untrusted input, or running with `--allow-all-imports`), wrap the whole MCP server in an OS-level sandbox:

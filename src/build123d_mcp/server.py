@@ -1,4 +1,5 @@
 import contextvars
+import sys
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import PromptMessage, TextContent, ToolAnnotations
@@ -244,6 +245,52 @@ def register_experimental_tools() -> None:
     for fn in (verify_spec, suggest_spec):
         if fn.__name__ not in existing:
             mcp.tool(annotations=_READ_ONLY)(fn)  # both are read-only conformance queries
+
+
+# Optional tool groups that a context-sensitive deployment can drop to slim the tool
+# surface (#367). Default keeps them — this is opt-OUT, so no existing workflow breaks.
+_TOOL_GROUPS = {
+    "drawing": (
+        "inspect_drawing",
+        "view_axes",
+        "lint_drawing",
+        "render_drawing",
+        "save_drawing_annotations",
+        "suggest_view_layout",
+    ),
+}
+# The part-library tools are dead weight without a library — they only answer "No part
+# library configured" — so they auto-hide when no --library is set (not a manual group).
+_LIBRARY_TOOLS = ("search_library", "load_part")
+
+
+def apply_tool_visibility(
+    disabled_groups: tuple[str, ...] = (), *, has_library: bool = True
+) -> None:
+    """Trim optional tools from the served surface to reduce per-request schema cost.
+
+    All tools register at import; this removes (a) each group named in
+    ``disabled_groups`` — an opt-out for fleets/benchmark harnesses that never touch it —
+    and (b) the part-library tools when ``has_library`` is false. Called by
+    ``cli.main()`` after ``configure()``. Unknown group names are reported and ignored.
+    """
+    remove: set[str] = set()
+    for group in disabled_groups:
+        if group not in _TOOL_GROUPS:
+            print(
+                f"WARNING: unknown --disable-tool-groups value '{group}'; "
+                f"known groups: {', '.join(sorted(_TOOL_GROUPS))}",
+                file=sys.stderr,
+            )
+            continue
+        remove.update(_TOOL_GROUPS[group])
+    if not has_library:
+        remove.update(_LIBRARY_TOOLS)
+    for name in remove:
+        try:
+            mcp.remove_tool(name)
+        except Exception:  # noqa: BLE001 - tolerate an already-absent tool
+            pass
 
 
 @mcp.tool(annotations=_READ_ONLY)

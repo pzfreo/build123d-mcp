@@ -185,6 +185,14 @@ Part library file format (Python, any .py file under --library path):
         "Overrides BUILD123D_CPU_LIMIT_S env var.",
     )
     parser.add_argument(
+        "--disable-tool-groups",
+        default=os.environ.get("BUILD123D_DISABLE_TOOL_GROUPS", ""),
+        help="Comma-separated optional tool groups to NOT register, to slim the tool "
+        "surface for context-sensitive deployments (fleets, benchmark harnesses). "
+        "Currently: 'drawing' (the 2D drawing-authoring suite). The part-library tools "
+        "auto-hide when no --library is set. Overrides BUILD123D_DISABLE_TOOL_GROUPS.",
+    )
+    parser.add_argument(
         "--experimental",
         action="store_true",
         default=os.environ.get("BUILD123D_EXPERIMENTAL", "").lower() in ("1", "true", "yes"),
@@ -258,6 +266,9 @@ Part library file format (Python, any .py file under --library path):
 
     if args.experimental:
         server.register_experimental_tools()
+
+    disabled_groups = tuple(g.strip() for g in args.disable_tool_groups.split(",") if g.strip())
+    server.apply_tool_visibility(disabled_groups, has_library=bool(args.library))
 
     if args.viewer_socket:
         server.start_viewer(args.viewer_socket)
