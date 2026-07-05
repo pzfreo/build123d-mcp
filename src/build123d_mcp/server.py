@@ -659,6 +659,11 @@ BUILD123D-MCP WORKFLOW GUIDE
    After building or modifying geometry, verify with measure() before calling render_view.
    Numbers are unambiguous; renders can look correct even when the geometry is wrong.
    Recommended order: execute → measure → render_view (if you need to see it).
+   Compose in code: measure/clearance/cross_sections/find_holes/find_bosses/
+   find_countersinks/find_hole_patterns/align_check are callable INSIDE execute() and
+   return real objects — measure(part)["volume"], [h for h in find_holes(part) if
+   h.location[0] < 5] — so filter/compute in code instead of copying numbers out of a
+   JSON tool result. The standalone tools remain for one-shot queries.
 
 3. VERIFY BOOLEAN OPERATIONS WITH TOPOLOGY
    After any cut, union, or intersection, call measure() and check topology.faces.

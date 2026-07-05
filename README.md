@@ -17,7 +17,7 @@ When using an AI to write build123d scripts, the AI writes blind — it cannot s
 ## Tools
 
 **Core**
-- `execute` — run build123d Python code in a persistent session; use `show(shape, name)` to register named parts
+- `execute` — run build123d Python code in a persistent session; use `show(shape, name)` to register named parts. The analysis functions (`measure`, `clearance`, `cross_sections`, `find_holes`, `find_bosses`, `find_countersinks`, `find_hole_patterns`, `align_check`) are also callable *in code* and return real Python objects — `measure(part)["volume"]`, `[h for h in find_holes(part) if h.location[0] < 5]` — so results compose without copying numbers between tool calls
 - `reset` — clear session back to empty state (namespace, shapes, snapshots)
 
 **Geometry inspection**

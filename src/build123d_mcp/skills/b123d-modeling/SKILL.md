@@ -82,6 +82,15 @@ Finish by running `design_audit()` (Step 6) to prove the parameters are robust.
 
 `measure()` is the source of truth; renders confirm appearance, not geometry.
 
+**Compose in code, don't copy numbers.** The analysis functions are callable *inside*
+`execute()` and return real Python objects, so filter and compute in code instead of
+reading a number out of one tool result and re-typing it into the next call:
+`measure(part)["volume"]`, `[h for h in find_holes(part) if h.location[0] < 5]`,
+`clearance(a, b)["clearance"]`, `align_check(a, b)["delta"]`. Also available:
+`cross_sections`, `find_bosses`, `find_countersinks`, `find_hole_patterns`. They take a
+shape (default: current shape); `measure`/`clearance`/`cross_sections` stay bounded on
+large shapes. The standalone MCP tools remain for one-shot queries.
+
 - **After every boolean (`-`, `+`, `&`) call `measure()`** and check
   `topology.faces` changed. Unchanged face/edge counts mean the boolean
   silently failed.

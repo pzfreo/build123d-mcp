@@ -28,6 +28,8 @@ If you see "Import of 'X' is not allowed" or "Call to 'Y' is not allowed", the u
 
 All tool calls share a single Python namespace. Variables and shapes you create with `execute` persist across subsequent calls. Use this to build geometry step by step, checking your work after each step.
 
+**Analysis composes in code.** `measure`, `clearance`, `cross_sections`, `find_holes`, `find_bosses`, `find_countersinks`, `find_hole_patterns`, and `align_check` are callable *inside* `execute` and return real Python objects (dicts / recogniser records), so you compute over results — `measure(part)["volume"]`, `[h for h in find_holes(part) if h.location[0] < 5]`, `clearance(a, b)["clearance"]` — instead of reading numbers out of one JSON tool result and re-typing them into the next call. They take a shape (default: `current_shape`); the standalone MCP tools of the same name remain for one-shot queries.
+
 ### Multi-object sessions
 
 Use `show(shape, name)` inside `execute` to register named objects. Calling `show()` also sets `current_shape`, so subsequent `measure()`/`export()`/`render_view()` calls work immediately without an explicit `result` assignment. All tools that accept `object_name` operate on a named object instead of the implicit `current_shape`. This is essential for assemblies where you need to inspect, measure, or export individual parts.
