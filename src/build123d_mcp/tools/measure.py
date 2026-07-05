@@ -356,8 +356,24 @@ def clearance(session, object_a: str, object_b: str) -> str:
     )
 
 
+def _surface_distance(a, b) -> float:
+    # distance_to() (BRepExtrema) collapses to 0 when one shape is a bare Solid that
+    # *contains* the other — its solid-inclusion test fires — but returns the true
+    # surface-to-surface gap for a Compound. Whether a build123d shape is a Solid or a
+    # Compound is unstable (a STEP round-trip flips it EITHER way, so the same op would
+    # otherwise return different answers in vs out of process), so normalise both to
+    # Compounds. This measures the documented "wall thickness" for a containing pair
+    # regardless of how the shape was built or serialised.
+    from build123d import Compound
+
+    def _as_compound(s):
+        return s if type(s.wrapped).__name__ == "TopoDS_Compound" else Compound([s])
+
+    return _as_compound(a).distance_to(_as_compound(b))
+
+
 def _clearance_report(a, b) -> str:
-    dist = a.distance_to(b)
+    dist = _surface_distance(a, b)
 
     # Boolean ops for containment / overlap detection. Each can fail for
     # degenerate or non-solid shapes; None means "couldn't tell".

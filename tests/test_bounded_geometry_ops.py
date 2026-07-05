@@ -60,19 +60,24 @@ def test_all_four_ops_round_trip_out_of_process(monkeypatch):
 
 
 def test_clearance_containing_wall_thickness_survives_round_trip(monkeypatch):
-    # A STEP round-trip turns a modeller Compound into a bare Solid, and distance_to()
-    # on a Solid returns 0 for a contained shape (vs the true surface gap) — so without
-    # the subprocess re-wrapping to a Compound, clearance() would report 0 wall
-    # thickness out-of-process for a containing pair (#360 fidelity).
-    base = json.loads(
-        clearance(_StubSession(objects={"a": Box(30, 30, 30), "b": Box(5, 5, 5)}), "a", "b")
-    )
+    # distance_to() collapses to 0 for a bare Solid that contains the other shape, but
+    # returns the true surface gap for a Compound — and a STEP round-trip flips the
+    # wrapper EITHER way. clearance normalises the wrapper so wall thickness is identical
+    # in vs out of process for BOTH modeller (Compound) and extracted (bare Solid) inputs
+    # — and non-zero (the documented wall thickness), not the bare-Solid 0 (#360).
+    cases = {
+        "compound": (Box(30, 30, 30), Box(5, 5, 5)),
+        "bare_solid": (Box(30, 30, 30).solid(), Box(5, 5, 5).solid()),
+    }
+    base = {
+        k: json.loads(clearance(_StubSession(objects={"a": a, "b": b}), "a", "b"))
+        for k, (a, b) in cases.items()
+    }
     monkeypatch.setattr(_bounded, "_FACE_GATE", 1)
-    out = json.loads(
-        clearance(_StubSession(objects={"a": Box(30, 30, 30), "b": Box(5, 5, 5)}), "a", "b")
-    )
-    assert out["status"] == base["status"] == "containing"
-    assert base["clearance"] > 0 and out["clearance"] == base["clearance"]
+    for k, (a, b) in cases.items():
+        out = json.loads(clearance(_StubSession(objects={"a": a, "b": b}), "a", "b"))
+        assert out["status"] == base[k]["status"] == "containing", k
+        assert base[k]["clearance"] > 0 and out["clearance"] == base[k]["clearance"], k
 
 
 def test_cone_semi_angle_matches_round_trip(monkeypatch):

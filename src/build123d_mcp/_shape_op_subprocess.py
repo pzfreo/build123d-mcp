@@ -15,19 +15,6 @@ import json
 import sys
 
 
-def _ensure_compound(shape):
-    """Re-wrap a STEP-imported shape as a Compound so it matches a modeller-built
-    shape. STEP round-trips a build123d Compound down to a bare TopoDS_Solid, and
-    ``distance_to()`` returns 0 for a shape contained in a Solid (vs the true surface
-    gap for a Compound) — so clearance() would report 0 wall thickness out-of-process
-    without this (#360)."""
-    from build123d import Compound
-
-    if type(shape.wrapped).__name__ == "TopoDS_Compound":
-        return shape
-    return Compound([shape])
-
-
 def _run(op: str, shapes: dict, params: dict) -> str:
     from build123d_mcp.tools.cross_sections import _cross_sections_report
     from build123d_mcp.tools.measure import _clearance_report, _measure_report
@@ -49,12 +36,11 @@ def main(manifest_path: str, out_path: str) -> None:
 
     with open(manifest_path) as f:
         manifest = json.load(f)
-    compound = manifest.get("compound", {})
     try:
-        shapes = {}
-        for label, path in manifest["shapes"].items():
-            shp = import_step(path)
-            shapes[label] = _ensure_compound(shp) if compound.get(label) else shp
+        # measure/validate/cross_sections are wrapper-insensitive; clearance normalises
+        # the shape wrapper itself (measure._surface_distance), so the re-imported shape
+        # can be used as-is here regardless of whether STEP round-tripped Solid↔Compound.
+        shapes = {label: import_step(path) for label, path in manifest["shapes"].items()}
         payload = {"result": _run(manifest["op"], shapes, manifest.get("params", {}))}
     except Exception as exc:  # noqa: BLE001 - any failure → structured error, not a crash
         payload = {"error": f"{type(exc).__name__}: {exc}"}

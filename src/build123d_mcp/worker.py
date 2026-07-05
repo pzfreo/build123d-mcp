@@ -746,10 +746,13 @@ class WorkerSession:
     def design_audit(self, epsilon: float = 0.1, max_params: int = 8) -> str:
         raise NotImplementedError
 
-    # verify_spec/suggest_spec compose measure() and the validity gate on the current
-    # shape, so a large shape routes their nested measure() through the same bounded
-    # subprocess (op_budget == _export_budget). Their watchdog must scale the same way,
-    # or the parent could SIGKILL the worker at a fixed 60s while that child still runs.
+    # verify_spec/suggest_spec compose a bounded measure() subprocess with an in-worker
+    # validity gate + recognizers, run sequentially. Scaling their watchdog with
+    # _export_budget (matching measure()'s subprocess budget) lifts the old fixed-60s
+    # ceiling and keeps the common case safe. NOTE: the stages' wall-clocks still ADD
+    # against this single watchdog, so a pathologically large shape whose measure AND
+    # gate each run near budget could still overrun — these are experimental tools
+    # (#362, off by default); fully bounding the composition is a follow-up.
     @_op(_tool(f"{_T}.verify_spec:verify_spec"), _export_budget)
     def verify_spec(self, spec: str = "", spec_path: str = "", object_name: str = "") -> str:
         raise NotImplementedError

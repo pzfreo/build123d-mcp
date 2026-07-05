@@ -86,6 +86,8 @@ def test_bounded_geometry_ops_keep_export_floor():
     ws.validate("a")
     ws.clearance("a", "b")
     ws.cross_sections("a")
+    ws.verify_spec(spec="{}", object_name="a")
+    ws.suggest_spec("a")
     assert all(t == _EXPORT_TIMEOUT for _op, t in record), record
 
 

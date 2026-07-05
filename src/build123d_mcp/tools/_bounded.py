@@ -40,14 +40,6 @@ def _face_count(shape) -> int:
     return len(shape.faces())
 
 
-def _is_compound(shape) -> bool:
-    # A modeller-built shape's .wrapped is a TopoDS_Compound, but a STEP round-trip
-    # yields a bare TopoDS_Solid — which silently changes distance_to()/clearance
-    # semantics (a contained shape's wall thickness collapses to 0). Record the
-    # original wrapper so the subprocess can reproduce it and keep the answer identical.
-    return type(shape.wrapped).__name__ == "TopoDS_Compound"
-
-
 def _is_large(shapes) -> bool:
     """True if any shape is complex enough to be worth isolating. A shape we can't
     cheaply size (raises) is treated as large — err toward the safe (bounded) path."""
@@ -107,15 +99,7 @@ def run_bounded_shape_op(
             return _budget_error(op, faces, budget)
 
         with open(manifest_path, "w") as f:
-            json.dump(
-                {
-                    "op": op,
-                    "params": params,
-                    "shapes": steps,
-                    "compound": {label: _is_compound(shp) for label, shp in shape_map.items()},
-                },
-                f,
-            )
+            json.dump({"op": op, "params": params, "shapes": steps}, f)
 
         try:
             proc = subprocess.run(
