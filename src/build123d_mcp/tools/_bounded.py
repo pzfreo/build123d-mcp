@@ -66,6 +66,8 @@ def run_bounded_shape_op(
     shape_map: dict,
     params: dict,
     in_process: Callable[[], str],
+    *,
+    budget: int | None = None,
 ) -> str:
     """Run read-only op ``op`` on the given shapes, isolating large ones out-of-process.
 
@@ -74,12 +76,20 @@ def run_bounded_shape_op(
     arguments (density, axis, …) forwarded to the subprocess. ``in_process`` runs the
     same computation in-worker and is used for the fast path (small shape), the #143
     no-subprocess host, and when the budget is too tight for a safe round-trip.
+
+    ``budget`` is the caller's parent watchdog (seconds); the subprocess is bounded at
+    ``budget - _MARGIN_S`` so it's killed before that watchdog SIGKILLs the worker.
+    Defaults to ``op_budget(session)`` (correct for the measure/validate/… TOOLS, whose
+    watchdog is ``_export_budget == op_budget``). An in-namespace primitive called inside
+    ``execute()`` runs under the SMALLER ``exec_timeout`` watchdog, so it passes that.
     """
     if not _is_large(shape_map.values()):
         return in_process()
 
     from build123d_mcp.tools.export import _write_step
 
+    if budget is None:
+        budget = op_budget(session)
     t0 = time.monotonic()
     faces = max((_face_count(s) for s in shape_map.values()), default=0)
     work = tempfile.mkdtemp(prefix="b123d_shapeop_")
@@ -93,7 +103,6 @@ def run_bounded_shape_op(
         except Exception as exc:  # noqa: BLE001 - couldn't serialise → surface, don't risk in-worker
             return f"Error: could not serialise the shape to run {op}() safely: {exc}"
 
-        budget = op_budget(session)
         remaining = budget - (time.monotonic() - t0) - _MARGIN_S
         if remaining < _MIN_S:
             return _budget_error(op, faces, budget)
