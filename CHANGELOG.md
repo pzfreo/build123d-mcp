@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.68
+
+### Added
+
+- **MCP tool annotations on every tool (#368).** All tools now declare `readOnlyHint` / `destructiveHint` / `idempotentHint`, so clients can auto-approve read-only queries instead of prompting for every one — which is what the tight `execute() → measure() → execute()` verify loop needs (a human confirming each `measure()` actively discourages the verify-every-step discipline the server is built around). The read-only set is the queries (`measure`, `validate`, `clearance`, `find_*`, `cross_sections`, `session_state`, `render_view`, `design_audit` — read-only despite the name, it perturbs in a subprocess — etc.); `reset` is the sole destructive tool; `export`/`save_snapshot`/`restore_snapshot` are mutating-but-idempotent. A query that can write an optional caller-directed file (`render_view`/`render_drawing`/`script` via `save_to=`) is treated as read-only — its default is a query and the file is a directed output. These are hints only: the security model is unchanged, and clients that ignore annotations are unaffected.
+
 ## v0.3.67
 
 ### Added

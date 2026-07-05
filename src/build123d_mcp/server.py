@@ -1,7 +1,7 @@
 import contextvars
 
 from mcp.server.fastmcp import FastMCP
-from mcp.types import PromptMessage, TextContent
+from mcp.types import PromptMessage, TextContent, ToolAnnotations
 
 from build123d_mcp.tools._marshal import marshal_render_drawing, marshal_render_view
 from build123d_mcp.worker import WorkerSession
@@ -25,6 +25,20 @@ parts, incl. from technical drawings) and build123d://skill/drawing
 (multi-view engineering drawings); install either into the project with
 install_skill().
 """
+
+# --- MCP tool annotations (#368) --------------------------------------------- #
+# Client-side UX hints, NOT enforcement — the security model is unchanged. They let
+# clients auto-approve read-only queries so the tight execute()→measure()→execute()
+# verify loop isn't gated by a prompt on every read. readOnlyHint reflects the tool's
+# PURPOSE: a query tool that can write an OPTIONAL, caller-directed output file
+# (render_view / render_drawing / script via save_to=) is still read-only — its default
+# is a query and the file is a directed output, not a surprising mutation. idempotentHint
+# is set only on mutating-but-idempotent ops (per the spec it's meaningful only when
+# readOnlyHint is false). No wire/behaviour change for clients that ignore annotations.
+_READ_ONLY = ToolAnnotations(readOnlyHint=True)
+_MUTATING = ToolAnnotations(readOnlyHint=False, destructiveHint=False)
+_IDEMPOTENT = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True)
+_DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True)
 
 mcp = FastMCP("build123d-mcp", instructions=_INSTRUCTIONS, stateless_http=True)
 _session: WorkerSession
@@ -133,7 +147,7 @@ def http_app():
     return mcp.streamable_http_app()
 
 
-@mcp.tool()
+@mcp.tool(annotations=_MUTATING)
 def execute(code: str) -> str:
     """Execute build123d Python code in the persistent session. Errors include automatic fix hints — read them before retrying. Use show(shape, name) to register named objects (name defaults to 'shape'); show() immediately prints volume and face count confirming the shape is non-empty. After any boolean operation (-, +, &) call measure() to confirm it succeeded (check topology.faces). named_face(shape, name) is a built-in helper: named_face(box, 'top') returns the highest-Z face, 'bottom'/'front'/'back'/'left'/'right' work similarly. find_edges(shape, geom='circle', radius=4.25, at_z=10.2, length=None, tol=0.05) filters edges for fillet/chamfer selection and prints what matched. save_json(name, obj) writes structured analysis data (face inventories, hole tables) to a server scratch file and returns its path — use it instead of printing large results; open()/os stay blocked."""
     from build123d_mcp.tools.execute import execute_code
@@ -143,7 +157,7 @@ def execute(code: str) -> str:
     return result
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def render_view(
     direction: str = "iso",
     objects: str = "",
@@ -179,25 +193,27 @@ def render_view(
     return marshal_render_view(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def measure(object_name: str = "", density: float = 0.0, material: str = "") -> str:
     """Measure a shape and return a complete geometric summary: volume (mm³), surface area (mm²), topology (face/edge/vertex counts), bounding box with per-axis size and center, volumetric center of mass, 6-component inertia tensor (Ixx/Iyy/Izz/Ixy/Ixz/Iyz), and a face-type inventory classifying every face as Plane/Cylinder/Cone/Sphere/Torus/BSpline with area and type-specific params (e.g. cylinder diameter and axis); identical faces are collapsed with a count, non-analytic sliver faces folded into one summary line. Prefer measure over render_view for verifying geometry — numbers are unambiguous. topology is the fastest confirmation that a boolean operation succeeded: a failed cut leaves face/edge/vertex counts unchanged. object_name: named object from show() (default: current shape). density (g/cm³) or material preset (steel, stainless, aluminum/6061, brass, copper, titanium, abs, pla, petg, nylon) adds mass_g and scales inertia to true mass moments in g·mm²."""
     return _resolve_session().measure(object_name, density, material)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def validate(object_name: str = "") -> str:
     """Check whether a shape would pass a CAD validity gate before exporting it. Returns a PASS/FAIL verdict plus JSON (passes_gate, n_solids, volume, is_manifold, brep_valid, reasons). The gate mirrors what CAD scorers and downstream tools require: a well-formed (BRepCheck), watertight, manifold solid with non-zero volume. A FAIL means a STEP/STL export would be rejected outright (e.g. CADGenBench scores it zero) — common causes are a leftover 2D sketch or open shell as the current shape, an un-fused compound, or a degenerate boolean result. Run this immediately before export() on any part you intend to submit or hand off. object_name: named object from show() (default: current shape)."""
     return _resolve_session().validate(object_name)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def locate_gate_defects(object_name: str = "") -> str:
     """Report WHERE a solid fails the validity gate, with 3D coordinates — so you can fix the exact edge/face instead of guessing. validate()/export() tell you WHAT is wrong (e.g. "1 non-manifold edge", "BRepCheck failed") but not where; call this when validate() FAILs to get a per-defect list: brep_invalid_face (face index + center + BRepCheck status, e.g. an unorientable BSpline), open_edge / nonmanifold_edge (B-rep edge midpoint + faces_incident), and the mesh self-touches a CAD scorer rejects — mesh_nonmanifold_edge (edge midpoint) and mesh_nonmanifold_vertex (corner-to-corner touch point). Each defect includes a generic repair hint. An empty list means the part passes the structural checks. Bounded out-of-process (it mesh-checks), so a huge part returns a clean budget error rather than hanging. object_name: named object from show() (default: current shape)."""
     return _resolve_session().locate_gate_defects(object_name)
 
 
-@mcp.tool()
+# read-only despite the name: it perturbs parameters in a subprocess and never mutates
+# the live session (don't "fix" this to _MUTATING).
+@mcp.tool(annotations=_READ_ONLY)
 def design_audit(epsilon: float = 0.1, max_params: int = 8) -> str:
     """Audit the current session program as a *design*, not just a shape: surface its named numeric parameters (Θ) and test how robust each is to editing. Parses the assembled program (see script()) for top-level numeric assignments (e.g. `plate_thickness = 5.0`), then rebuilds the program with each parameter nudged ±epsilon (default ±10%) in a hard-bounded subprocess (the live session is never mutated) and runs the validity gate on each result. Returns JSON: {parameters, baseline, audit:[{name, value, perturbations:[{delta_pct (realized), new_value, discrete_step?, rebuilt, passes_gate, volume_delta_pct, reasons?}], brittle}], summary:{robust, brittle, inconclusive, ...}, note}. A parameter is `brittle` if a small change fails to rebuild or drops below the validity gate — the thin-wall / coordinate-reasoning failure mode where a valid *shape* is not an editable *design* (Arko-T §6); a parameter reassigned at the top level is `inconclusive` (perturbation is overwritten), not counted as robust. If no named parameters are found, the program uses inline magic constants and the note advises hoisting them to a parameter block. Known limitation: only literal-valued top-level names are surfaced as Θ — a derived parameter (`radius = diameter / 2`) is not listed, though perturbing its upstream literal flows through. Bounded by a wall-clock budget and max_params (returns a partial report rather than risking a timeout). epsilon: relative nudge, 0<epsilon<1. max_params: cap on parameters audited."""
     return _resolve_session().design_audit(epsilon, max_params)
@@ -227,16 +243,16 @@ def register_experimental_tools() -> None:
     existing = {t.name for t in mcp._tool_manager.list_tools()}
     for fn in (verify_spec, suggest_spec):
         if fn.__name__ not in existing:
-            mcp.tool()(fn)
+            mcp.tool(annotations=_READ_ONLY)(fn)  # both are read-only conformance queries
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def clearance(object_a: str, object_b: str) -> str:
     """Spatial relationship between two named shapes. Returns JSON with `clearance` (mm), `status` (one of: apart, touching, containing, interpenetrating), `containment` (a_in_b, b_in_a, or neither), and `intersection_volume` / `a_volume_outside_b` / `b_volume_outside_a` for overlap quantification. Reads `clearance` differently per status: apart=gap, containing=wall thickness from inner surface to outer hull (use this to verify a pocket fits inside a plate), touching=0, interpenetrating=0 (check intersection_volume + a_volume_outside_b for the wall-piercing case). object_a, object_b: names from show()."""
     return _resolve_session().clearance(object_a, object_b)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def analyze_printability(
     object_name: str = "",
     support_angle: float = 45.0,
@@ -278,19 +294,19 @@ def analyze_printability(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def cross_sections(object_name: str = "", axis: str = "Z", num_slices: int = 10) -> str:
     """Compute cross-sectional areas at evenly spaced planes along an axis. Returns a list of {position, area} pairs. axis: X, Y, or Z (default Z). num_slices: number of planes (default 10, minimum 2). Useful for detecting internal voids, wall-thickness variation, or verifying that a shape's cross-section profile matches a reference. object_name: named object from show() (default: current shape)."""
     return _resolve_session().cross_sections(object_name, axis, num_slices)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 def export(filename: str, format: str = "step", object_name: str = "") -> str:
     """Export model. format: step, stl, dxf, svg, or comma-separated list e.g. 'step,stl' or 'dxf,svg'. 3D shapes (solids) export to step/stl; 2D shapes (Sketches and dimensioned drawings composed via build123d.drafting) export to dxf/svg. Mixing 2D and 3D formats for the same shape errors with a clear message. object_name: named object from show(), '*' to export all named shapes as a combined assembly (default: current shape). STEP exports carry the session names as labels — single-object exports use the object_name, '*' exports produce a Compound labelled 'assembly' with each child labelled by its show() name. Downstream CAD tools (FreeCAD, Fusion) will see the structured assembly with named bodies. Use dxf for engineering-drawing handoff to other CAD tools; svg for embedding in docs/wikis. The result echoes the exported shape's volume/bbox/face count (or bbox/edge count for 2D) as a final sanity check that the right, non-degenerate object was written."""
     return _resolve_session().export_file(filename, format, object_name)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def inspect_drawing(objects: str = "", svg_path: str = "") -> str:
     """Structured bbox and annotation report for a 2D drawing.
 
@@ -325,7 +341,7 @@ def inspect_drawing(objects: str = "", svg_path: str = "") -> str:
     return _resolve_session().inspect_drawing(objects, svg_path)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def view_axes(
     viewport_origin: list[float],
     viewport_up: list[float] | None = None,
@@ -353,7 +369,7 @@ def view_axes(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def lint_drawing(
     svg_path: str = "",
     drawing_scale: float = 1.0,
@@ -391,7 +407,7 @@ def lint_drawing(
     return _resolve_session().lint_drawing(svg_path, drawing_scale, view_shape_names)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def render_drawing(svg_path: str, width: int = 1200, save_to: str = "") -> list:
     """Rasterise an existing SVG file to PNG via resvg-py.
 
@@ -411,7 +427,7 @@ def render_drawing(svg_path: str, width: int = 1200, save_to: str = "") -> list:
     return marshal_render_drawing(result, svg_path, save_to)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_MUTATING)
 def save_drawing_annotations(svg_path: str) -> str:
     """Write a .dims.json sidecar file alongside an SVG with label metadata.
 
@@ -434,7 +450,7 @@ def save_drawing_annotations(svg_path: str) -> str:
     return _resolve_session().save_drawing_annotations(svg_path)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def search_library(query: str = "") -> str:
     """Search the part library. query: keywords matched against name, description, tags, category (empty returns all). Returns name, category, description, tags, and full parameter specs including types, defaults, and descriptions."""
     if not _resolve_session().has_library:
@@ -442,7 +458,7 @@ def search_library(query: str = "") -> str:
     return _resolve_session().search_library(query)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_MUTATING)
 def load_part(name: str, params: str = "") -> str:
     """Load a named part from the library into the session. name: part name from search_library. params: optional JSON object of parameter overrides e.g. '{\"od\": 8.0, \"length\": 20.0}' — unspecified params use their defaults. The part is registered as a named object and becomes current_shape."""
     if not _resolve_session().has_library:
@@ -452,7 +468,7 @@ def load_part(name: str, params: str = "") -> str:
     return result
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 def save_snapshot(name: str) -> str:
     """Save a named checkpoint of the current geometric state (current_shape and the show() object registry).
     The Python variable namespace is NOT saved — only geometry. Call this before risky experiments so you can
@@ -460,7 +476,7 @@ def save_snapshot(name: str) -> str:
     return _resolve_session().save_snapshot(name)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEMPOTENT)
 def restore_snapshot(name: str) -> str:
     """Restore geometric state from a previously saved snapshot (current_shape and the show() registry).
     The Python variable namespace is NOT restored — execute() calls made after the snapshot are still in scope,
@@ -471,25 +487,25 @@ def restore_snapshot(name: str) -> str:
     return result
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def diff_snapshot(snapshot_a: str, snapshot_b: str = "", format: str = "text") -> str:
     """Compare two snapshots by geometry metrics (volume, topology, bounding box). snapshot_b defaults to current session state if omitted. format: 'text' (default, human-readable) or 'json' (structured, for programmatic consumption)."""
     return _resolve_session().diff_snapshot(snapshot_a, snapshot_b, format)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def session_state() -> str:
     """Return a structured JSON snapshot of the current session: current_shape metrics, all named objects (replaces list_objects) with geometry stats, snapshot names, and a variables summary of the Python namespace (type + volume for shapes, type + length for collections, type + value for scalars). Use this to orient after a reset, restore, or multi-step build to confirm what geometry and variables are active."""
     return _resolve_session().session_state()
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def health_check() -> str:
     """Verify that render and export dependencies are working. Tests PNG render (VTK), SVG render (build123d HLR), STEP export, and STL export with a trivial shape. Returns JSON with ok/error per capability. Run at session start if you suspect a missing dependency."""
     return _resolve_session().health_check()
 
 
-@mcp.tool()
+@mcp.tool(annotations=_DESTRUCTIVE)
 def reset() -> str:
     """Clear the current session back to empty state, including all snapshots."""
     result = _resolve_session().reset()
@@ -497,55 +513,55 @@ def reset() -> str:
     return result
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def shape_compare(object_a: str, object_b: str) -> str:
     """Compare two named shapes (from show()) by geometry metrics plus localized surface deviation. Keeps volume, bbox, topology, and center deltas, and adds a bounded surface diff that locates WHERE the geometry changed: max_deviation (largest real change, noise-floored so a no-op reads ~0), changed region(s) (centroid/bbox + exact added_volume/removed_volume), magnitude_method (exact_boolean = exact displacement+volumes; exact_volume_mesh_displacement = exact volumes, mesh-estimated displacement, e.g. a cut/flush-fill; mesh_estimate = boolean skipped/failed), and unchanged_elsewhere. The exact B-rep boolean is clipped to the changed region and runs subprocess-bounded, falling back to the flagged mesh estimate on large/spread edits. For editing, this is model↔input verification, not a score: confirm the changed region(s) and add/remove volumes match the request and unrelated regions stayed put. A tangential move (sliding a hole) or a sub-resolution edit on a very large part yields no region — unchanged_elsewhere then means "no change above the detection floor", not a guarantee; cross-check volume/bbox/center deltas and find_holes."""
     return _resolve_session().shape_compare(object_a, object_b)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def find_holes(object_name: str = "") -> str:
     """Recognise drilled holes on a session object (defaults to current shape). Coaxial internal cylinders are grouped into one record per hole: drill + counterbore + spotface stacks, keyway-split bores, and bores interrupted by crossing holes all count once. Returns JSON: {count, holes: [{axis (drilling direction, unit vector), location (opening point), diameter, depth (bore top to deep end; drill-point cone excluded), bottom: through|flat|drill_point|unknown, cbore: {diameter, depth}|null, spotface: {diameter, depth}|null}]}. Countersinks read as openings (not steps); threads and non-cylindrical features are not recognised."""
     return _resolve_session().find_holes(object_name)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def find_hole_patterns(object_name: str = "") -> str:
     """Recognise hole patterns on a session object (defaults to current shape): ≥3 identical-spec holes equally spaced on a circle → bolt_circle (center, diameter/BCD), collinear at constant pitch → linear_array (pitch, direction). Returns JSON: {count, patterns: [{type, holes: [HoleFeature records], center/diameter | pitch/direction}]}. Each hole belongs to at most one pattern; make_drawing already annotates these automatically."""
     return _resolve_session().find_hole_patterns(object_name)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def find_bosses(object_name: str = "") -> str:
     """Recognise external cylindrical bosses on a session object (defaults to current shape), including a turned part's OD — filter on diameter against the part envelope for local bosses only. Returns JSON: {count, bosses: [{axis (base toward free end), location (free-end point), diameter, height}]}."""
     return _resolve_session().find_bosses(object_name)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def find_countersinks(object_name: str = "") -> str:
     """Recognise countersinks (conical screw-head recesses) on a session object (defaults to current shape) — the feature find_holes reports only as a plain opening. A countersink is an internal cone flaring from a drilled bore out to a larger opening, coaxial with the drill; drill-point cones and external edge chamfers are excluded. Returns JSON: {count, countersinks: [{location (opening centre), axis (into the part), major_diameter (countersink Ø at the surface), drill_diameter, included_angle (deg, e.g. 82/90/100/120), depth}]}. object_name: named object from show() (default: current shape)."""
     return _resolve_session().find_countersinks(object_name)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def align_check(object_a: str, object_b: str, axis: str = "Z", mode: str = "flush") -> str:
     """Check alignment between two named objects along an axis. axis: X, Y, or Z. mode: flush (signed distance between bbox extremes — positive=A extends further), center (offset between bbox centroids), clearance (gap between nearest faces — positive=apart, negative=overlap). Returns JSON: {delta, axis, mode, object_a, object_b, interpretation}."""
     return _resolve_session().align_check(object_a, object_b, axis=axis, mode=mode)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def resolve(object_name: str, selector: str, label: str = "") -> str:
     """Evaluate a selector expression against a named object and return a geometry descriptor. selector is a Python expression suffix applied to the object, e.g. '.faces().filter_by(Axis.Z).last()'. If label is given, the descriptor is stored in session.geometry_refs[label] and appears in session_state(). Returns JSON: {label, ref, object, selector, type, area/length, center, normal (for Face)}. The ref field uses @cad[object#label] format."""
     return _resolve_session().resolve(object_name, selector, label=label)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def script(save_to: str = "") -> str:
     """Return a single Python script assembled from all successfully executed code blocks in this session. Prepends 'from build123d import *' if not already present. If save_to is given, writes the script to that path and returns {script_path, blocks}; otherwise returns {script, blocks}. Useful for exporting a reproducible script after an interactive session."""
     return _resolve_session().script(save_to=save_to)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_MUTATING)
 def import_cad_file(path: str, name: str = "") -> str:
     """Import a STEP (.step/.stp) or STL (.stl) file as a named object in the session. path: absolute or relative path to the file. name: name to register the shape under (defaults to the filename stem). The shape becomes both the named object and the current_shape. Returns volume, topology, and bounding box of the imported shape. After importing, use render_view() to visualise the shape, measure() for geometry queries, or shape_compare() to diff against a show() object. Note: STL imports produce a shell (volume=0) rather than a solid — render_view and measure still work, but clearance() and boolean operations require a solid. If you have both the original built shape and an imported copy in session.objects, render the imported one by name (e.g. objects='mypart') to avoid Z-fighting artifacts from two co-located shapes."""
     result = _resolve_session().import_cad_file(path, name)
@@ -553,7 +569,7 @@ def import_cad_file(path: str, name: str = "") -> str:
     return result
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def repair_hints(error_text: str) -> str:
     """Given an error message from execute(), return targeted fix suggestions for common build123d mistakes: wrong Location syntax, missing .part, CadQuery idioms, blocked imports, degenerate boolean results, fillet edge selection, and more. Pass the full error string from execute() or last_error()."""
     from build123d_mcp.tools.repair_hints import repair_hints as _repair_hints
@@ -561,13 +577,13 @@ def repair_hints(error_text: str) -> str:
     return _repair_hints(error_text)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def last_error() -> str:
     """Return details of the last failed execute() call: exception type, message, and (for runtime and syntax errors) line number and a 5-line excerpt around the failing line. Security errors include a message but no line/excerpt. Returns {\"error\": null} if the last execute() succeeded or no execute() has failed yet. Call this immediately after an execute() error to get the exact failing line — much faster than re-reading the submitted code."""
     return _resolve_session().last_error()
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def version() -> str:
     """Return the installed versions of the build123d-mcp server, its key dependencies (build123d, build123d-drafting-helpers), and the companion packages importable inside execute() (bd_warehouse for threads/fasteners/gears/bearings, augura for printability analysis). Use this to confirm which server build is running — e.g. to check whether a feature or fix is present, or whether the client is talking to a stale install."""
     # Computed in-process (pure importlib.metadata, same venv as the worker), so
@@ -578,7 +594,7 @@ def version() -> str:
     return "\n".join(f"{name}: {ver}" for name, ver in version_info().items())
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def workflow_hints() -> str:
     """Return guidance on how to use these tools effectively. Call this at the start of a session or whenever unsure which tool to reach for."""
     return """\
@@ -788,7 +804,7 @@ def build123d_bd_warehouse() -> str:
     return build_bd_warehouse_text()
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def suggest_view_layout(
     object_name: str = "",
     page_w: float = 297.0,
@@ -872,7 +888,7 @@ def build123d_modeling_skill() -> str:
     return _load_raw("modeling")
 
 
-@mcp.tool()
+@mcp.tool(annotations=_MUTATING)
 def install_skill(target: str = "claude", force: bool = False, skill: str = "drawing") -> str:
     """Copy a b123d workflow skill into the current project.
 
