@@ -113,6 +113,12 @@ large shapes. The standalone MCP tools remain for one-shot queries.
   displacement — confirm the changed region and magnitude match the request, and
   that the rest stayed put. A tangential move (sliding a hole) shows no region;
   cross-check `find_holes` and the bbox/center deltas for those.
+- Use `find_holes`' bore axis for holes on curved or BSpline faces. Face centers
+  and bounding-box centers can be off-axis; an apparent "already at target"
+  result is a prompt to re-measure against the axis.
+- Avoid large point grids with `is_inside()` on big solids. They are slow and can
+  hit the operation timeout; prefer `cross_sections()` or a targeted clipped
+  render for interiors.
 
 ## Step 4 — Experiments and recovery
 
@@ -134,6 +140,12 @@ heavy step into smaller `execute()` calls (build up incrementally — a timed-ou
 is dropped, not the session) and/or raise the ceiling with `--exec-timeout N` or
 `BUILD123D_EXEC_TIMEOUT=N` (this also extends the import budget for heavy STEP files).
 
+For additive edits, avoid exactly coincident faces: they often do not fuse into a
+clean solid. Interpenetrate slightly, bury the added feature into the base, or
+extend-and-trim with one planar cut. For imported solids, prefer targeted solid
+repair over broad shape healing; global healing can reorient faces or collapse
+volume.
+
 Only if a single unavoidable operation (IsoThread, a multi-body fillet, a very
 high-face-count boolean) still can't fit, drop out of the session for that one op:
 
@@ -150,8 +162,14 @@ high-face-count boolean) still can't fit, drop out of the session for that one o
    tooling (CADGenBench scores it zero) — no matter how close the geometry is.
    A `FAIL` here almost always means the current shape is a leftover 2D sketch,
    an open shell, an un-fused compound (`Part() + ...`), or a degenerate boolean
-   result; fix it and re-validate until it passes. `export()` re-runs this gate
-   and warns, but catch it here rather than shipping a zero.
+   result; fix it and re-validate until it passes.
+   `validate()` is a fast in-loop screen: small parts get the exact mesh stitch,
+   but large or expensive shapes may fall back to the fast mesh check so the
+   session does not time out. `export()` runs the slower, stricter pre-export
+   gate with a larger budget and is the authoritative verdict. A rare
+   `validate()` PASS followed by an `export()` warning/failure is expected for
+   coincident faces, near-tangent joins, or large imported B-reps; test-export
+   to a throwaway path before finalizing.
 3. `export("part.step", "step", object_name="part")` — STEP for CAD interchange,
    STL for printing. If the project slices with
    [estampo](https://github.com/estampo/estampo) (`estampo.toml` present),

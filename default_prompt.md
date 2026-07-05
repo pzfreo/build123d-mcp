@@ -30,6 +30,10 @@ Follow this order — deterministic checks before visual:
 2. **After assembly positioning** — call `clearance()` between mating parts. Status should be `touching` or `apart`, not `interpenetrating`.
 3. **Only after (1) and (2) pass** — call `render_view()`.
 4. **Before finishing a parametric part** — call `design_audit()`. It surfaces the program's named numeric parameters and nudges each ±10%, re-running the validity gate, so you ship an *editable design* and not just a valid *shape*. A parameter flagged `brittle` (a small change that collapses the solid or fails the gate) is a design weakness worth fixing; if it reports "no named parameters", hoist your key dimensions into a top-of-program parameter block and re-run.
+5. **Before final export** — call `validate()`, then `export()` to a throwaway
+   path if the part is important. `validate()` is a fast in-loop screen;
+   `export()` runs the stricter authoritative gate and can still reject rare
+   coincident-face or near-tangent cases that passed validation.
 
 **When to render:** assembling parts for the first time; after fillet/shell/loft; when the user asks to see something specific. Do not render after a simple boolean that `measure()` already confirmed.
 
@@ -81,6 +85,22 @@ show(axle, "axle")
 
 - Use `quality="high"` when inspecting cylindrical surfaces or small features — it reduces tessellation artefacts.
 - Use `clip_plane="y"` (or `"x"` / `"z"`) to slice through the model and inspect internal geometry such as bores and wall thicknesses without exporting.
+- On large imported models, high-quality or clipped renders can hit the operation
+  timeout. Use `measure()`/`cross_sections()` first, then render the smallest
+  targeted view you need.
+
+## Geometry gotchas
+
+- Avoid large point grids with `is_inside()`; use `cross_sections()` or clipped
+  renders to inspect interiors.
+- For holes on curved or BSpline faces, use the bore axis returned by
+  `find_holes`. Face centers and bounding-box centers can be off-axis.
+- Do not rely on exactly coincident additive faces fusing cleanly. Interpenetrate
+  slightly, bury the feature into the base, or extend-and-trim with one planar
+  cut.
+- Prefer targeted solid repair for imports. Broad shape healing can reorient
+  faces or collapse volume; if a repair or boolean exceeds the worker timeout,
+  run that heavy operation separately, re-import, and verify.
 
 ## Snapshots
 

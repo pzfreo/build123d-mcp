@@ -46,6 +46,10 @@ When using an AI to write build123d scripts, the AI writes blind — it cannot s
 
 **Import / export**
 - `export` — export as STEP / STL / DXF / SVG (or comma-separated like `step,stl`); auto-detects 2D vs 3D shape and routes to the appropriate format; targets a named object, the current shape, or `*` for all objects as an assembly
+- `validate` — fast pre-export validity screen. `export` repeats the gate with a
+  stricter, larger-budget check and is the authoritative verdict, so test-export
+  important parts before finalizing if the geometry has coincident faces,
+  near-tangent joins, or large imported B-reps
 - `import_cad_file` — load a STEP or STL file as a named object for comparison
 
 **Comparison**

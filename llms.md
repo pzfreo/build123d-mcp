@@ -150,13 +150,24 @@ Prefer `measure()` over `render_view()` for verifying geometry — numbers are u
 ---
 
 ### `validate`
-Check whether a shape would pass a CAD validity gate before exporting it. The gate mirrors what CAD scorers and downstream tools require — a well-formed (BRepCheck), watertight, manifold solid with non-zero volume.
+Run a fast validity screen before exporting. It checks the same classes of
+failure that CAD scorers and downstream tools reject — a well-formed
+(BRepCheck), watertight, manifold solid with non-zero volume — but it is tuned
+for repeated in-loop use.
 
 **Input:** `object_name` (string, default `""`) — named object from `show()`; empty = `current_shape`
 
-**Returns:** a `PASS`/`FAIL` line plus JSON: `passes_gate`, `n_solids`, `volume`, `watertight_manifold`, `open_edges`, `nonmanifold_edges`, `mesh_nonmanifold_edges`, `brep_valid`, `reasons` (fatal failure causes), and `warnings` (non-fatal advisories — e.g. multiple disjoint solid bodies, which pass the gate but hurt the topology score on a single-part task). Watertightness/manifoldness is judged by the edge→face map (not build123d's `is_manifold`, which false-negates on imported solids) plus a welded tessellated-mesh check that catches self-touching / coincident faces — valid B-reps that a CAD scorer still rejects.
+**Returns:** a `PASS`/`FAIL` line plus JSON: `passes_gate`, `n_solids`, `volume`, `watertight_manifold`, `open_edges`, `nonmanifold_edges`, `mesh_nonmanifold_edges`, `brep_valid`, `reasons` (fatal failure causes), and `warnings` (non-fatal advisories — e.g. multiple disjoint solid bodies, which pass the gate but hurt the topology score on a single-part task). Watertightness/manifoldness is judged by the edge→face map (not build123d's `is_manifold`, which false-negates on imported solids) plus a bounded tessellated-mesh check that catches self-touching / coincident faces — valid B-reps that a CAD scorer still rejects.
 
-A `FAIL` means a STEP/STL export would be rejected outright (a CAD scorer like CADGenBench scores it zero) — typically a leftover 2D sketch or open shell as the current shape, an un-fused compound, or a degenerate boolean result. Run this immediately before `export()` on any part you intend to submit or hand off; `export()` re-runs the gate and warns on a 3D export that would fail.
+A `FAIL` means a STEP/STL export would be rejected outright (a CAD scorer like CADGenBench scores it zero) — typically a leftover 2D sketch or open shell as the current shape, an un-fused compound, or a degenerate boolean result. Run this immediately before `export()` on any part you intend to submit or hand off.
+
+`validate()` is not the final authority. It is deliberately cheaper than export:
+small parts get the exact mesh stitch, but large or expensive shapes may fall
+back to the fast mesh screen to avoid timing out an interactive session.
+`export()` runs the slower, stricter pre-export gate with a larger budget and is
+the authoritative verdict. Expect rare `validate()` PASS → `export()` warning or
+failure outcomes on coincident faces, near-tangent joins, or large imported
+B-reps; test-export to a throwaway path before finalizing.
 
 ---
 
@@ -530,6 +541,23 @@ All units are millimetres by default.
 - **Dirty session:** unexpected results often mean leftover state. Call `reset` first, or `session_state` to inspect what's active.
 - **Boolean succeeded but geometry is wrong:** always call `measure()` after a boolean and check `topology.faces` — a failed cut leaves counts unchanged.
 - **Using render_view as geometric proof:** renders can look correct even when geometry is wrong. Use `measure()` to verify numerically first.
+- **Point-grid `is_inside()` on large solids:** thousands of point probes are slow
+  and can hit the operation timeout. Prefer `cross_sections()` or
+  `render_view(clip_plane=...)` to inspect interiors.
+- **Heavy clipped/high-quality renders on big imports:** `render_view` can be as
+  expensive as a geometry operation. Inspect numerically first on large imported
+  shapes, and keep clipped/high-quality renders for targeted checks.
+- **Curved-sheet hole centers:** when using `find_holes` on curved or BSpline
+  faces, trust the returned bore axis. Face centers or bounding-box centers can
+  be off-axis; "already at target" is a reason to re-measure, not proof the edit
+  is done.
+- **Coincident faces don't reliably fuse:** don't butt additive features exactly
+  coplanar with the base. Interpenetrate slightly, bury the feature into the
+  base, or extend-and-trim with a clean planar cut.
+- **Healing imported solids:** prefer targeted solid repair over global shape
+  repair; broad healing can reorient faces or collapse volume. Run very heavy
+  booleans as a standalone script when they exceed the worker timeout, then
+  re-import and verify.
 - **Assembling with raw `.move()` instead of joints:** placing parts by absolute position works once but breaks the moment anything changes — the child has no relationship to the parent. Use `RigidJoint`/`RevoluteJoint`/etc. so the relationship is preserved.
 - **Failed execute advancing state:** it doesn't — failed code preserves the previous `current_shape`.
 - **Library tools without --library:** `search_library` and `load_part` return an error if the server wasn't started with `--library PATH`.
