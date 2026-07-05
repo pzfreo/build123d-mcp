@@ -95,6 +95,42 @@ def test_find_holes_records_filter_by_location_tuple_and_diameter(session):
     assert session.namespace["d"] > 0
 
 
+def test_find_bosses_primitive(session):
+    session.execute("part = Box(40, 40, 5) + Cylinder(4, 10).translate((0, 0, 7.5))")
+    session.execute("bs = find_bosses(part)\nn = len(bs)\nd = bs[0].diameter")
+    assert session.namespace["n"] == 1 and session.namespace["d"] > 0
+
+
+def test_find_countersinks_primitive_returns_list(session):
+    session.execute("cs = find_countersinks(Box(20, 20, 10))")
+    assert isinstance(session.namespace["cs"], list)
+
+
+def test_find_hole_patterns_primitive(session):
+    session.execute(
+        "import math\n"
+        "plate = Box(50, 50, 5)\n"
+        "for i in range(4):\n"
+        "    a = i * math.pi / 2\n"
+        "    plate -= Cylinder(2, 10).translate((15 * math.cos(a), 15 * math.sin(a), 0))\n"
+        "pats = find_hole_patterns(plate)\nn = len(pats)"
+    )
+    assert session.namespace["n"] >= 1
+
+
+def test_align_check_primitive_returns_composable_delta(session):
+    session.execute(
+        "d = align_check(Box(10, 10, 10), Box(10, 10, 10).translate((0, 0, 5)), "
+        "mode='clearance')['delta']"
+    )
+    assert session.namespace["d"] == -5.0  # overlap by 5mm on Z
+
+
+def test_align_check_primitive_bad_axis_raises(session):
+    out = session.execute("x = align_check(Box(1, 1, 1), Box(1, 1, 1), axis='Q')")
+    assert "Invalid axis" in out
+
+
 def test_primitives_work_via_real_worker_session():
     # The primitives live on Session, so they must work in the real WORKER (a daemon
     # subprocess) under the normal sandbox, not just the in-process Session.
@@ -106,6 +142,14 @@ def test_primitives_work_via_real_worker_session():
         assert "VOL 1000.0" in ws.execute("print('VOL', measure(Box(10, 10, 10))['volume'])")
         assert "ST containing" in ws.execute(
             "print('ST', clearance(Box(30, 30, 30), Box(5, 5, 5))['status'])"
+        )
+        # the in-worker recognizers + align_check (increment 2)
+        assert "BOSS 1" in ws.execute(
+            "print('BOSS', len(find_bosses(Box(40, 40, 5) + Cylinder(4, 10).translate((0, 0, 7.5)))))"
+        )
+        assert "DELTA -5.0" in ws.execute(
+            "print('DELTA', align_check(Box(10, 10, 10), "
+            "Box(10, 10, 10).translate((0, 0, 5)), mode='clearance')['delta'])"
         )
     finally:
         ws._kill_worker()

@@ -18,12 +18,6 @@ def align_check(session, object_a: str, object_b: str, axis: str = "Z", mode: st
     Returns:
         JSON: {delta, axis, mode, object_a, object_b, interpretation}
     """
-    axis = axis.upper()
-    if axis not in ("X", "Y", "Z"):
-        return json.dumps({"error": f"Invalid axis '{axis}'. Use X, Y, or Z."})
-    if mode not in ("flush", "center", "clearance"):
-        return json.dumps({"error": f"Invalid mode '{mode}'. Use flush, center, or clearance."})
-
     for name in (object_a, object_b):
         if not name or name not in session.objects:
             return json.dumps(
@@ -32,18 +26,32 @@ def align_check(session, object_a: str, object_b: str, axis: str = "Z", mode: st
                     "registered": list(session.objects.keys()),
                 }
             )
+    return json.dumps(
+        _align_check(
+            session.objects[object_a], session.objects[object_b], axis, mode, object_a, object_b
+        ),
+        indent=2,
+    )
 
-    shape_a = session.objects[object_a]
-    shape_b = session.objects[object_b]
+
+def _align_check(
+    shape_a, shape_b, axis: str = "Z", mode: str = "flush", name_a="A", name_b="B"
+) -> dict:
+    """Pure alignment computation on two shapes — shared by the tool and the in-namespace
+    align_check primitive (#366). Returns {delta, axis, mode, object_a, object_b,
+    interpretation}, or {error} for a bad axis/mode/bbox."""
+    axis = axis.upper()
+    object_a, object_b = name_a, name_b
+    if axis not in ("X", "Y", "Z"):
+        return {"error": f"Invalid axis '{axis}'. Use X, Y, or Z."}
+    if mode not in ("flush", "center", "clearance"):
+        return {"error": f"Invalid mode '{mode}'. Use flush, center, or clearance."}
 
     try:
         bb_a = shape_a.bounding_box()
         bb_b = shape_b.bounding_box()
     except Exception as exc:
-        return json.dumps({"error": f"Failed to compute bounding box: {exc}"})
-
-    def _get(bb, attr):
-        return getattr(bb, attr)
+        return {"error": f"Failed to compute bounding box: {exc}"}
 
     if axis == "X":
         a_min, a_max = bb_a.min.X, bb_a.max.X
@@ -101,14 +109,11 @@ def align_check(session, object_a: str, object_b: str, axis: str = "Z", mode: st
         else:
             interp = f"{object_a} and {object_b} are touching on {axis} axis."
 
-    return json.dumps(
-        {
-            "delta": delta,
-            "axis": axis,
-            "mode": mode,
-            "object_a": object_a,
-            "object_b": object_b,
-            "interpretation": interp,
-        },
-        indent=2,
-    )
+    return {
+        "delta": delta,
+        "axis": axis,
+        "mode": mode,
+        "object_a": object_a,
+        "object_b": object_b,
+        "interpretation": interp,
+    }

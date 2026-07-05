@@ -30,6 +30,10 @@ _INJECTED = frozenset(
         "clearance",
         "cross_sections",
         "find_holes",
+        "find_bosses",
+        "find_countersinks",
+        "find_hole_patterns",
+        "align_check",
     }
 )
 
@@ -491,6 +495,62 @@ class Session:
             return holes
 
         self.namespace["find_holes"] = find_holes
+
+        def _resolve(shape: Any, who: str) -> Any:
+            s = shape if shape is not None else session_ref.current_shape
+            if s is None:
+                raise ValueError(f"{who}(): no shape given and no current shape")
+            return s
+
+        def find_bosses(shape: Any = None) -> list:
+            """Recognise external cylindrical bosses → records (.location (x,y,z) tuple,
+            .diameter, .height, .axis). Filter in code. shape defaults to current shape."""
+            from build123d_drafting import find_bosses as _recognise
+
+            bosses = list(_recognise(_resolve(shape, "find_bosses")))
+            print(f"find_bosses: {len(bosses)} boss(es)")
+            return bosses
+
+        self.namespace["find_bosses"] = find_bosses
+
+        def find_countersinks(shape: Any = None) -> list:
+            """Recognise conical countersinks → list of dicts (major/drill diameter,
+            included angle, depth). Filter in code. shape defaults to current shape."""
+            from build123d_mcp.tools.recognizers.countersink import recognise_countersinks
+
+            cs = recognise_countersinks(_resolve(shape, "find_countersinks"))
+            print(f"find_countersinks: {len(cs)} countersink(s)")
+            return cs
+
+        self.namespace["find_countersinks"] = find_countersinks
+
+        def find_hole_patterns(shape: Any = None) -> list:
+            """Recognise bolt-circle / linear-array hole patterns → the recogniser's
+            pattern records (BoltCircle: .center/.diameter/.holes; LinearArray:
+            .pitch/.direction/.holes). shape defaults to the current shape."""
+            from build123d_drafting import find_hole_patterns as _patterns
+            from build123d_drafting import find_holes as _holes
+
+            s = _resolve(shape, "find_hole_patterns")
+            pats = list(_patterns(_holes(s)))
+            print(f"find_hole_patterns: {len(pats)} pattern(s)")
+            return pats
+
+        self.namespace["find_hole_patterns"] = find_hole_patterns
+
+        def align_check(a: Any, b: Any, axis: str = "Z", mode: str = "flush") -> dict:
+            """Alignment between two shapes along an axis → dict (delta, interpretation).
+            mode: 'flush' (bbox-extreme offset), 'center' (centroid offset), 'clearance'
+            (nearest-face gap). align_check(a, b)["delta"] is a float you can branch on."""
+            from build123d_mcp.tools.align_check import _align_check
+
+            result = _align_check(a, b, axis, mode, "a", "b")
+            if "error" in result:
+                raise ValueError(result["error"])
+            print(f"align_check ({mode}/{axis}): delta={result['delta']}")
+            return result
+
+        self.namespace["align_check"] = align_check
 
     def _shape_summary(self, shape) -> dict | None:
         """Pull volume/bbox/topology from a shape; None if anything errors."""
