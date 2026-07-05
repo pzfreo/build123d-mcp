@@ -84,3 +84,48 @@ def test_bounded_result_parses_json_and_raises_on_error():
     assert _bounded_result("[1, 2, 3]") == [1, 2, 3]
     with pytest.raises(RuntimeError, match="exceeded"):
         _bounded_result("Error: measure() exceeded the 60s time budget")
+
+
+def test_find_holes_records_filter_by_location_tuple_and_diameter(session):
+    # The advertised composition example must actually work: .location is an (x,y,z)
+    # tuple (indexed, not .X) and the diameter field is .diameter (not .radius).
+    session.execute("part = Box(20, 20, 20) - Cylinder(3, 25)")
+    session.execute("h = find_holes(part)[0]\nx = h.location[0]\nd = h.diameter")
+    assert isinstance(session.namespace["x"], float)
+    assert session.namespace["d"] > 0
+
+
+def test_primitives_work_via_real_worker_session():
+    # The primitives live on Session, so they must work in the real WORKER (a daemon
+    # subprocess) under the normal sandbox, not just the in-process Session.
+    from build123d_mcp.worker import WorkerSession
+
+    ws = WorkerSession()
+    try:
+        ws.execute("from build123d import *")
+        assert "VOL 1000.0" in ws.execute("print('VOL', measure(Box(10, 10, 10))['volume'])")
+        assert "ST containing" in ws.execute(
+            "print('ST', clearance(Box(30, 30, 30), Box(5, 5, 5))['status'])"
+        )
+    finally:
+        ws._kill_worker()
+
+
+def test_primitive_bounded_subprocess_spawns_from_the_worker_daemon():
+    # The worker is a daemon; forcing the size gate low makes a primitive spawn the
+    # bounded subprocess FROM the daemon — proving daemon→subprocess.run works and a
+    # large shape can't SIGKILL the session via an in-namespace call (#360). no_sandbox
+    # lets us import _bounded and set the gate inside the worker.
+    from build123d_mcp.worker import WorkerSession
+
+    ws = WorkerSession(no_sandbox=True)
+    try:
+        ws.execute("from build123d import *")
+        out = ws.execute(
+            "from build123d_mcp.tools import _bounded\n"
+            "_bounded._FACE_GATE = 1\n"
+            "print('BV', measure(Box(8, 8, 8))['volume'])"
+        )
+        assert "BV 512.0" in out
+    finally:
+        ws._kill_worker()
