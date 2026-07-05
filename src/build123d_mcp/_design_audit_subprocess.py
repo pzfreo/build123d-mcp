@@ -32,6 +32,11 @@ _BASELINE_CAP_FACTOR = 4
 _MIN_PERTURB_S = 8
 
 
+def _warm_build123d_import() -> None:
+    """Load build123d before timing the baseline rebuild."""
+    __import__("build123d")
+
+
 def _const_number(node):
     """Return the numeric value of a constant / signed-constant node, else None.
 
@@ -284,6 +289,8 @@ def run_audit(
         with open(tmp, "w") as f:
             json.dump(state, f)
         os.replace(tmp, out_path)
+
+    _warm_build123d_import()
 
     # Baseline gets the full per-run budget (it may be the heaviest single build);
     # time it so perturbations can be capped relative to it.
