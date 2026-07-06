@@ -69,7 +69,7 @@ When using an AI to write build123d scripts, the AI writes blind — it cannot s
 - `repair_hints` — get targeted fix suggestions for a given `execute()` error message
 - `workflow_hints` — guidance on using the tools effectively
 - `script` — assemble a reproducible Python script from the session's executed code blocks
-- `install_skill` — copy a b123d workflow skill (modeling or drawing) into the current project
+- `install_skill` — copy a b123d workflow skill (modeling, drawing, or repair) into the current project
 
 ## Resources
 
@@ -302,6 +302,7 @@ Then install the workflow guidance into `AGENTS.md` so the agent follows the bui
 ```
 install_skill(target="agents-md", skill="modeling")   # 3D modeling from a spec / drawing
 install_skill(target="agents-md", skill="drawing")    # engineering drawings from geometry
+install_skill(target="agents-md", skill="repair")     # heal a solid that fails the validity gate
 ```
 
 (`install_skill` also supports `target="claude"`, `"cursor"`, and `"windsurf"`.)

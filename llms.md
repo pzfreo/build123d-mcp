@@ -159,7 +159,7 @@ for repeated in-loop use.
 
 **Returns:** a `PASS`/`FAIL` line plus JSON: `passes_gate`, `n_solids`, `volume`, `watertight_manifold`, `open_edges`, `nonmanifold_edges`, `mesh_nonmanifold_edges`, `brep_valid`, `reasons` (fatal failure causes), and `warnings` (non-fatal advisories — e.g. multiple disjoint solid bodies, which pass the gate but hurt the topology score on a single-part task). Watertightness/manifoldness is judged by the edge→face map (not build123d's `is_manifold`, which false-negates on imported solids) plus a bounded tessellated-mesh check that catches self-touching / coincident faces — valid B-reps that a CAD scorer still rejects.
 
-A `FAIL` means a STEP/STL export would be rejected outright (a CAD scorer like CADGenBench scores it zero) — typically a leftover 2D sketch or open shell as the current shape, an un-fused compound, or a degenerate boolean result. Run this immediately before `export()` on any part you intend to submit or hand off.
+A `FAIL` means a STEP/STL export would be rejected outright (a CAD scorer like CADGenBench scores it zero) — typically a leftover 2D sketch or open shell as the current shape, an un-fused compound, or a degenerate boolean result. Run this immediately before `export()` on any part you intend to submit or hand off. For an imported or damaged solid that keeps failing, read the `build123d://skill/repair` resource — a defect-class-keyed repair ladder (ShapeFix → boolean re-computation → defeaturing → sliver-face surgery) with export-gate verification at every step.
 
 `validate()` runs the same exact mesh check as export — in-process for small
 parts, out-of-process (isolated, so it can't stall the session) for large ones. A

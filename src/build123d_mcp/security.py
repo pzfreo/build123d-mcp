@@ -107,6 +107,7 @@ OCP_ALLOWLIST = frozenset(
         "OCP.BRepBuilderAPI",
         "OCP.BRepPrimAPI",
         "OCP.BRepFeat",
+        "OCP.BRepFill",
         "OCP.BRepFilletAPI",
         "OCP.BRepOffsetAPI",
         "OCP.BRepSweep",

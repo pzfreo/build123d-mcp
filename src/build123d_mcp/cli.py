@@ -27,7 +27,7 @@ def _cmd_install_skill(argv: list) -> None:
         "--skill",
         choices=tuple(SKILLS),
         default="drawing",
-        help="Workflow to install: drawing or modeling (default: drawing)",
+        help=f"Workflow to install: {'/'.join(SKILLS)} (default: drawing)",
     )
     p.add_argument("--force", action="store_true", help="Overwrite existing installation")
     args = p.parse_args(argv)
@@ -50,21 +50,25 @@ def main():
     from importlib.metadata import version
 
     from build123d_mcp import server
+    from build123d_mcp.tools.install_skill import SKILLS
     from build123d_mcp.worker import InProcessSession, WorkerSession
 
     if len(sys.argv) > 1 and sys.argv[1] == "install-skill":
         _cmd_install_skill(sys.argv[2:])
         return
 
+    _skill_list = "/".join(SKILLS)
+    _skill_epilog = f"""\
+Subcommands:
+  install-skill     Copy a b123d workflow skill ({_skill_list}) into .claude/skills/ of the current project
+                    Usage: build123d-mcp install-skill [--skill {_skill_list}] [--force]
+"""
     parser = argparse.ArgumentParser(
         prog="build123d-mcp",
         description="MCP server for interactive 3D CAD via build123d. Communicates over stdio.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""\
-Subcommands:
-  install-skill     Copy a b123d workflow skill (drawing or modeling) into .claude/skills/ of the current project
-                    Usage: build123d-mcp install-skill [--skill drawing|modeling] [--force]
-
+        epilog=_skill_epilog
+        + """
 MCP client configuration example:
   {
     "mcpServers": {

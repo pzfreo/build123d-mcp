@@ -22,8 +22,9 @@ Quick start: execute("from build123d import *"), build in small steps,
 register parts with show(part, "name"), measure() after every boolean,
 export() when done. Read the build123d://quickref resource before writing
 build code. Step-by-step workflows: build123d://skill/modeling (build 3D
-parts, incl. from technical drawings) and build123d://skill/drawing
-(multi-view engineering drawings); install either into the project with
+parts, incl. from technical drawings), build123d://skill/drawing
+(multi-view engineering drawings), and build123d://skill/repair (heal a
+solid that fails the validity gate); install any into the project with
 install_skill().
 """
 
@@ -943,6 +944,18 @@ def build123d_modeling_skill() -> str:
     return _load_raw("modeling")
 
 
+@mcp.resource(
+    "build123d://skill/repair",
+    mime_type="text/plain",
+    description="The b123d-repair workflow skill: step-by-step guide for healing a solid that fails the validity gate — diagnose the defect class from the gate output + locate_gate_defects(), then work a field-proven repair ladder (ShapeFix, boolean re-computation, defeaturing, sliver-face surgery), verifying every attempt with the export gate.",
+)
+def build123d_repair_skill() -> str:
+    """b123d-repair workflow skill."""
+    from build123d_mcp.tools.install_skill import _load_raw
+
+    return _load_raw("repair")
+
+
 @mcp.tool(annotations=_MUTATING)
 def install_skill(target: str = "claude", force: bool = False, skill: str = "drawing") -> str:
     """Copy a b123d workflow skill into the current project.
@@ -953,6 +966,7 @@ def install_skill(target: str = "claude", force: bool = False, skill: str = "dra
     skill: which workflow to install (default "drawing")
       - drawing   → multi-view engineering drawings from build123d geometry
       - modeling  → build 3D parts/assemblies (incl. from technical drawings)
+      - repair    → heal a solid that fails the validity gate
     target: one of "claude" (default), "agents-md", "cursor", "windsurf"
       - claude     → .claude/skills/<skill-dir>/SKILL.md  (Claude Code)
       - agents-md  → AGENTS.md  (Codex CLI, Antigravity, GitHub Copilot, Cline)

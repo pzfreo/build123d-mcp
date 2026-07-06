@@ -1,8 +1,9 @@
 """install_skill — write a b123d workflow skill to a project's agent config.
 
-Two skills are available:
+Three skills are available:
   drawing   → b123d-drawing  (multi-view engineering drawings from geometry)
   modeling  → b123d-modeling (build 3D parts/assemblies via the MCP session)
+  repair    → b123d-repair   (heal a solid that fails the validity gate)
 
 Supports four targets:
   claude     → .claude/skills/<skill-dir>/SKILL.md
@@ -32,6 +33,16 @@ SKILLS = {
         "cursor_description": (
             "3D CAD modeling workflow: build parts and assemblies with build123d "
             "via the build123d-mcp MCP server"
+        ),
+        # No path affinity — the rule is routed by description (agent-requested).
+        "cursor_globs": "",
+    },
+    "repair": {
+        "dir": "b123d-repair",
+        "cursor_description": (
+            "CAD geometry repair workflow: heal a solid that fails the validity "
+            "gate (BRepCheck / open edges / non-manifold / mesh defects) with the "
+            "build123d-mcp MCP server"
         ),
         # No path affinity — the rule is routed by description (agent-requested).
         "cursor_globs": "",

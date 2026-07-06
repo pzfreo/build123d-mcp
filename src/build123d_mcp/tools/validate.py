@@ -1021,6 +1021,8 @@ def validate(session, object_name: str = "") -> str:
         summary += " — " + "; ".join(report["reasons"])
     if report["warnings"]:
         summary += " (warning: " + "; ".join(report["warnings"]) + ")"
+    if not report["passes_gate"]:
+        summary += " — the build123d://skill/repair resource has the defect-class repair ladder"
     return summary + "\n" + json.dumps(report, indent=2)
 
 

@@ -271,7 +271,8 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
         if gate_shape is None:
             suffix += (
                 "\n⚠ VALIDITY GATE FAIL — the written STEP could not be re-imported; "
-                "a CAD scorer would reject this file (score zero). Fix the solid and re-export."
+                "a CAD scorer would reject this file (score zero). Fix the solid and re-export "
+                "(the build123d://skill/repair resource has the defect-class repair ladder)."
             )
         elif step_path is not None:
             # Run the mesh check OUT OF PROCESS for STEP exports. The mesh stitch is
@@ -302,7 +303,8 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
                 suffix += (
                     "\n⚠ VALIDITY GATE FAIL — a CAD scorer would reject this file (score zero): "
                     + "; ".join(report["reasons"])
-                    + ". Fix the solid and re-export (run validate() for detail)."
+                    + ". Fix the solid and re-export (run validate() for detail; the "
+                    "build123d://skill/repair resource has the defect-class repair ladder)."
                 )
             elif report.get("mesh_check") == "skipped":
                 suffix += (
@@ -317,7 +319,8 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
                 suffix += (
                     "\n⚠ VALIDITY GATE FAIL — a CAD scorer would reject this file (score zero): "
                     + "; ".join(report["reasons"])
-                    + ". Fix the solid and re-export (run validate() for detail)."
+                    + ". Fix the solid and re-export (run validate() for detail; the "
+                    "build123d://skill/repair resource has the defect-class repair ladder)."
                 )
 
         # A single solid must land as a single STEP product. The #1356 ``Compound``

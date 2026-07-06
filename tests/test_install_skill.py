@@ -5,6 +5,7 @@ from pathlib import Path
 from build123d_mcp.tools.install_skill import (
     _END,
     _START,
+    SKILLS,
     TARGETS,
     _dest_exists,
     _load_raw,
@@ -38,6 +39,12 @@ def test_load_raw_modeling_returns_skill_content():
     assert len(content) > 1000
 
 
+def test_load_raw_repair_returns_skill_content():
+    content = _load_raw("repair")
+    assert "Repair Invalid Geometry" in content
+    assert len(content) > 1000
+
+
 # ---------------------------------------------------------------------------
 # _strip_claude_markers
 # ---------------------------------------------------------------------------
@@ -66,7 +73,7 @@ def test_shipped_skills_have_no_personal_markers():
     """[SEND:]/[ASK:] are conventions of the maintainer's own client setup —
     the claude install target ships SKILL.md verbatim, so the source files
     must spell the instructions out in plain English instead."""
-    for skill in ("drawing", "modeling"):
+    for skill in SKILLS:
         raw = _load_raw(skill)
         assert "[SEND:" not in raw, f"{skill} skill contains a [SEND:] marker"
         assert "[ASK:" not in raw, f"{skill} skill contains an [ASK:] marker"
@@ -274,10 +281,39 @@ def test_install_cursor_modeling_description_routed(tmp_path):
     assert "globs" not in content.split("---")[1]
 
 
+def test_install_claude_repair(tmp_path):
+    result = install_skill(target="claude", cwd=tmp_path, skill="repair")
+    dest = tmp_path / ".claude" / "skills" / "b123d-repair" / "SKILL.md"
+    assert dest.exists()
+    assert "Repair Invalid Geometry" in _read(dest)
+    assert "Installed" in result
+
+
+def test_agents_md_all_three_skills_coexist(tmp_path):
+    install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
+    install_skill(target="agents-md", cwd=tmp_path, skill="modeling")
+    install_skill(target="agents-md", cwd=tmp_path, skill="repair")
+    content = _read(tmp_path / "AGENTS.md")
+    assert content.count("<!-- b123d-drawing:start -->") == 1
+    assert content.count("<!-- b123d-modeling:start -->") == 1
+    assert content.count("<!-- b123d-repair:start -->") == 1
+    assert "Repair Invalid Geometry" in content
+
+
+def test_install_cursor_repair_description_routed(tmp_path):
+    install_skill(target="cursor", cwd=tmp_path, skill="repair")
+    content = _read(tmp_path / ".cursor" / "rules" / "b123d-repair.mdc")
+    assert "description:" in content
+    assert "alwaysApply: false" in content
+    # repair has no path affinity — no globs line at all
+    assert "globs" not in content.split("---")[1]
+
+
 def test_dest_exists_tracks_skills_independently(tmp_path):
     install_skill(target="claude", cwd=tmp_path, skill="drawing")
     assert _dest_exists("claude", cwd=tmp_path, skill="drawing")
     assert not _dest_exists("claude", cwd=tmp_path, skill="modeling")
+    assert not _dest_exists("claude", cwd=tmp_path, skill="repair")
 
 
 def test_unknown_skill_returns_error():
@@ -298,7 +334,7 @@ def test_server_instructions_registered():
 
     assert mcp.instructions == _INSTRUCTIONS
     assert 0 < len(_INSTRUCTIONS.encode("utf-8")) <= 2048
-    for needle in ("execute()", "measure()", "skill/modeling", "skill/drawing"):
+    for needle in ("execute()", "measure()", "skill/modeling", "skill/drawing", "skill/repair"):
         assert needle in _INSTRUCTIONS
 
 
@@ -310,6 +346,7 @@ def test_modeling_skill_resource_registered():
     uris = {str(r.uri) for r in asyncio.run(mcp.list_resources())}
     assert "build123d://skill/modeling" in uris
     assert "build123d://skill/drawing" in uris
+    assert "build123d://skill/repair" in uris
 
 
 # ---------------------------------------------------------------------------
