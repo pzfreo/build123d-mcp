@@ -29,7 +29,7 @@ def main() -> None:
     try:
         from build123d import Compound, import_step
 
-        from build123d_mcp.tools.validate import _EXACT_EXPORT_MAX_TRIS, _mesh_defects_exact
+        from build123d_mcp.tools.validate import _EXACT_ISOLATED_MAX_TRIS, _mesh_defects_exact
 
         shp = import_step(step_path)
         solids = shp.solids()
@@ -40,9 +40,10 @@ def main() -> None:
         else:
             shape = Compound(children=list(solids))
         # deadline=inf: no in-process time bail — the parent's subprocess timeout
-        # bounds us. The triangle ceilings still apply (bound memory).
+        # bounds us, so the triangle ceiling can be much higher than the in-worker
+        # checks' (#381) — it's a memory/sanity backstop here, not a time proxy.
         nm, open_edges, untri, nmv, ok = _mesh_defects_exact(
-            shape, max_triangles=_EXACT_EXPORT_MAX_TRIS, deadline=float("inf")
+            shape, max_triangles=_EXACT_ISOLATED_MAX_TRIS, deadline=float("inf")
         )
         print(
             _MARKER

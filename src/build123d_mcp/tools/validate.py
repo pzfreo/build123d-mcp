@@ -18,12 +18,29 @@ import time
 _EPS = 1e-9
 
 # Triangle-count budgets for the accurate (slow) topology-stitch mesh check.
-# Above the budget the gate falls back to the fast coordinate-weld check.
-# Inline validate() is called often, so it only runs the exact check when cheap;
-# export() is authoritative and runs once, so it gets a generous budget that
-# still bounds the worst case (the stitch is ~0.3 ms/triangle).
+# Above the budget the gate falls back to the fast coordinate-weld check (inline)
+# or reports "skipped" (isolated — see _EXACT_ISOLATED_MAX_TRIS below).
+#
+# _EXACT_INLINE_MAX_TRIS bounds the check when it runs IN-WORKER under a soft time
+# deadline (_GATE_MESH_BUDGET_S) that cannot interrupt the underlying native
+# BRepMesh call — so it must stay small enough that even the worst case can't
+# approach the worker op-timeout. Used for interactive validate() on a small shape,
+# and for STL-only export (no STEP artifact to hand an isolated subprocess).
 _EXACT_INLINE_MAX_TRIS = 10000
+# _EXACT_EXPORT_MAX_TRIS: legacy name for the same in-worker ceiling, historically
+# also applied to the isolated path before #381 gave it its own (much higher)
+# budget below. Kept only for the in-process STL-only export call site.
 _EXACT_EXPORT_MAX_TRIS = 80000
+# _EXACT_ISOLATED_MAX_TRIS bounds the SAME check when it runs in the hard-bounded
+# subprocess (_gate_subprocess.py, deadline=inf) that export() and a large-shape
+# validate() use (#360/#381): there the real worker-safety backstop is the parent's
+# subprocess.run(timeout=...), not this triangle count, so it can be far more
+# generous. Measured directly (not the old ~0.3ms/triangle guess, which was ~2x
+# pessimistic): a genuinely large synthetic part needing the full open-edge ladder
+# (the worst case) took 68s at 529k triangles. 300k keeps worst-case comfortably
+# under the default ~100s subprocess budget (op_budget=120s minus margins), with
+# room for real-world topology to cost more per-triangle than this synthetic case.
+_EXACT_ISOLATED_MAX_TRIS = 300_000
 
 # The open-edge deflection ladder refines a SUSPECT part (base mesh shows open
 # edges) up to base/32 to distinguish a valid periodic/curved seam — which only

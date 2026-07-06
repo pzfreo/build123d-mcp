@@ -139,3 +139,28 @@ def test_out_of_process_validate_end_to_end(monkeypatch):
     out = validate(_StubSession(current=Box(8, 8, 8)))
     assert out.startswith("Validity gate: PASS")
     assert json.loads(out.split("\n", 1)[1])["mesh_check"] == "exact-subprocess"
+
+
+def test_isolated_ceiling_covers_a_shape_above_the_old_inline_cap():
+    """Regression for the ceiling itself (#381 follow-up): a real ~90k-triangle part —
+    comfortably above the in-worker export ceiling (80k) but below the isolated one
+    (300k) — must run the EXACT check out-of-process, not get skipped. A grid of holes
+    reliably produces a high triangle count from modest geometry (each hole boundary
+    costs tessellation triangles independent of the hole's tiny size)."""
+    from build123d import Circle, Compound, Pos, Rectangle, extrude
+
+    from build123d_mcp.tools.validate import _EXACT_EXPORT_MAX_TRIS, _EXACT_ISOLATED_MAX_TRIS
+
+    pitch, r, n = 6.0, 1.5, 29  # measured: ~90,840 triangles, ~13.5% over the old 80k cap
+    length = n * pitch + 6
+    circles = [
+        Pos((i - n / 2) * pitch, (j - n / 2) * pitch) * Circle(r)
+        for i in range(n)
+        for j in range(n)
+    ]
+    plate = extrude(Rectangle(length, length) - Compound(children=circles), 5)
+
+    report = json.loads(validate(_StubSession(current=plate)).split("\n", 1)[1])
+    assert report["mesh_check"] == "exact-subprocess"  # not "skipped"
+    assert report["passes_gate"] is True
+    assert _EXACT_ISOLATED_MAX_TRIS > _EXACT_EXPORT_MAX_TRIS  # the isolated path is more generous
