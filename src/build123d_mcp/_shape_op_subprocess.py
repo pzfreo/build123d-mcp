@@ -9,6 +9,10 @@ Mirrors ``_locate_subprocess``: STEP in, JSON out, every error captured to struc
 output so the parent never sees a bare crash. The parent bounds it with
 ``subprocess.run(timeout=...)`` so an un-interruptible native call is killed cleanly
 instead of SIGKILLing the worker.
+
+``validate`` is NOT here: it keeps its B-rep checks in the worker and isolates only its
+mesh stitch (via ``validate._run_mesh_gate_subprocess``), the same way ``export`` does,
+so a subprocess kill degrades to "mesh not verified" without losing the B-rep verdict.
 """
 
 import json
@@ -18,12 +22,9 @@ import sys
 def _run(op: str, shapes: dict, params: dict) -> str:
     from build123d_mcp.tools.cross_sections import _cross_sections_report
     from build123d_mcp.tools.measure import _clearance_report, _measure_report
-    from build123d_mcp.tools.validate import _validate_report
 
     if op == "measure":
         return _measure_report(shapes[""], params["rho"])
-    if op == "validate":
-        return _validate_report(shapes[""])
     if op == "cross_sections":
         return _cross_sections_report(shapes[""], params["axis"], params["num_slices"])
     if op == "clearance":
@@ -37,9 +38,9 @@ def main(manifest_path: str, out_path: str) -> None:
     with open(manifest_path) as f:
         manifest = json.load(f)
     try:
-        # measure/validate/cross_sections are wrapper-insensitive; clearance normalises
-        # the shape wrapper itself (measure._surface_distance), so the re-imported shape
-        # can be used as-is here regardless of whether STEP round-tripped Solid↔Compound.
+        # measure/cross_sections are wrapper-insensitive; clearance normalises the shape
+        # wrapper itself (measure._surface_distance), so the re-imported shape can be used
+        # as-is here regardless of whether STEP round-tripped Solid↔Compound.
         shapes = {label: import_step(path) for label, path in manifest["shapes"].items()}
         payload = {"result": _run(manifest["op"], shapes, manifest.get("params", {}))}
     except Exception as exc:  # noqa: BLE001 - any failure → structured error, not a crash

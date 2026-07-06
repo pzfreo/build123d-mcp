@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.69
+
+### Fixed
+
+- **`validate()` no longer reports a silent false PASS for open edges on a large shape (#381).** After #360/#364 stopped `validate()` from *crashing* the worker on a big solid, an accuracy gap remained: when the exact topology-stitch mesh check overran its in-loop budget it fell back to the fast coordinate-weld, which only counts non-manifold edges and **pins `mesh_open_edges` to 0** — so any shape big enough to punt reported `PASS` even with real open edges (an unclosed tessellated boundary), the single most common defect the gate exists to catch. Not probabilistic — guaranteed, and unwarned, for one whole defect class. A CADGenBench sweep (`gpt55-v0368-xhigh-full`) caught it live: fixture 240's 15 `validate()` PASSes all carried `mesh_check: "fast"`, while every `export()` failed with the same "4 mesh open edge(s)" the agent's own verify loop never saw. The fix adopts `export()`'s architecture exactly: `validate()` keeps its cheap B-rep checks in the worker and isolates **only** the expensive mesh stitch, running it in the same hard-bounded subprocess `export()` uses (the exact check, same 80k-triangle ceiling) — so a large shape's open edges are caught *in-loop*, and because the verdict was never inside the killable child, a subprocess timeout degrades to `mesh_check: "skipped"` with an explicit **"mesh not verified" warning** (test-export before trusting) while the B-rep verdict stands — never a lost verdict, never a blind `fast` PASS. Keeping B-rep in the worker also makes the degraded large-shape case faster (an 847-face stress part: ~57s blind-and-wrong under a naive fix → ~18s honest `skipped`). The remaining in-worker fast fallback (small dense parts that stay in-process, where a STEP round-trip would dominate) now carries the same open-edge-unverified warning.
+- **`design_audit` per-perturbation cap no longer inflated by the one-time `build123d` import (#343).** The baseline rebuild is now timed after a warm-up import, so the `K × baseline` per-perturbation budget reflects true rebuild time instead of `import + build`. Thanks @ahfoysal.
+
+### Changed
+
+- **Docs: clarified the `validate()` (fast screen) vs `export()` (authoritative exact gate) asymmetry and added field-tested modeling gotchas (#320).** Thanks @ahfoysal. (The `validate()`/`export()` wording is further refined by #381 above.)
+
 ## v0.3.68
 
 ### Added

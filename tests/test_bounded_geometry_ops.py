@@ -1,12 +1,13 @@
 """Read-only geometry ops isolate large shapes out-of-process, hard-bounded (#360).
 
-measure/validate/cross_sections/clearance run a native OCC analysis (BRepCheck,
-BRepMesh, booleans) that is un-interruptible and can outlast the op timeout on a big
-B-rep — in the worker that would SIGKILL the whole session. So a large shape's work
-runs in a real `subprocess.run` bounded by the op budget; on overrun the child is
-killed and a clean error returned, the worker survives. A small shape keeps the fast
-in-worker path (a STEP round-trip would dominate). On a host that blocks child
-processes (#143) it falls back to in-process.
+measure/cross_sections/clearance run a native OCC analysis (BRepCheck, BRepMesh,
+booleans) that is un-interruptible and can outlast the op timeout on a big B-rep — in
+the worker that would SIGKILL the whole session. So a large shape's work runs in a real
+`subprocess.run` bounded by the op budget; on overrun the child is killed and a clean
+error returned, the worker survives. A small shape keeps the fast in-worker path (a STEP
+round-trip would dominate). On a host that blocks child processes (#143) it falls back
+to in-process. (validate isolates only its mesh stitch, like export — see
+test_validate_open_edge_381.)
 """
 
 import json
@@ -17,7 +18,6 @@ from build123d import Box
 from build123d_mcp.tools import _bounded
 from build123d_mcp.tools.cross_sections import cross_sections
 from build123d_mcp.tools.measure import clearance, measure
-from build123d_mcp.tools.validate import validate
 
 
 class _StubSession:
@@ -51,10 +51,9 @@ def test_large_shape_runs_out_of_process_and_matches(monkeypatch):
     assert out["volume"] == 1000.0 and out["topology"]["faces"] == 6
 
 
-def test_all_four_ops_round_trip_out_of_process(monkeypatch):
+def test_all_three_ops_round_trip_out_of_process(monkeypatch):
     monkeypatch.setattr(_bounded, "_FACE_GATE", 1)
     assert json.loads(measure(_StubSession(current=Box(8, 8, 8))))["volume"] == 512.0
-    assert validate(_StubSession(current=Box(8, 8, 8))).startswith("Validity gate: PASS")
     assert len(json.loads(cross_sections(_StubSession(current=Box(8, 8, 8))))) > 0
     assert json.loads(clearance(_pair(), "a", "b"))["status"] == "containing"
 
@@ -116,7 +115,7 @@ def test_subprocess_failure_surfaces_error(monkeypatch):
         stderr = "boom in the shape-op worker"
 
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Proc())
-    out = validate(_StubSession(current=Box(10, 10, 10)))
+    out = measure(_StubSession(current=Box(10, 10, 10)))
     assert out.startswith("Error:") and "subprocess failed" in out
 
 

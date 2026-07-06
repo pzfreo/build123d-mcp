@@ -161,13 +161,14 @@ for repeated in-loop use.
 
 A `FAIL` means a STEP/STL export would be rejected outright (a CAD scorer like CADGenBench scores it zero) — typically a leftover 2D sketch or open shell as the current shape, an un-fused compound, or a degenerate boolean result. Run this immediately before `export()` on any part you intend to submit or hand off.
 
-`validate()` is not the final authority. It is deliberately cheaper than export:
-small parts get the exact mesh stitch, but large or expensive shapes may fall
-back to the fast mesh screen to avoid timing out an interactive session.
-`export()` runs the slower, stricter pre-export gate with a larger budget and is
-the authoritative verdict. Expect rare `validate()` PASS → `export()` warning or
-failure outcomes on coincident faces, near-tangent joins, or large imported
-B-reps; test-export to a throwaway path before finalizing.
+`validate()` runs the same exact mesh check as export — in-process for small
+parts, out-of-process (isolated, so it can't stall the session) for large ones. A
+shape too big to stitch even there is flagged `mesh_check: "skipped"` with a
+"mesh not verified" warning — it is NOT silently passed, so treat that warning as
+a cue to test-export. `export()` re-checks the written-and-reimported STEP and is
+the final authority; expect the occasional `validate()` PASS → `export()` warning
+on coincident faces, near-tangent joins, or a huge imported B-rep, so test-export
+to a throwaway path before finalizing.
 
 ---
 

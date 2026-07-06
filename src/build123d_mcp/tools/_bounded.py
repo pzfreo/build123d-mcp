@@ -4,8 +4,9 @@ A native OCC analysis — ``BRepCheck`` validity, ``BRepMesh`` tessellation, a b
 on a big B-rep is un-interruptible and can outlast the op timeout; the parent then
 SIGKILLs the whole worker (the same session-destroying class as #357/#358). This
 generalises the bounded-subprocess pattern that ``locate``/``shape_compare`` already
-use into one helper the read-only tools (measure/validate/cross_sections/clearance)
-share instead of copy-pasting.
+use into one helper the read-only tools (measure/cross_sections/clearance) share
+instead of copy-pasting. (``validate`` keeps its B-rep checks in-worker and isolates
+only its mesh stitch, like ``export`` — so it does not use this helper.)
 
 Size-gated: for a small shape the native call is fast and a STEP round-trip would
 dominate, so only shapes at/above ``_FACE_GATE`` faces pay the isolation. On a host
@@ -79,7 +80,7 @@ def run_bounded_shape_op(
 
     ``budget`` is the caller's parent watchdog (seconds); the subprocess is bounded at
     ``budget - _MARGIN_S`` so it's killed before that watchdog SIGKILLs the worker.
-    Defaults to ``op_budget(session)`` (correct for the measure/validate/… TOOLS, whose
+    Defaults to ``op_budget(session)`` (correct for the measure/cross_sections/… TOOLS, whose
     watchdog is ``_export_budget == op_budget``). An in-namespace primitive called inside
     ``execute()`` runs under the SMALLER ``exec_timeout`` watchdog, so it passes that.
     """

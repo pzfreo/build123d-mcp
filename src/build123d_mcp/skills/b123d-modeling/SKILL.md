@@ -163,13 +163,14 @@ high-face-count boolean) still can't fit, drop out of the session for that one o
    A `FAIL` here almost always means the current shape is a leftover 2D sketch,
    an open shell, an un-fused compound (`Part() + ...`), or a degenerate boolean
    result; fix it and re-validate until it passes.
-   `validate()` is a fast in-loop screen: small parts get the exact mesh stitch,
-   but large or expensive shapes may fall back to the fast mesh check so the
-   session does not time out. `export()` runs the slower, stricter pre-export
-   gate with a larger budget and is the authoritative verdict. A rare
-   `validate()` PASS followed by an `export()` warning/failure is expected for
-   coincident faces, near-tangent joins, or large imported B-reps; test-export
-   to a throwaway path before finalizing.
+   `validate()` runs the same exact mesh check as export — in-process for small
+   parts, out-of-process for large ones so it can't stall the session. A shape too
+   big to stitch even there comes back `mesh_check: "skipped"` with a "mesh not
+   verified" warning (not a silent pass) — treat that as a cue to test-export.
+   `export()` re-checks the written STEP and is the authoritative verdict, so an
+   occasional `validate()` PASS → `export()` warning is still expected on
+   coincident faces, near-tangent joins, or a huge imported B-rep; test-export to
+   a throwaway path before finalizing.
 3. `export("part.step", "step", object_name="part")` — STEP for CAD interchange,
    STL for printing. If the project slices with
    [estampo](https://github.com/estampo/estampo) (`estampo.toml` present),

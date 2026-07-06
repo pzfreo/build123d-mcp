@@ -47,6 +47,13 @@ _OPEN_LADDER_MAX_TRIS = 400000
 # mesh defect on a huge part, NEVER to a false FAIL of a valid part.
 _GATE_MESH_BUDGET_S = 35.0
 
+# Headroom under the op budget when validate() runs the mesh gate out-of-process for a
+# large shape: covers the in-worker B-rep checks that already ran + subprocess teardown,
+# so the child is killed before the parent op-watchdog SIGKILLs the worker. Matches
+# export()'s _EXPORT_MESH_MARGIN_S / _EXPORT_MESH_MIN_S — the same gate, same bound.
+_MESH_GATE_MARGIN_S = 15.0
+_MESH_GATE_MIN_S = 10.0
+
 # If the BASE mesh already has more triangles than this AND shows open edges, the
 # part is too complex to refine through the finer ladder rungs within the gate's
 # budget — the finer rungs' (un-interruptible) BRepMesh calls alone would blow it.
@@ -191,10 +198,16 @@ def _gate_report(shape, exact: bool = False, mesh_override: tuple | None = None)
     would fail the gate.
 
     ``exact`` selects the mesh non-manifold check: the default fast coordinate-weld
-    (_mesh_defects, sub-second, used for interactive validate()) or the accurate
-    topology-stitch (_mesh_defects_exact, slower, used at export where shipping an
-    invalid solid actually costs). The exact check is tolerance-free, so it avoids
-    the weld's occasional false positives and false negatives.
+    (_mesh_defects, sub-second, the in-worker validate() fallback) or the accurate
+    topology-stitch (_mesh_defects_exact, slower, used at export and by validate()'s
+    out-of-process mesh gate where shipping an invalid solid actually costs).
+
+    The fast fallback is **structurally blind to open edges** — it only counts
+    non-manifold edges and pins ``mesh_open_edges`` to 0 (#381). So a ``mesh_check ==
+    "fast"`` verdict can never be trusted for the open-edge / non-closure class; the
+    report says so in ``warnings``, and the out-of-process exact check (``export()`` and
+    a large shape's ``validate()``) is the authority. ``mesh_override`` feeds that exact
+    result in; an ``ok=False`` override (or a huge in-worker shape) reports ``"skipped"``.
     """
     from OCP.BRepCheck import BRepCheck_Analyzer
 
@@ -250,7 +263,9 @@ def _gate_report(shape, exact: bool = False, mesh_override: tuple | None = None)
         if not mesh_ok:
             # Exact check over budget / unbuildable — fall back to the fast
             # non-manifold-only check (no open-edge / face-tessellation analysis),
-            # under the SAME deadline.
+            # under the SAME deadline. This in-worker fallback is structurally blind to
+            # open edges (mesh_open_edges stays 0), so the report warns (#381); a large
+            # shape avoids it entirely by running the exact check out-of-process.
             mesh_nm_edges, mesh_ok = _mesh_defects(shape, deadline=_mesh_deadline)
             mesh_open_edges = mesh_untri_faces = mesh_nmv = 0
             mesh_check = "fast" if mesh_ok else "skipped"
@@ -314,6 +329,18 @@ def _gate_report(shape, exact: bool = False, mesh_override: tuple | None = None)
             "mesh-level validity not verified — this shape is too large to tessellate "
             "and stitch within the gate's time budget, so only the B-rep checks ran; a "
             "mesh non-manifold / non-closure defect (if any) would not be caught here"
+        )
+    elif mesh_check == "fast":
+        # The fast coordinate-weld fallback checked non-manifold edges but is
+        # structurally blind to mesh open edges / non-closure (mesh_open_edges is
+        # pinned to 0, not measured) — so this PASS is NOT authoritative for the
+        # open-edge class. Say so, or the agent trusts a verdict the fast check
+        # never made (#381). export() runs the exact check out-of-process.
+        warnings.append(
+            "mesh open-edge / non-closure NOT verified — this shape was too large for "
+            "the exact stitch in-loop, so the fast fallback ran; it catches mesh "
+            "non-manifold edges but CANNOT see open edges (unclosed boundary). export() "
+            "runs the authoritative check — test-export before trusting this PASS"
         )
 
     passes = (
@@ -967,22 +994,10 @@ def validate(session, object_name: str = "") -> str:
     a STEP/STL export of this shape would be rejected by a CAD scorer (and score
     zero), so fix it before exporting.
     """
-    from build123d_mcp.tools._bounded import run_bounded_shape_op
-
     shape, err = _resolve_shape(session, object_name)
     if err is not None:
         return err
-    return run_bounded_shape_op(
-        session,
-        "validate",
-        {"": shape},
-        {},
-        in_process=lambda: _validate_report(shape),
-    )
-
-
-def _validate_report(shape) -> str:
-    report = _gate_report(shape)
+    report = _validate_gate(session, shape)
     verdict = "PASS" if report["passes_gate"] else "FAIL"
     summary = f"Validity gate: {verdict}"
     if report["reasons"]:
@@ -990,3 +1005,66 @@ def _validate_report(shape) -> str:
     if report["warnings"]:
         summary += " (warning: " + "; ".join(report["warnings"]) + ")"
     return summary + "\n" + json.dumps(report, indent=2)
+
+
+def _validate_gate(session, shape) -> dict:
+    """Gate the shape, isolating the expensive mesh check exactly as ``export()`` does.
+
+    The B-rep checks (BRepCheck, edge→face map) are cheap and run in-worker. The mesh
+    stitch is the un-interruptible native cost that a huge B-rep can drag past the op
+    timeout (#360), so for a large shape it runs in the same hard-bounded subprocess
+    ``export()`` uses (``_run_mesh_gate_subprocess``) — the exact check there catches the
+    mesh open edges the old in-loop fast fallback was structurally blind to (#381). If
+    that subprocess can't finish (timeout / no-subprocess host), the mesh result is
+    reported ``"skipped"`` with a warning while the in-worker B-rep verdict stands — a
+    subprocess kill can never lose the verdict, because the verdict was never in the
+    subprocess. A small shape keeps the fast in-worker exact check (a STEP round-trip
+    would dominate); if that overruns its inline budget it degrades to the fast fallback,
+    which is likewise flagged mesh-open-edge-unverified.
+    """
+    from build123d_mcp.tools._bounded import _is_large
+
+    if not _is_large([shape]):
+        return _gate_report(shape)
+    mesh = _mesh_gate_out_of_process(session, shape)
+    return _gate_report(
+        shape, exact=True, mesh_override=mesh if mesh is not None else (0, 0, 0, 0, False)
+    )
+
+
+def _mesh_gate_out_of_process(session, shape):
+    """Serialise the shape to a temp STEP and run the exact mesh gate in the same
+    hard-bounded subprocess ``export()`` uses. Returns the mesh tuple
+    ``(nm, open, untri, nmv, ok)``, or ``None`` (→ ``"skipped"``) if it timed out, the
+    host blocks child processes, or the shape couldn't be serialised — in every case the
+    caller keeps the in-worker B-rep verdict rather than inventing a mesh result."""
+    import os
+    import tempfile
+
+    from build123d_mcp.tools._budget import op_budget
+    from build123d_mcp.tools.export import _write_step
+
+    t0 = time.monotonic()
+    work = tempfile.mkdtemp(prefix="b123d_validate_")
+    step = os.path.join(work, "s.step")
+    try:
+        try:
+            _write_step(shape, step)
+        except Exception:  # noqa: BLE001 - unserialisable → skip mesh; B-rep still runs
+            return None
+        # Bound the child by the op budget LEFT (minus a margin for the in-worker B-rep
+        # checks + subprocess teardown), so it is always killed before the parent op
+        # watchdog SIGKILLs the worker — the export() convention.
+        remaining = op_budget(session) - (time.monotonic() - t0) - _MESH_GATE_MARGIN_S
+        if remaining < _MESH_GATE_MIN_S:
+            return None
+        return _run_mesh_gate_subprocess(step, timeout=remaining)
+    finally:
+        try:
+            os.unlink(step)
+        except OSError:
+            pass
+        try:
+            os.rmdir(work)
+        except OSError:
+            pass
