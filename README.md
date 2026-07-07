@@ -21,6 +21,22 @@ On the public [CADGenBench](https://huggingface.co/spaces/HuggingAI4Engineering/
 leaderboard in June 2026, using build123d-mcp raised the same model's score from
 0.360 to 0.457 and CAD validity from 88% to 100%.
 
+## Pick Your Setup
+
+Most users should start with the local MCP server setup:
+
+- You use Claude, Cursor, VS Code, Continue, Cline, or Codex CLI on your own
+  machine.
+- Your AI app starts `build123d-mcp` as a local subprocess.
+- You do not need to clone this repository.
+
+Use GitHub Codespaces instead if you want a browser-only trial or a ready-made
+development workspace with Copilot Chat, Python, uv, and the CAD dependencies
+already installed.
+
+Use HTTP mode only for advanced deployments where you are hosting the MCP server
+yourself.
+
 ## Quick Start
 
 You need:
@@ -36,7 +52,12 @@ start:
 uv tool run --python 3.12 build123d-mcp@latest --version
 ```
 
-Then add the same command to your AI app's MCP config.
+Then add the same command to your AI app's MCP config. The common pieces are:
+
+```text
+command: uv
+args:    ["tool", "run", "--python", "3.12", "build123d-mcp@latest"]
+```
 
 > Python 3.11, 3.12, 3.13, and 3.14 are supported. The examples use 3.12 because
 > it is a conservative default, and uv can download it if you do not already
@@ -44,7 +65,7 @@ Then add the same command to your AI app's MCP config.
 
 ## Connect To Your AI App
 
-The beginner setup is LLM app + MCP + build123d-mcp:
+The pieces are:
 
 - The LLM app is where you chat with the assistant.
 - MCP is the connection that lets the assistant call tools.
@@ -108,7 +129,8 @@ Open **Settings -> MCP** and add a new server entry, or edit
 ### VS Code, Continue, Cline, Codex CLI
 
 Use the same command and arguments in whichever MCP config your AI app or
-extension reads:
+extension reads. The exact filename varies by app, but the server command is the
+same:
 
 ```text
 command: uv
@@ -150,6 +172,14 @@ The useful loop is:
 
 If something goes wrong, ask the assistant to inspect `last_error`, repair the
 script, and try the next smaller step.
+
+Good prompts usually ask the assistant to use the MCP tools explicitly and to
+verify the result before exporting. For example:
+
+```text
+Use build123d-mcp. Build this incrementally, render after the main features,
+measure the final dimensions, run validate(), and export STEP if it passes.
+```
 
 ## Try It In GitHub Codespaces With Copilot
 
@@ -242,8 +272,11 @@ For the complete tool and resource reference, see [llms.md](llms.md).
 ## Guidance For Assistants
 
 The server includes workflow guidance that helps assistants use the CAD loop
-properly. After connecting the server, ask your assistant to install the relevant
-guidance into your project:
+properly. This is especially useful in coding agents that read project guidance
+files.
+
+After connecting the server, ask your assistant to call `install_skill` for the
+workflow you need:
 
 ```text
 install_skill(target="agents-md", skill="modeling")
@@ -252,6 +285,8 @@ install_skill(target="agents-md", skill="repair")
 ```
 
 `install_skill` also supports `target="claude"`, `"cursor"`, and `"windsurf"`.
+Use `skill="modeling"` for 3D parts, `skill="drawing"` for engineering drawings,
+and `skill="repair"` when a solid fails validation.
 
 You can also paste [default_prompt.md](default_prompt.md) into your AI app as a
 system prompt.
