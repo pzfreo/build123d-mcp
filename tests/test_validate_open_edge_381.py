@@ -78,7 +78,7 @@ def test_large_shape_runs_mesh_check_out_of_process(monkeypatch):
 
     def _fake_subproc(step_path, timeout):
         calls["n"] += 1
-        return (0, 0, 0, 0, True)  # clean mesh, determined
+        return (0, 0, 0, 0, 0, True)  # clean mesh, determined
 
     monkeypatch.setattr(v, "_run_mesh_gate_subprocess", _fake_subproc)
     out = validate(_StubSession(current=Box(10, 10, 10)))

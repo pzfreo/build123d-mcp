@@ -379,8 +379,8 @@ def test_mesh_defects_exact_no_false_nm_vertex_on_clean_solids():
     # The vertex check runs on a coordinate-welded mesh, so poles/seams of a
     # sphere must not register as pinches (#298 regression guard).
     for shape in (Box(10, 10, 10), Sphere(8)):
-        nm_e, open_e, untri, nmv, ok = _mesh_defects_exact(shape)
-        assert ok and nmv == 0
+        nm_e, open_e, untri, nmv, vdefl, ok = _mesh_defects_exact(shape)
+        assert ok and nmv == 0 and vdefl == 0
 
 
 # --- out-of-process mesh gate (export retry for parts too large to mesh in-budget) ---
@@ -393,8 +393,9 @@ def test_mesh_gate_subprocess_valid_step(tmp_path):
 
     p = tmp_path / "box.step"
     export_step(Box(10, 10, 10), str(p))
-    # A clean solid: 0 nm-edge, 0 open, 0 untriangulated, 0 nm-vertex, ok=True.
-    assert _run_mesh_gate_subprocess(str(p), timeout=120) == (0, 0, 0, 0, True)
+    # A clean solid: 0 nm-edge, 0 open, 0 untriangulated, 0 nm-vertex, 0
+    # vertex-deflection defects, ok=True.
+    assert _run_mesh_gate_subprocess(str(p), timeout=120) == (0, 0, 0, 0, 0, True)
 
 
 def test_mesh_gate_subprocess_timeout_returns_none(tmp_path):

@@ -42,12 +42,21 @@ def main() -> None:
         # deadline=inf: no in-process time bail — the parent's subprocess timeout
         # bounds us, so the triangle ceiling can be much higher than the in-worker
         # checks' (#381) — it's a memory/sanity backstop here, not a time proxy.
-        nm, open_edges, untri, nmv, ok = _mesh_defects_exact(
+        nm, open_edges, untri, nmv, vdefl, ok = _mesh_defects_exact(
             shape, max_triangles=_EXACT_ISOLATED_MAX_TRIS, deadline=float("inf")
         )
         print(
             _MARKER
-            + json.dumps({"nm": nm, "open": open_edges, "untri": untri, "nmv": nmv, "ok": ok})
+            + json.dumps(
+                {
+                    "nm": nm,
+                    "open": open_edges,
+                    "untri": untri,
+                    "nmv": nmv,
+                    "vdefl": vdefl,
+                    "ok": ok,
+                }
+            )
         )
     except Exception as exc:  # noqa: BLE001 — report and exit cleanly
         print(_MARKER + json.dumps({"error": f"{type(exc).__name__}: {exc}"}))

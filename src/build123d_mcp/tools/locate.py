@@ -49,10 +49,15 @@ def locate_gate_defects(session, object_name: str = "") -> str:
     ``open_edge`` / ``nonmanifold_edge`` (B-rep edge midpoint), ``mesh_open_edge``
     (an unclosed tessellated boundary — approximate, from a coordinate weld rather
     than the gate's own exact topology-stitched check; re-check with the export
-    gate after a fix), and the mesh self-touches a CAD scorer rejects —
+    gate after a fix), the mesh self-touches a CAD scorer rejects —
     ``mesh_nonmanifold_edge`` and ``mesh_nonmanifold_vertex`` (corner-to-corner
-    touch). Empty list means the part passes the structural checks. object_name:
-    named object from show() (default: current shape).
+    touch) — and ``mesh_vertex_deflection_defect`` (a tessellated edge endpoint
+    that misses its BREP vertex by more than the mesh deflection — a
+    patched/healed face whose boundary is topologically closed but
+    geometrically off-vertex; BRepCheck and a coordinate weld both miss this,
+    but a CAD scorer's own mesh sanity check does not). Empty list means the
+    part passes the structural checks. object_name: named object from show()
+    (default: current shape).
     """
     t0 = time.monotonic()
     shape, err = _resolve_shape(session, object_name)

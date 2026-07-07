@@ -231,6 +231,103 @@ def _mesh_nonmanifold_vertices(welded, coord) -> list:
     return out
 
 
+def _mesh_vertex_deflection_defects(shape) -> list:
+    """BREP vertices where a tessellated edge-polygon endpoint misses the vertex's
+    analytic position by more than the mesh deflection (``mesh_vertex_deflection_defects``
+    in the gate report), with the vertex's own coordinates.
+
+    Unlike the other mesh checks here, this is NOT a coordinate weld — welding would
+    hide exactly this defect by merging the mismatched points, the same way the gate's
+    old vertex-merge code silently unioned them. It walks each edge's per-face
+    ``PolygonOnTriangulation`` (the true topology-stitch data) and checks its first/last
+    node against ``TopExp.FirstVertex_s``/``LastVertex_s`` directly — the same guard
+    ``_mesh_defects_exact`` runs, and the same check CADGenBench's own mesh sanity
+    validator uses. A patched/healed face (a sliver sew, a tolerance-fudged patch) whose
+    boundary is topologically closed but geometrically off-vertex reads as fine to a
+    coordinate-weld check and to BRepCheck, yet fails a CAD scorer's own mesh gate."""
+    import math
+
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_VERTEX
+    from OCP.TopExp import TopExp
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.TopoDS import TopoDS
+    from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape, TopTools_IndexedMapOfShape
+
+    occ = shape.wrapped
+    bb = shape.bounding_box()
+    diag = math.dist((bb.min.X, bb.min.Y, bb.min.Z), (bb.max.X, bb.max.Y, bb.max.Z))
+    if diag <= 0:
+        return []
+    deflection = min(0.5, max(0.005, diag * 1e-3))
+    BRepMesh_IncrementalMesh(occ, deflection, False, 0.5, True)
+
+    faces = TopTools_IndexedMapOfShape()
+    TopExp.MapShapes_s(occ, TopAbs_FACE, faces)
+    face_tri = {}
+    for fi in range(1, faces.Size() + 1):
+        face = TopoDS.Face_s(faces.FindKey(fi))
+        loc = TopLoc_Location()
+        tri = BRep_Tool.Triangulation_s(face, loc)
+        if tri is not None:
+            face_tri[fi] = (tri, loc)
+    if not face_tri:
+        return []
+
+    vmap = TopTools_IndexedMapOfShape()
+    TopExp.MapShapes_s(occ, TopAbs_VERTEX, vmap)
+    edge_faces = TopTools_IndexedDataMapOfShapeListOfShape()
+    TopExp.MapShapesAndAncestors_s(occ, TopAbs_EDGE, TopAbs_FACE, edge_faces)
+
+    vertex_nodes: dict = {}  # vertex index -> list of (x, y, z) world points
+    for ei in range(1, edge_faces.Extent() + 1):
+        edge = TopoDS.Edge_s(edge_faces.FindKey(ei))
+        v_first = vmap.FindIndex(TopExp.FirstVertex_s(edge))
+        v_last = vmap.FindIndex(TopExp.LastVertex_s(edge))
+        if not v_first and not v_last:
+            continue
+        for adj_face in edge_faces.FindFromIndex(ei):
+            fi = faces.FindIndex(adj_face)
+            if fi not in face_tri:
+                continue
+            tri, loc = face_tri[fi]
+            poly = BRep_Tool.PolygonOnTriangulation_s(edge, tri, loc)
+            if poly is None:
+                continue
+            nodes = list(poly.Nodes())
+            if len(nodes) < 1:
+                continue
+            trsf = loc.Transformation()
+            if v_first:
+                p = tri.Node(nodes[0]).Transformed(trsf)
+                vertex_nodes.setdefault(v_first, []).append((p.X(), p.Y(), p.Z()))
+            if v_last:
+                p = tri.Node(nodes[-1]).Transformed(trsf)
+                vertex_nodes.setdefault(v_last, []).append((p.X(), p.Y(), p.Z()))
+
+    out = []
+    for vi, pts in vertex_nodes.items():
+        vp = BRep_Tool.Pnt_s(TopoDS.Vertex_s(vmap.FindKey(vi)))
+        vx, vy, vz = vp.X(), vp.Y(), vp.Z()
+        worst = max(math.dist(p, (vx, vy, vz)) for p in pts)
+        if worst > deflection:
+            out.append(
+                {
+                    "kind": "mesh_vertex_deflection_defect",
+                    "where": [round(vx, 3), round(vy, 3), round(vz, 3)],
+                    "max_deviation_mm": round(worst, 4),
+                    "hint": (
+                        "a tessellated edge endpoint here misses this BREP vertex by "
+                        f"{worst:.3g}mm (> deflection {deflection:.3g}mm) — a patched/healed "
+                        "face's boundary is topologically closed but geometrically off-vertex; "
+                        "re-patch or re-sew this face at a tighter tolerance"
+                    ),
+                }
+            )
+    return out
+
+
 def collect_defects(shape) -> list:
     """Run every locator on a build123d shape and return the defect list.
 
@@ -254,6 +351,10 @@ def collect_defects(shape) -> list:
         defects += _mesh_open_edges(welded, coord)
         defects += _mesh_nonmanifold_edges(welded, coord)
         defects += _mesh_nonmanifold_vertices(welded, coord)
+    except Exception as exc:  # noqa: BLE001
+        defects.append({"kind": "locator_error", "detail": repr(exc)[:200]})
+    try:
+        defects += _mesh_vertex_deflection_defects(shape)
     except Exception as exc:  # noqa: BLE001
         defects.append({"kind": "locator_error", "detail": repr(exc)[:200]})
     return defects
