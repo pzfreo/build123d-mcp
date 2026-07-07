@@ -394,9 +394,10 @@ fraction of a millimetre off its own BREP vertex, so it reads as closed to
 BRepCheck and even to the open-edge count, yet a CAD scorer's own mesh sanity
 check still rejects it. `locate_gate_defects()` gives the vertex's exact
 coordinates. Do not drop this face — the mismatch is a patch-quality problem,
-not an unmeshable one: re-patch (rung 4 option 2 or 3) or re-sew (option 4/5)
-that exact face at a tighter tolerance than whatever repair left it in this
-state, then re-verify with the export gate.
+not an unmeshable one (option 4's drop-and-sew is the wrong tool here): re-patch
+(rung 4 option 2 or 3) or re-sew at small tolerance (option 5) that exact face
+at a tighter tolerance than whatever repair left it in this state, then
+re-verify with the export gate.
 
 ---
 

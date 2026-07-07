@@ -459,6 +459,68 @@ def test_mesh_defects_exact_open_ladder_catches_vertex_deflection_too(monkeypatc
     assert vdefl == 1  # only reachable via the ladder's own guard at this magnitude
 
 
+def test_mesh_defects_exact_counts_multiple_ladder_only_vertices(monkeypatch):
+    """A regression guard on an adversarial-review finding: the ladder's own
+    vertex-deflection finding used to be folded into the base pass's count via
+    `max(vertex_defl_defects, 1) if _ov_vdefl else vertex_defl_defects` — a
+    boolean OR laundered into "at least 1", which silently capped the reported
+    total at 1 no matter how many DISTINCT vertices the ladder alone found.
+    This displaces TWO different vertices (both under the base deflection, both
+    only visible at the ladder's refined rung, same setup as the test above) and
+    requires the count to actually be 2, not 1 — proving the fix now unions by
+    each vertex's own world-space position rather than OR-ing a flag."""
+    from build123d import Box, Shell
+    from OCP.BRep import BRep_Tool
+    from OCP.gp import gp_Pnt
+
+    from build123d_mcp.tools.validate import _mesh_defects_exact
+
+    shell = Shell(Box(10, 10, 10).faces()[:5])
+    verts = shell.vertices()
+    target1 = verts[0].wrapped
+    target2 = verts[1].wrapped
+    orig_pnt_s = BRep_Tool.Pnt_s
+
+    def _lying_pnt_s(v):
+        p = orig_pnt_s(v)
+        if v.IsSame(target1) or v.IsSame(target2):
+            return gp_Pnt(p.X() + 0.01, p.Y(), p.Z())
+        return p
+
+    monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
+    nm_e, open_e, untri, nmv, vdefl, ok = _mesh_defects_exact(shell)
+    assert ok
+    assert open_e == 4
+    assert vdefl == 2  # both distinct vertices counted, not capped at 1
+
+
+def test_mesh_defects_exact_no_double_count_when_base_and_ladder_agree(monkeypatch):
+    """The flip side of the regression above: when the SAME vertex is large
+    enough to be caught by both the base pass and the (forced-to-run) ladder,
+    the union-by-world-position must dedupe it to 1, not double-count it to 2."""
+    from build123d import Box, Shell
+    from OCP.BRep import BRep_Tool
+    from OCP.gp import gp_Pnt
+
+    from build123d_mcp.tools.validate import _mesh_defects_exact
+
+    shell = Shell(Box(10, 10, 10).faces()[:5])
+    target = shell.vertices()[0].wrapped
+    orig_pnt_s = BRep_Tool.Pnt_s
+
+    def _lying_pnt_s(v):
+        p = orig_pnt_s(v)
+        if v.IsSame(target):
+            return gp_Pnt(p.X() + 1.0, p.Y(), p.Z())  # well over the base deflection too
+        return p
+
+    monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
+    nm_e, open_e, untri, nmv, vdefl, ok = _mesh_defects_exact(shell)
+    assert ok
+    assert open_e == 4
+    assert vdefl == 1  # same vertex found twice (base + ladder), deduped to 1
+
+
 # --- out-of-process mesh gate (export retry for parts too large to mesh in-budget) ---
 
 
