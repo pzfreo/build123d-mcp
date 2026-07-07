@@ -27,6 +27,13 @@ Do not apply repairs blind. First identify the defect class and its location.
    - `mesh open edge(s)` / `mesh non-manifold` / `face(s) failed to
      tessellate` **with `brep_valid: true`** → a mesh-only defect (a
      ~zero-area unmeshable face, or a self-touch) — rung 5.
+   - `vertex(es) where a tessellated edge endpoint misses its BREP vertex`
+     **with `brep_valid: true`** → a mesh-only defect too, but a different
+     one from the two above: a previously-patched/healed face's boundary is
+     topologically closed (so BRepCheck and even `mesh open edge(s)` can both
+     read clean) but geometrically off-vertex by a fraction of a millimetre —
+     rung 5, using its re-patch-at-tighter-tolerance variant, not the
+     drop-and-sew one.
 2. **Get coordinates.** `locate_gate_defects()` returns the failing edge/face's
    3D position and B-rep identity — repair that exact spot, never chase the
    defect blind.
@@ -379,6 +386,17 @@ that face (plus any adjacent unorientable sliver), sew, and `ShapeFix_Solid`
 to orient — rung 4's mechanics, triggered by the mesh reasons instead of
 BRepCheck. A zero-area *torus* remnant that fails only the export gate heals
 the same way.
+
+A **vertex-deflection** failure is a different mesh-only case: the offending
+face is not unmeshable, it's *mispatched* — a prior repair (a sliver sew, a
+tolerance-fudged patch) left its boundary topologically closed but landing a
+fraction of a millimetre off its own BREP vertex, so it reads as closed to
+BRepCheck and even to the open-edge count, yet a CAD scorer's own mesh sanity
+check still rejects it. `locate_gate_defects()` gives the vertex's exact
+coordinates. Do not drop this face — the mismatch is a patch-quality problem,
+not an unmeshable one: re-patch (rung 4 option 2 or 3) or re-sew (option 4/5)
+that exact face at a tighter tolerance than whatever repair left it in this
+state, then re-verify with the export gate.
 
 ---
 

@@ -383,6 +383,82 @@ def test_mesh_defects_exact_no_false_nm_vertex_on_clean_solids():
         assert ok and nmv == 0 and vdefl == 0
 
 
+def test_mesh_defects_exact_detects_vertex_deflection(monkeypatch):
+    """A genuinely off-vertex tessellated node — the #397 field bug (a healed
+    patch's polygon endpoint missing its BREP vertex by a fraction of a mm) —
+    must be reported, not silently welded shut. Real malformed geometry that
+    reproduces this class of defect is a repair-patch artifact, not something
+    a synthetic construction (a hand-built B-rep, or a coordinate-perturbed
+    triangulation) reliably reproduces: sewing two faces with mismatched
+    boundaries heals the mismatch geometrically instead of leaving it raw, and
+    hand-editing a triangulation node is silently discarded the next time
+    BRepMesh_IncrementalMesh runs (which _mesh_defects_exact always does, at
+    the top of every call). So this drives the exact code path the real bug
+    hit — the comparison against BRep_Tool.Pnt_s inside the vertex-merge guard
+    — by making that one lookup lie about a single named vertex's true
+    position, on an otherwise completely clean, valid Box. Confirmed against
+    the real field case (#397 CHANGELOG) this fires correctly: same shape of
+    result, ok=True, only the targeted vertex counted."""
+    from build123d import Box
+    from OCP.BRep import BRep_Tool
+    from OCP.gp import gp_Pnt
+
+    from build123d_mcp.tools.validate import _mesh_defects_exact
+
+    box = Box(10, 10, 10)
+    target = box.vertices()[0].wrapped
+    orig_pnt_s = BRep_Tool.Pnt_s
+
+    def _lying_pnt_s(v):
+        p = orig_pnt_s(v)
+        if v.IsSame(target):
+            return gp_Pnt(p.X() + 1.0, p.Y() + 1.0, p.Z() + 1.0)
+        return p
+
+    monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
+    nm_e, open_e, untri, nmv, vdefl, ok = _mesh_defects_exact(box)
+    assert ok
+    assert vdefl == 1
+    assert nm_e == 0 and untri == 0 and nmv == 0
+
+
+def test_mesh_defects_exact_open_ladder_catches_vertex_deflection_too(monkeypatch):
+    """The base-deflection vertex-merge guard above and the open-edge ladder's
+    OWN, separate vertex-merge (_open_pass, run only when the shape is genuinely
+    open at the base rung and must escalate to a finer one) are two independent
+    union-find passes over two independently-built node arrays — fixing one does
+    not fix the other. This isolates the ladder's copy specifically: a Shell
+    missing one face is genuinely open (forces escalation to deflection/4), and
+    the lied-about vertex is displaced by 0.01mm — under the base deflection
+    (~0.0173mm for this 10mm box, so the ALREADY-guarded base pass does not flag
+    it) but over the first refined rung (~0.00433mm), so only the ladder's own
+    guard can catch it. If _open_pass's guard were missing (as it originally
+    was), this would come back vdefl=0 despite a real off-vertex node — the
+    open-edge count alone (open=4, the missing face's rim) would not surface it
+    either, since the union always proceeds regardless of the guard."""
+    from build123d import Box, Shell
+    from OCP.BRep import BRep_Tool
+    from OCP.gp import gp_Pnt
+
+    from build123d_mcp.tools.validate import _mesh_defects_exact
+
+    shell = Shell(Box(10, 10, 10).faces()[:5])
+    target = shell.vertices()[0].wrapped
+    orig_pnt_s = BRep_Tool.Pnt_s
+
+    def _lying_pnt_s(v):
+        p = orig_pnt_s(v)
+        if v.IsSame(target):
+            return gp_Pnt(p.X() + 0.01, p.Y(), p.Z())
+        return p
+
+    monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
+    nm_e, open_e, untri, nmv, vdefl, ok = _mesh_defects_exact(shell)
+    assert ok
+    assert open_e == 4  # the missing face's 4 rim edges — unaffected by the guard
+    assert vdefl == 1  # only reachable via the ladder's own guard at this magnitude
+
+
 # --- out-of-process mesh gate (export retry for parts too large to mesh in-budget) ---
 
 

@@ -55,6 +55,45 @@ def test_locate_mesh_open_edge_with_coordinates(session):
     assert all(len(d["where"]) == 3 for d in op)
 
 
+def test_mesh_vertex_deflection_defect_with_coordinates(monkeypatch):
+    """#397's field bug: a healed patch's tessellated edge endpoint misses its own
+    BREP vertex by a fraction of a millimetre, silently welded shut instead of
+    reported. Real malformed geometry that reproduces this is a repair-patch
+    artifact — sewing two faces with a mismatched boundary heals the mismatch
+    geometrically rather than leaving it raw, and hand-editing a triangulation node
+    is discarded the next time BRepMesh_IncrementalMesh runs (which this check
+    always does) — so this drives the exact code path the real bug hit (the
+    BRep_Tool.Pnt_s lookup inside the vertex-merge guard) directly, on an otherwise
+    clean Box, matching the same technique used for the gate-side equivalent in
+    test_validate.py::test_mesh_defects_exact_detects_vertex_deflection. Calls the
+    locator's internal function directly rather than through locate_gate_defects()
+    (which runs in a subprocess a test-time monkeypatch can't reach), the same way
+    test_validate.py's _mesh_defects_exact tests already do for the gate."""
+    from build123d import Box
+    from OCP.BRep import BRep_Tool
+    from OCP.gp import gp_Pnt
+
+    from build123d_mcp._locate_subprocess import _mesh_vertex_deflection_defects
+
+    box = Box(10, 10, 10)
+    target = box.vertices()[0].wrapped
+    orig_pnt_s = BRep_Tool.Pnt_s
+
+    def _lying_pnt_s(v):
+        p = orig_pnt_s(v)
+        if v.IsSame(target):
+            return gp_Pnt(p.X() + 1.0, p.Y() + 1.0, p.Z() + 1.0)
+        return p
+
+    monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
+    defects = _mesh_vertex_deflection_defects(box)
+    assert len(defects) == 1, defects
+    d = defects[0]
+    assert d["kind"] == "mesh_vertex_deflection_defect"
+    assert len(d["where"]) == 3
+    assert d["max_deviation_mm"] == pytest.approx(1.0, abs=0.05)
+
+
 def test_locate_falls_back_in_process_when_subprocess_blocked(session, monkeypatch):
     """On a host that blocks child processes (#143 / InProcessSession), subprocess.run
     raises OSError — the tool must still locate defects in-process, not break."""
