@@ -43,6 +43,7 @@ def test_read_only_query_tools_are_marked_read_only():
         "search_library",
         "last_error",
         "repair_hints",
+        "repair_advice",
         "version",
         "workflow_hints",
         "health_check",

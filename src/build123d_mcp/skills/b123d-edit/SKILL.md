@@ -42,8 +42,11 @@ Classify the edit before changing code:
 - **Assembly/edit-in-context**: move or resize one part relative to another.
   Use `clearance()`, `align_check()`, and named objects to verify fit.
 - **Validity edit**: change construction so the output remains manifold.
-  Use `validate()`, `locate_gate_defects()`, and the repair skill only for
-  diagnostics and patterns.
+  Use `validate()`, `locate_gate_defects()`, `repair_advice()`, and the repair
+  skill only for diagnostics and patterns. `repair_advice()` is especially
+  useful when the intended edit is generic but topology-sensitive, such as
+  extending a bored boss, moving an annular shoulder, or fixing an
+  export-roundtrip sliver after a boolean.
 
 If the requested edit is ambiguous, ask for the missing design intent before
 guessing: which face, which hole pattern, which mating clearance, or which
@@ -130,6 +133,10 @@ Then choose the evidence that matches the edit:
 
 `export()` is the final gate because it checks the written and re-imported STEP.
 A `validate()` pass in memory is useful but not the final acceptance proof.
+If the edited shape fails this gate, call `repair_advice(error_text=..., goal=...)`
+before improvising OCP surgery. Use the returned recipe as a checklist for a
+visible `execute()` implementation, not as permission to make an opaque B-rep
+mutation.
 
 ## Step 5 - Keep Regression Evidence
 
@@ -188,6 +195,23 @@ Verify with `clearance(shaft, bore_part)` or a measured section.
 Prefer removing the feature's construction block over adding material back with
 a compensating boolean. If you must patch a removed cut, prove the final face and
 volume match the intended design, then export-gate the result.
+
+### Topology-Sensitive Edits
+
+For edits that often create open shells, duplicate internal faces, or disjoint
+solids, ask the MCP for a recipe before trying variants:
+
+```text
+repair_advice(
+  error_text="<validate/export failure text>",
+  goal="extend the square boss with rounded corners and central bore by 10mm",
+  context="<locate_gate_defects or shape_compare notes>"
+)
+```
+
+Typical matches include split bored-boss extension, export-roundtrip sliver
+cleanup, mesh-fragile face repatching, and self-touch boolean redesign. The
+result should guide explicit build123d/OCP code in `execute()`.
 
 ### Preserve Editability
 

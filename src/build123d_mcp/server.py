@@ -630,6 +630,14 @@ def repair_hints(error_text: str) -> str:
 
 
 @mcp.tool(annotations=_READ_ONLY)
+def repair_advice(error_text: str = "", goal: str = "", context: str = "") -> str:
+    """Return structured, field-proven repair/edit recipes for an agent to implement explicitly in execute(). Unlike repair_hints(), which gives short error-specific tips, this emits a sequenced plan with code-pattern names, acceptance checks, and stop conditions. Provide the full validate()/export()/last_error() text as error_text, the intended edit as goal, and any extra notes from locate_gate_defects()/shape_compare() as context. The tool is read-only and does not mutate geometry."""
+    from build123d_mcp.tools.repair_advice import repair_advice as _repair_advice
+
+    return _repair_advice(error_text=error_text, goal=goal, context=context)
+
+
+@mcp.tool(annotations=_READ_ONLY)
 def last_error() -> str:
     """Return details of the last failed execute() call: exception type, message, and (for runtime and syntax errors) line number and a 5-line excerpt around the failing line. Security errors include a message but no line/excerpt. Returns {\"error\": null} if the last execute() succeeded or no execute() has failed yet. Call this immediately after an execute() error to get the exact failing line — much faster than re-reading the submitted code."""
     return _resolve_session().last_error()

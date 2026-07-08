@@ -17,6 +17,8 @@ answering:
 - `validate()` / `export()` — is the current or written shape structurally
   acceptable?
 - `locate_gate_defects()` — where is the failing face, edge, or mesh defect?
+- `repair_advice()` — which field-proven, generic repair/edit recipe fits this
+  defect and requested goal, with acceptance checks and stop conditions?
 - this repair skill — which generic repair pattern fits that defect class?
 
 The geometry-changing repair itself should be explicit code in `execute()`,
@@ -60,6 +62,10 @@ Do not apply repairs blind. First identify the defect class and its location.
    `diagnostic_classes`, and `repair_families` tell you which rung to try first,
    while each defect's `next_step` says what explicit `execute()` repair to
    write and reminds you to verify the written STEP with `export()`.
+   If the defect belongs to a known hard pattern, call `repair_advice()` with the
+   gate output as `error_text`, the requested edit as `goal`, and the defect
+   coordinates as `context`. Use the returned recipe as a checklist for your own
+   `execute()` code; do not treat it as a geometry-mutating tool.
 3. **Localize the face** when BRepCheck is the failure — build ONE analyzer
    over the whole solid, not one per face (`locate_gate_defects()` itself
    runs out-of-process specifically because per-face BRepCheck work "can run

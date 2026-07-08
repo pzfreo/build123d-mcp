@@ -144,7 +144,10 @@ For additive edits, avoid exactly coincident faces: they often do not fuse into 
 clean solid. Interpenetrate slightly, bury the added feature into the base, or
 extend-and-trim with one planar cut. For imported solids, prefer targeted solid
 repair over broad shape healing; global healing can reorient faces or collapse
-volume.
+volume. When a validity/export failure has a recognizable topology pattern,
+call `repair_advice(error_text=..., goal=..., context=...)` before writing the
+repair code. It returns generic recipes and stop conditions for the agent to
+implement explicitly in `execute()`, rather than silently mutating the B-rep.
 
 **Extending a boss, or relocating any planar/annular face along its own normal
 (raising a bore's counterbore opening, moving a shoulder) is a common instance
@@ -160,6 +163,13 @@ primitive — a face extruded from the part's own boundary shares the exact
 underlying geometry, so a follow-up fuse dissolves it cleanly where a
 coincidentally-matching new primitive would not, even when it's positioned to
 match exactly:
+
+If the boss/annular edit still fails, pass the gate text and edit goal to
+`repair_advice()`. The `split_bored_boss_extension` and
+`export_roundtrip_sliver_cleanup` recipes capture the safer fallback: measure
+the true feature axis, build an explicit full-profile extension, recut the bore
+continuously, then remove only near-zero old-plane slivers if the written STEP
+roundtrip exposes them.
 
 - **One-sided** (extend/relocate toward a target on one end only — the more
   common case): `BRepFeat_MakePrism` turns the face into a prism *feature*
