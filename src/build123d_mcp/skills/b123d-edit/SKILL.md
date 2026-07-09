@@ -23,17 +23,21 @@ Before editing, capture what exists.
    print(measure(part))
    ```
 
-5. Run the MCP `validate()` tool on the registered baseline, then export the
-   unchanged baseline to a throwaway STEP and read the export gate result. This
-   written STEP gate is the blocking baseline proof: downstream CAD consumers
-   see the exported artifact, not the live session shape.
-6. If the baseline fails either `validate()` or the throwaway export gate, stop
+5. Run the MCP `validate()` tool on the registered baseline. For tasks whose
+   deliverable is an exported solid, or where downstream CAD consumers will read
+   a STEP/STL/BREP file, also export the unchanged baseline to a safe throwaway
+   path such as `_baseline_gate.step` and read the export gate result. The
+   throwaway baseline gate must never use the final deliverable path, such as
+   `output.step`. For script-only work, a successful rebuild plus `validate()`
+   is the baseline proof unless the task later requires a file export.
+6. If the baseline fails the relevant proof (`validate()` for script-only work;
+   `validate()` plus the throwaway export gate for exported-solid work), stop
    and switch to `build123d://skill/repair`. Until a repaired baseline passes
-   the written STEP export gate, the only geometry-changing operations allowed
-   are minimal baseline fixups. Do not move, cut, extend, remove, or replace the
-   requested target feature while the baseline is still invalid. Do not combine
-   a feature edit with geometry repair unless the requested edit is the repair.
-7. After the baseline passes the written export gate, save a snapshot such as
+   that same proof, the only geometry-changing operations allowed are minimal
+   baseline fixups. Do not move, cut, extend, remove, or replace the requested
+   target feature while the baseline is still invalid. Do not combine a feature
+   edit with geometry repair unless the requested edit is the repair.
+7. After the baseline passes the relevant proof, save a snapshot such as
    `save_snapshot("valid_baseline")`. Only then begin the requested feature or
    parameter edit.
 
