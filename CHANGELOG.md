@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **MCP comparison calls are now one `compare()` tool.** External prompt authors should replace standalone MCP tool calls to `clearance`, `align_check`, `shape_compare`, and `diff_snapshot` with `compare(kind="fit")`, `compare(kind="align")`, `compare(kind="shape")`, and `compare(kind="snapshot")` respectively. The same computations remain available as composable Python helpers inside `execute()` code, so `clearance(a, b)` and `align_check(a, b)` still work there; the consolidation only changes the advertised standalone MCP surface.
+
+### Fixed
+
+- **The exact mesh gate no longer reports a timed-out refined probe as refined-clean.** `_mesh_defects_exact()` now returns a structured `MeshGateResult` instead of a growing positional tuple, so adding a defect class no longer requires mechanical unpacking edits across every caller. The report also gains `refined_untriangulated_faces_verified`; if the refined face-tessellation probe runs out of budget after another definite defect has already been found, the known defect is still reported but the refined count is explicitly marked unverified instead of reading as `0` confirmed defects.
+
 ## v0.3.73
 
 ### Fixed

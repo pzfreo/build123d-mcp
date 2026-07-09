@@ -14,6 +14,7 @@ real solid body, and non-degenerate volume.
 
 import json
 import time
+from dataclasses import dataclass
 
 _EPS = 1e-9
 
@@ -85,6 +86,90 @@ _MESH_GATE_MIN_S = 10.0
 # Such a part is deferred to the fast check (UNDETERMINED), never failed. A genuine
 # small/moderate open part still ladders and is caught; only large parts degrade.
 _LADDER_BASE_MAX_TRIS = 40000
+
+
+@dataclass(frozen=True)
+class MeshGateResult:
+    """Structured result from the exact mesh validity gate."""
+
+    nonmanifold_edges: int = 0
+    open_edges: int = 0
+    untriangulated_faces: int = 0
+    refined_untriangulated_faces: int = 0
+    nonmanifold_vertices: int = 0
+    vertex_deflection_defects: int = 0
+    ok: bool = False
+    refined_verified: bool = False
+
+    @classmethod
+    def unchecked(cls) -> "MeshGateResult":
+        return cls(ok=False, refined_verified=False)
+
+    @classmethod
+    def from_legacy(cls, value) -> "MeshGateResult":
+        if isinstance(value, cls):
+            return value
+        if len(value) == 6:
+            nm, open_edges, untri, nmv, vdefl, ok = value
+            return cls(
+                nonmanifold_edges=int(nm),
+                open_edges=int(open_edges),
+                untriangulated_faces=int(untri),
+                nonmanifold_vertices=int(nmv),
+                vertex_deflection_defects=int(vdefl),
+                ok=bool(ok),
+                refined_verified=False,
+            )
+        if len(value) == 7:
+            nm, open_edges, untri, refined_untri, nmv, vdefl, ok = value
+            return cls(
+                nonmanifold_edges=int(nm),
+                open_edges=int(open_edges),
+                untriangulated_faces=int(untri),
+                refined_untriangulated_faces=int(refined_untri),
+                nonmanifold_vertices=int(nmv),
+                vertex_deflection_defects=int(vdefl),
+                ok=bool(ok),
+                refined_verified=True,
+            )
+        if len(value) == 8:
+            nm, open_edges, untri, refined_untri, nmv, vdefl, ok, refined_verified = value
+            return cls(
+                nonmanifold_edges=int(nm),
+                open_edges=int(open_edges),
+                untriangulated_faces=int(untri),
+                refined_untriangulated_faces=int(refined_untri),
+                nonmanifold_vertices=int(nmv),
+                vertex_deflection_defects=int(vdefl),
+                ok=bool(ok),
+                refined_verified=bool(refined_verified),
+            )
+        raise ValueError("mesh gate result must have 6, 7, or 8 fields")
+
+    @classmethod
+    def from_json(cls, data: dict) -> "MeshGateResult":
+        return cls(
+            nonmanifold_edges=int(data["nm"]),
+            open_edges=int(data["open"]),
+            untriangulated_faces=int(data["untri"]),
+            refined_untriangulated_faces=int(data.get("refined_untri", 0)),
+            nonmanifold_vertices=int(data.get("nmv", 0)),
+            vertex_deflection_defects=int(data.get("vdefl", 0)),
+            ok=bool(data["ok"]),
+            refined_verified=bool(data.get("refined_verified", True)),
+        )
+
+    def to_json(self) -> dict:
+        return {
+            "nm": self.nonmanifold_edges,
+            "open": self.open_edges,
+            "untri": self.untriangulated_faces,
+            "refined_untri": self.refined_untriangulated_faces,
+            "nmv": self.nonmanifold_vertices,
+            "vdefl": self.vertex_deflection_defects,
+            "ok": self.ok,
+            "refined_verified": self.refined_verified,
+        }
 
 
 def _edge_incidence_counts(mf, n_nodes: int):
@@ -177,14 +262,13 @@ def _edge_face_adjacency(occ, fmap, emap):
     return adj
 
 
-def _run_mesh_gate_subprocess(step_path: str, timeout: float):
+def _run_mesh_gate_subprocess(step_path: str, timeout: float) -> MeshGateResult | None:
     """Run the exact mesh check on a written STEP in a separate process, hard-
     bounded by ``timeout`` seconds (the only way to bound the un-interruptible OCC
-    tessellation without risking the worker). Returns
-    ``(nm, open, untri, refined_untri, nmv, vdefl, ok)`` or ``None`` if the subprocess timed out
-    (was killed), errored, or its result could not be parsed — ``None`` means
-    UNDETERMINED, so the caller keeps its safe in-process verdict rather than
-    inventing one.
+    tessellation without risking the worker). Returns ``MeshGateResult`` or
+    ``None`` if the subprocess timed out (was killed), errored, or its result could
+    not be parsed — ``None`` means UNDETERMINED, so the caller keeps its safe
+    in-process verdict rather than inventing one.
     """
     import json
     import subprocess
@@ -207,19 +291,13 @@ def _run_mesh_gate_subprocess(step_path: str, timeout: float):
                 return None
             if "error" in d:
                 return None
-            return (
-                int(d["nm"]),
-                int(d["open"]),
-                int(d["untri"]),
-                int(d.get("refined_untri", 0)),
-                int(d.get("nmv", 0)),
-                int(d.get("vdefl", 0)),
-                bool(d["ok"]),
-            )
+            return MeshGateResult.from_json(d)
     return None
 
 
-def _gate_report(shape, exact: bool = False, mesh_override: tuple | None = None) -> dict:
+def _gate_report(
+    shape, exact: bool = False, mesh_override: MeshGateResult | tuple | None = None
+) -> dict:
     """Return the validity-gate verdict for a shape as a plain dict.
 
     Reused by the export tool so a 3D export can warn when the written solid
@@ -276,53 +354,37 @@ def _gate_report(shape, exact: bool = False, mesh_override: tuple | None = None)
         # Mesh results computed out-of-process (export's subprocess retry for a
         # part too large to mesh within the in-process budget). Bounded by a hard
         # subprocess timeout there, so it can run the full check without skipping.
-        if len(mesh_override) == 6:
-            # Backwards-compatible parsing for older private callers/tests that still
-            # provide the pre-#401 tuple.
-            mesh_nm_edges, mesh_open_edges, mesh_untri_faces, mesh_nmv, mesh_vdefl, mesh_ok = (
-                mesh_override
-            )
-            mesh_refined_untri_faces = 0
-        else:
-            (
-                mesh_nm_edges,
-                mesh_open_edges,
-                mesh_untri_faces,
-                mesh_refined_untri_faces,
-                mesh_nmv,
-                mesh_vdefl,
-                mesh_ok,
-            ) = mesh_override
+        mesh = MeshGateResult.from_legacy(mesh_override)
         # ok=False means the out-of-process check timed out / couldn't determine —
         # mark it "skipped" so the "mesh validity not verified" warning fires and the
         # caller doesn't report false confidence on an unchecked part.
-        mesh_check = "exact-subprocess" if mesh_ok else "skipped"
+        mesh_check = "exact-subprocess" if mesh.ok else "skipped"
     else:
         _cap = _EXACT_EXPORT_MAX_TRIS if exact else _EXACT_INLINE_MAX_TRIS
         _mesh_deadline = time.monotonic() + _GATE_MESH_BUDGET_S
-        (
-            mesh_nm_edges,
-            mesh_open_edges,
-            mesh_untri_faces,
-            mesh_refined_untri_faces,
-            mesh_nmv,
-            mesh_vdefl,
-            mesh_ok,
-        ) = _mesh_defects_exact(shape, max_triangles=_cap, deadline=_mesh_deadline)
+        mesh = _mesh_defects_exact(shape, max_triangles=_cap, deadline=_mesh_deadline)
         mesh_check = "exact"
-        if not mesh_ok:
+        if not mesh.ok:
             # Exact check over budget / unbuildable — fall back to the fast
             # non-manifold-only check (no open-edge / face-tessellation analysis),
             # under the SAME deadline. This in-worker fallback is structurally blind to
             # open edges (mesh_open_edges stays 0), so the report warns (#381); a large
             # shape avoids it entirely by running the exact check out-of-process.
-            mesh_nm_edges, mesh_ok = _mesh_defects(shape, deadline=_mesh_deadline)
-            mesh_open_edges = mesh_untri_faces = mesh_refined_untri_faces = mesh_nmv = (
-                mesh_vdefl
-            ) = 0
-            mesh_check = "fast" if mesh_ok else "skipped"
-            if not mesh_ok:
-                mesh_nm_edges = 0  # neither check could run in budget — defer to B-rep
+            mesh_nm_edges, mesh_fast_ok = _mesh_defects(shape, deadline=_mesh_deadline)
+            mesh = MeshGateResult(
+                nonmanifold_edges=mesh_nm_edges if mesh_fast_ok else 0,
+                ok=mesh_fast_ok,
+                refined_verified=False,
+            )
+            mesh_check = "fast" if mesh.ok else "skipped"
+    mesh_nm_edges = mesh.nonmanifold_edges
+    mesh_open_edges = mesh.open_edges
+    mesh_untri_faces = mesh.untriangulated_faces
+    mesh_refined_untri_faces = mesh.refined_untriangulated_faces
+    mesh_nmv = mesh.nonmanifold_vertices
+    mesh_vdefl = mesh.vertex_deflection_defects
+    mesh_ok = mesh.ok
+    mesh_refined_verified = mesh.refined_verified
     mesh_nonmanifold = mesh_ok and mesh_nm_edges > 0
     mesh_open = mesh_ok and mesh_open_edges > 0
     mesh_incomplete = mesh_ok and mesh_untri_faces > 0
@@ -413,6 +475,12 @@ def _gate_report(shape, exact: bool = False, mesh_override: tuple | None = None)
             "that only fail at a finer mesh. export() runs the authoritative check — "
             "test-export before trusting this PASS"
         )
+    elif mesh_ok and not mesh_refined_verified:
+        warnings.append(
+            "refined face-tessellation not verified — the exact mesh gate found other "
+            "defects, then the finer face-tessellation probe ran out of budget before "
+            "proving whether additional tolerance-sensitive faces exist"
+        )
 
     passes = (
         brep_valid
@@ -439,6 +507,7 @@ def _gate_report(shape, exact: bool = False, mesh_override: tuple | None = None)
         "mesh_vertex_deflection_defects": mesh_vdefl,
         "untriangulated_faces": mesh_untri_faces,
         "refined_untriangulated_faces": mesh_refined_untri_faces,
+        "refined_untriangulated_faces_verified": mesh_refined_verified,
         "mesh_check": mesh_check,
         "brep_valid": brep_valid,
         "warnings": warnings,
@@ -554,7 +623,7 @@ def _mesh_defects(shape, deadline: float | None = None) -> tuple[int, bool]:
 
 def _mesh_defects_exact(
     shape, max_triangles: int | None = None, deadline: float | None = None
-) -> tuple[int, int, int, int, int, int, bool]:
+) -> MeshGateResult:
     """Accurate mesh non-manifold count via a topology-stitched tessellation.
 
     Builds one conformal boundary mesh from the per-face OCC triangulations by
@@ -573,16 +642,15 @@ def _mesh_defects_exact(
     B-reps), so callers use it where correctness matters most (export) rather
     than on every interactive validate(). ``max_triangles`` bounds that cost: if
     the tessellation exceeds it, return ok=False *before* the slow stitch so the
-    caller can fall back to the fast check. Returns
-    (nonmanifold_edges, open_edges, untriangulated_faces,
-    refined_untriangulated_faces, nonmanifold_vertices, vertex_deflection_defects,
-    ok); ok=False if the mesh could not be built or was over budget (caller then
-    falls back to the fast check). open_edges>0 means the tessellated boundary is
-    not closed (edges incident to a single triangle); untriangulated_faces>0 means
-    a face failed to mesh at the base deflection, leaving the boundary incomplete.
-    refined_untriangulated_faces>0 means the base mesh succeeded but a lightweight
-    finer pass (base/4) exposed faces that downstream consumers using tighter
-    tolerances may reject.
+    caller can fall back to the fast check. Returns ``MeshGateResult``; ``ok=False``
+    if the mesh could not be built or was over budget (caller then falls back to the
+    fast check). ``refined_verified=False`` means the base mesh findings may be
+    usable but the finer face-tessellation probe did not complete. ``open_edges>0``
+    means the tessellated boundary is not closed (edges incident to a single
+    triangle); ``untriangulated_faces>0`` means a face failed to mesh at the base
+    deflection, leaving the boundary incomplete. ``refined_untriangulated_faces>0``
+    means the base mesh succeeded but a lightweight finer pass (base/4) exposed
+    faces that downstream consumers using tighter tolerances may reject.
 
     ``vertex_deflection_defects`` guards the BREP-vertex merge below: a node
     claiming to sit at a given BREP vertex (an edge polygon's own first/last
@@ -633,7 +701,7 @@ def _mesh_defects_exact(
         bb = shape.bounding_box()
         diag = math.dist((bb.min.X, bb.min.Y, bb.min.Z), (bb.max.X, bb.max.Y, bb.max.Z))
         if diag <= 0:
-            return 0, 0, 0, 0, 0, 0, False
+            return MeshGateResult.unchecked()
         # Deflection relative to part scale, clamped — matches the scorer.
         deflection = min(0.5, max(0.005, diag * 1e-3))
         _open_deadline = (
@@ -885,9 +953,8 @@ def _mesh_defects_exact(
             This intentionally does not stitch or allocate the full triangle soup; it
             only asks OCC to refine and then verifies every face owns a triangulation.
             Return ``(count, verified)``. If the refined pass cannot be checked within
-            the budget and did not find a definite missing face, ``verified`` is False
-            so the caller can degrade to an "unverified" mesh verdict instead of a
-            false PASS.
+            the budget, ``verified`` is False so the caller can report any definite
+            missing faces found so far without implying the count is complete.
             """
             if time.monotonic() > _open_deadline:
                 return 0, False
@@ -901,7 +968,7 @@ def _mesh_defects_exact(
             n_tris = 0
             for fi in range(1, fmap.Size() + 1):
                 if time.monotonic() > _open_deadline:
-                    return (missing, True) if missing else (0, False)
+                    return missing, False
                 face = TopoDS.Face_s(fmap.FindKey(fi))
                 loc = TopLoc_Location()
                 tri = BRep_Tool.Triangulation_s(face, loc)
@@ -910,7 +977,7 @@ def _mesh_defects_exact(
                     continue
                 n_tris += tri.NbTriangles()
             if n_tris > _REFINED_UNTRIANGULATED_MAX_TRIS and _open_deadline != float("inf"):
-                return (missing, True) if missing else (0, False)
+                return missing, False
             return missing, True
 
         def _finish(
@@ -919,20 +986,26 @@ def _mesh_defects_exact(
             base_untriangulated: int,
             nmv: int,
             vdefl: int,
-        ) -> tuple[int, int, int, int, int, int, bool]:
+        ) -> MeshGateResult:
             refined_untriangulated, refined_ok = _refined_untriangulated_faces()
             if not refined_ok and not (
-                nm_edges or open_edges or base_untriangulated or nmv or vdefl
+                nm_edges
+                or open_edges
+                or base_untriangulated
+                or refined_untriangulated
+                or nmv
+                or vdefl
             ):
-                return 0, 0, 0, 0, 0, 0, False
-            return (
-                nm_edges,
-                open_edges,
-                base_untriangulated,
-                refined_untriangulated,
-                nmv,
-                vdefl,
-                True,
+                return MeshGateResult.unchecked()
+            return MeshGateResult(
+                nonmanifold_edges=nm_edges,
+                open_edges=open_edges,
+                untriangulated_faces=base_untriangulated,
+                refined_untriangulated_faces=refined_untriangulated,
+                nonmanifold_vertices=nmv,
+                vertex_deflection_defects=vdefl,
+                ok=True,
+                refined_verified=refined_ok,
             )
 
         # Build the base-deflection mesh for the non-manifold / untriangulated
@@ -944,7 +1017,7 @@ def _mesh_defects_exact(
         faces = TopTools_IndexedMapOfShape()
         TopExp.MapShapes_s(occ, TopAbs_FACE, faces)
         if faces.Size() == 0:
-            return 0, 0, 0, 0, 0, 0, False
+            return MeshGateResult.unchecked()
 
         # 1. Lay every face's triangulation into one global node/triangle list,
         #    flipping winding for REVERSED faces so orientation is consistent.
@@ -980,14 +1053,18 @@ def _mesh_defects_exact(
         if not triangles:
             # Nothing meshed: a defect if some faces failed, else un-analysable.
             return (
-                (0, 0, untriangulated, 0, 0, 0, True)
+                MeshGateResult(
+                    untriangulated_faces=untriangulated,
+                    ok=True,
+                    refined_verified=False,
+                )
                 if untriangulated
-                else (0, 0, 0, 0, 0, 0, False)
+                else MeshGateResult.unchecked()
             )
         if max_triangles is not None and len(triangles) > max_triangles:
             # Over the perf budget; bail before the slow stitch so the caller
             # falls back to the fast check rather than hanging.
-            return 0, 0, 0, 0, 0, 0, False
+            return MeshGateResult.unchecked()
 
         parent = list(range(len(vertices)))
 
@@ -1041,7 +1118,7 @@ def _mesh_defects_exact(
                 # part — few edges but expensive OCC calls each); defer to the fast
                 # check rather than approach the worker op-timeout. Bounds total
                 # gate wall-clock to ~the budget.
-                return 0, 0, 0, 0, 0, 0, False
+                return MeshGateResult.unchecked()
             edge = TopoDS.Edge_s(emap.FindKey(ei))
             node_lists = []
             for fi in edge_adj.get(ei, ()):
@@ -1114,7 +1191,7 @@ def _mesh_defects_exact(
             return (
                 _finish(0, 0, untriangulated, nmv, _vd)
                 if (untriangulated or nmv or _vd)
-                else (0, 0, 0, 0, 0, 0, False)
+                else MeshGateResult.unchecked()
             )
 
         # 4. Cancel opposite-winding flap pairs (a degenerate fold meshes to a
@@ -1158,7 +1235,7 @@ def _mesh_defects_exact(
             return (
                 _finish(0, 0, untriangulated, nmv, _vd)
                 if (untriangulated or nmv or _vd)
-                else (0, 0, 0, 0, 0, 0, False)
+                else MeshGateResult.unchecked()
             )
 
         # 5. Non-manifold count from the index-stitched mesh: undirected edges
@@ -1178,9 +1255,9 @@ def _mesh_defects_exact(
         # open-edge ladder
         if nm_edges or untriangulated or nmv or _vd:
             return _finish(nm_edges, 0, untriangulated, nmv, _vd)
-        return 0, 0, 0, 0, 0, 0, False
+        return MeshGateResult.unchecked()
     except Exception:
-        return 0, 0, 0, 0, 0, 0, False
+        return MeshGateResult.unchecked()
 
 
 def _resolve_shape(session, object_name: str):
@@ -1244,17 +1321,16 @@ def _validate_gate(session, shape) -> dict:
     return _gate_report(
         shape,
         exact=True,
-        mesh_override=mesh if mesh is not None else (0, 0, 0, 0, 0, 0, False),
+        mesh_override=mesh if mesh is not None else MeshGateResult.unchecked(),
     )
 
 
-def _mesh_gate_out_of_process(session, shape):
+def _mesh_gate_out_of_process(session, shape) -> MeshGateResult | None:
     """Serialise the shape to a temp STEP and run the exact mesh gate in the same
-    hard-bounded subprocess ``export()`` uses. Returns the mesh tuple
-    ``(nm, open, untri, refined_untri, nmv, vdefl, ok)``, or ``None`` (→
-    ``"skipped"``) if it timed out, the host blocks child processes, or the shape
-    couldn't be serialised — in every case the caller keeps the in-worker B-rep
-    verdict rather than inventing a mesh result."""
+    hard-bounded subprocess ``export()`` uses. Returns ``MeshGateResult`` or
+    ``None`` (→ ``"skipped"``) if it timed out, the host blocks child processes, or
+    the shape couldn't be serialised — in every case the caller keeps the in-worker
+    B-rep verdict rather than inventing a mesh result."""
     import os
     import tempfile
 

@@ -143,7 +143,7 @@ def test_mesh_exact_passes_disjoint_touching_bodies():
 
     two = Compound([Box(10, 10, 10), Pos(0, 0, 10) * Box(10, 10, 10)])
     assert _mesh_defects(two)[0] > 0  # fast weld over-flags two touching bodies
-    assert _mesh_defects_exact(two)[0] == 0  # exact (topology) is correct
+    assert _mesh_defects_exact(two).nonmanifold_edges == 0  # exact topology is correct
 
 
 def test_validate_small_part_uses_exact_check(session):
@@ -381,8 +381,11 @@ def test_mesh_defects_exact_no_false_nm_vertex_on_clean_solids():
     # The vertex check runs on a coordinate-welded mesh, so poles/seams of a
     # sphere must not register as pinches (#298 regression guard).
     for shape in (Box(10, 10, 10), Sphere(8)):
-        nm_e, open_e, untri, refined_untri, nmv, vdefl, ok = _mesh_defects_exact(shape)
-        assert ok and refined_untri == 0 and nmv == 0 and vdefl == 0
+        result = _mesh_defects_exact(shape)
+        assert result.ok
+        assert result.refined_untriangulated_faces == 0
+        assert result.nonmanifold_vertices == 0
+        assert result.vertex_deflection_defects == 0
 
 
 def test_mesh_defects_exact_detects_refined_untriangulated_face(monkeypatch):
@@ -414,10 +417,15 @@ def test_mesh_defects_exact_detects_refined_untriangulated_face(monkeypatch):
     monkeypatch.setattr(brep_mesh, "BRepMesh_IncrementalMesh", _tracking_mesh)
     monkeypatch.setattr(BRep_Tool, "Triangulation_s", staticmethod(_refined_only_missing_tri))
 
-    nm_e, open_e, untri, refined_untri, nmv, vdefl, ok = _mesh_defects_exact(box)
-    assert ok
-    assert (nm_e, open_e, untri, nmv, vdefl) == (0, 0, 0, 0, 0)
-    assert refined_untri == 1
+    result = _mesh_defects_exact(box)
+    assert result.ok
+    assert result.refined_verified is True
+    assert result.nonmanifold_edges == 0
+    assert result.open_edges == 0
+    assert result.untriangulated_faces == 0
+    assert result.nonmanifold_vertices == 0
+    assert result.vertex_deflection_defects == 0
+    assert result.refined_untriangulated_faces == 1
 
 
 def test_gate_report_fails_on_refined_untriangulated_face(monkeypatch):
@@ -449,7 +457,30 @@ def test_gate_report_fails_on_refined_untriangulated_face(monkeypatch):
     assert report["passes_gate"] is False
     assert report["untriangulated_faces"] == 0
     assert report["refined_untriangulated_faces"] == 1
+    assert report["refined_untriangulated_faces_verified"] is True
     assert any("finer mesh deflection" in r for r in report["reasons"])
+
+
+def test_refined_probe_budget_gap_is_reported_explicitly(monkeypatch):
+    """A known defect plus an over-budget refined probe must not read as refined-clean."""
+    from build123d import Box, Shell
+
+    import build123d_mcp.tools.validate as v
+
+    monkeypatch.setattr(v, "_REFINED_UNTRIANGULATED_MAX_TRIS", 1)
+    shell = Shell(Box(10, 10, 10).faces()[:5])
+
+    result = v._mesh_defects_exact(shell)
+    assert result.ok
+    assert result.open_edges > 0
+    assert result.refined_untriangulated_faces == 0
+    assert result.refined_verified is False
+
+    report = v._gate_report(shell, exact=True, mesh_override=result)
+    assert report["passes_gate"] is False
+    assert report["refined_untriangulated_faces"] == 0
+    assert report["refined_untriangulated_faces_verified"] is False
+    assert any("refined face-tessellation not verified" in w for w in report["warnings"])
 
 
 def test_mesh_defects_exact_detects_vertex_deflection(monkeypatch):
@@ -485,10 +516,13 @@ def test_mesh_defects_exact_detects_vertex_deflection(monkeypatch):
         return p
 
     monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
-    nm_e, open_e, untri, refined_untri, nmv, vdefl, ok = _mesh_defects_exact(box)
-    assert ok
-    assert vdefl == 1
-    assert nm_e == 0 and untri == 0 and refined_untri == 0 and nmv == 0
+    result = _mesh_defects_exact(box)
+    assert result.ok
+    assert result.vertex_deflection_defects == 1
+    assert result.nonmanifold_edges == 0
+    assert result.untriangulated_faces == 0
+    assert result.refined_untriangulated_faces == 0
+    assert result.nonmanifold_vertices == 0
 
 
 def test_mesh_defects_exact_open_ladder_catches_vertex_deflection_too(monkeypatch):
@@ -522,11 +556,11 @@ def test_mesh_defects_exact_open_ladder_catches_vertex_deflection_too(monkeypatc
         return p
 
     monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
-    nm_e, open_e, untri, refined_untri, nmv, vdefl, ok = _mesh_defects_exact(shell)
-    assert ok
-    assert open_e == 4  # the missing face's 4 rim edges — unaffected by the guard
-    assert refined_untri == 0
-    assert vdefl == 1  # only reachable via the ladder's own guard at this magnitude
+    result = _mesh_defects_exact(shell)
+    assert result.ok
+    assert result.open_edges == 4  # the missing face's 4 rim edges — unaffected by the guard
+    assert result.refined_untriangulated_faces == 0
+    assert result.vertex_deflection_defects == 1  # only reachable via the ladder guard
 
 
 def test_mesh_defects_exact_counts_multiple_ladder_only_vertices(monkeypatch):
@@ -558,11 +592,11 @@ def test_mesh_defects_exact_counts_multiple_ladder_only_vertices(monkeypatch):
         return p
 
     monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
-    nm_e, open_e, untri, refined_untri, nmv, vdefl, ok = _mesh_defects_exact(shell)
-    assert ok
-    assert open_e == 4
-    assert refined_untri == 0
-    assert vdefl == 2  # both distinct vertices counted, not capped at 1
+    result = _mesh_defects_exact(shell)
+    assert result.ok
+    assert result.open_edges == 4
+    assert result.refined_untriangulated_faces == 0
+    assert result.vertex_deflection_defects == 2  # both distinct vertices counted
 
 
 def test_mesh_defects_exact_no_double_count_when_base_and_ladder_agree(monkeypatch):
@@ -586,11 +620,11 @@ def test_mesh_defects_exact_no_double_count_when_base_and_ladder_agree(monkeypat
         return p
 
     monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
-    nm_e, open_e, untri, refined_untri, nmv, vdefl, ok = _mesh_defects_exact(shell)
-    assert ok
-    assert open_e == 4
-    assert refined_untri == 0
-    assert vdefl == 1  # same vertex found twice (base + ladder), deduped to 1
+    result = _mesh_defects_exact(shell)
+    assert result.ok
+    assert result.open_edges == 4
+    assert result.refined_untriangulated_faces == 0
+    assert result.vertex_deflection_defects == 1  # same vertex found twice, deduped
 
 
 # --- out-of-process mesh gate (export retry for parts too large to mesh in-budget) ---
@@ -605,7 +639,16 @@ def test_mesh_gate_subprocess_valid_step(tmp_path):
     export_step(Box(10, 10, 10), str(p))
     # A clean solid: 0 nm-edge, 0 open, 0 base/refined untriangulated, 0
     # nm-vertex, 0 vertex-deflection defects, ok=True.
-    assert _run_mesh_gate_subprocess(str(p), timeout=120) == (0, 0, 0, 0, 0, 0, True)
+    result = _run_mesh_gate_subprocess(str(p), timeout=120)
+    assert result is not None
+    assert result.ok
+    assert result.refined_verified
+    assert result.nonmanifold_edges == 0
+    assert result.open_edges == 0
+    assert result.untriangulated_faces == 0
+    assert result.refined_untriangulated_faces == 0
+    assert result.nonmanifold_vertices == 0
+    assert result.vertex_deflection_defects == 0
 
 
 def test_mesh_gate_subprocess_timeout_returns_none(tmp_path):

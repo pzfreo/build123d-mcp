@@ -319,7 +319,7 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
             # and B-rep checks already spent some), so the subprocess is always
             # killed before the parent kills the worker. B-rep checks run in-process
             # (cheap). On timeout the mesh check is skipped (B-rep only) + a warning.
-            from build123d_mcp.tools.validate import _run_mesh_gate_subprocess
+            from build123d_mcp.tools.validate import MeshGateResult, _run_mesh_gate_subprocess
 
             # Margin covers the B-rep checks that still run in-process after this
             # (fast — BRepCheck, not meshing) + subprocess teardown + parent poll
@@ -333,7 +333,7 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
             report = _gate_report(
                 gate_shape,
                 exact=True,
-                mesh_override=_mesh if _mesh is not None else (0, 0, 0, 0, 0, 0, False),
+                mesh_override=_mesh if _mesh is not None else MeshGateResult.unchecked(),
             )
             if not report["passes_gate"]:
                 suffix += (
