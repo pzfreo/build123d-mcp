@@ -17,6 +17,9 @@ answering:
 - `validate()` / `export()` — is the current or written shape structurally
   acceptable?
 - `locate_gate_defects()` — where is the failing face, edge, or mesh defect?
+- `find_bored_bosses()` — when a failed edit involved extending a bored boss,
+  which bore/cap candidates exist, and whether the cap is split across several
+  faces?
 - `repair_advice()` — which field-proven, generic repair/edit recipe fits this
   defect and requested goal, with acceptance checks and stop conditions?
 - this repair skill — which generic repair pattern fits that defect class?

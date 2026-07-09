@@ -910,6 +910,7 @@ def test_mcp_lists_all_tools():
         "align_check",
         "find_holes",
         "find_bosses",
+        "find_bored_bosses",
         "find_countersinks",
         "find_hole_patterns",
         "resolve",

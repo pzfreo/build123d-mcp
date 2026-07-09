@@ -27,6 +27,7 @@ def test_read_only_query_tools_are_marked_read_only():
         "find_holes",
         "find_hole_patterns",
         "find_bosses",
+        "find_bored_bosses",
         "find_countersinks",
         "align_check",
         "session_state",

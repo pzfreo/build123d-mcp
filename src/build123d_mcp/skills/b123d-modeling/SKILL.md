@@ -148,6 +148,9 @@ volume. When a validity/export failure has a recognizable topology pattern,
 call `repair_advice(error_text=..., goal=..., context=...)` before writing the
 repair code. It returns generic recipes and stop conditions for the agent to
 implement explicitly in `execute()`, rather than silently mutating the B-rep.
+For an edit to a boss with a central bore, call `find_bored_bosses()` first to
+enumerate plausible bore/cap candidates and detect split cap faces before
+choosing a construction method.
 
 **Extending a boss, or relocating any planar/annular face along its own normal
 (raising a bore's counterbore opening, moving a shoulder) is a common instance
@@ -158,11 +161,19 @@ as a duplicate internal face the fuse won't dissolve (`validate()` FAILs with
 "N mesh non-manifold edge(s) — faces meet >2-ways", the two pieces stay
 separate solids, or a `validate()` PASS is followed by an `export()` failure
 after the STEP round-trip re-checks orientation on the old face's remnants).
-Extrude the feature's *own* face instead of adding a separately-built
+If `find_bored_bosses()` reports a single complete cap face, extrude the
+feature's *own* face instead of adding a separately-built
 primitive — a face extruded from the part's own boundary shares the exact
 underlying geometry, so a follow-up fuse dissolves it cleanly where a
 coincidentally-matching new primitive would not, even when it's positioned to
 match exactly:
+
+If the cap is split across multiple faces, do **not** extrude one face and then
+try to sew the damaged result. Build an explicit full-profile extension/sleeve
+from the measured bore axis and opening plane, fuse with small overlap, and
+re-cut the central bore continuously through old plus new material. This is the
+same generic pattern returned by `repair_advice()` as
+`split_bored_boss_extension`.
 
 If the boss/annular edit still fails, pass the gate text and edit goal to
 `repair_advice()`. The `split_bored_boss_extension` and

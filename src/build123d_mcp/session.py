@@ -513,6 +513,22 @@ class Session:
 
         self.namespace["find_bosses"] = find_bosses
 
+        def find_bored_bosses(shape: Any = None) -> list:
+            """Candidate bored bosses with bore/cap evidence.
+
+            Returns dict records: bore location/axis/diameter/depth, cap face
+            indices at the opening, split-cap risk flags, and construction
+            advice. Use before extending a square/rounded-square boss with a
+            central bore.
+            """
+            from build123d_mcp.tools.find_features import _find_bored_boss_candidates
+
+            candidates = _find_bored_boss_candidates(_resolve(shape, "find_bored_bosses"))
+            print(f"find_bored_bosses: {len(candidates)} candidate(s)")
+            return candidates
+
+        self.namespace["find_bored_bosses"] = find_bored_bosses
+
         def find_countersinks(shape: Any = None) -> list:
             """Recognise conical countersinks → list of dicts (major/drill diameter,
             included angle, depth). Filter in code. shape defaults to current shape."""

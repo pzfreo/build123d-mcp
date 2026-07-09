@@ -42,11 +42,14 @@ Classify the edit before changing code:
 - **Assembly/edit-in-context**: move or resize one part relative to another.
   Use `clearance()`, `align_check()`, and named objects to verify fit.
 - **Validity edit**: change construction so the output remains manifold.
-  Use `validate()`, `locate_gate_defects()`, `repair_advice()`, and the repair
-  skill only for diagnostics and patterns. `repair_advice()` is especially
-  useful when the intended edit is generic but topology-sensitive, such as
-  extending a bored boss, moving an annular shoulder, or fixing an
-  export-roundtrip sliver after a boolean.
+  Use `validate()`, `locate_gate_defects()`, `find_bored_bosses()`,
+  `repair_advice()`, and the repair skill only for diagnostics and patterns.
+  `find_bored_bosses()` is useful before extending a square/rounded-square
+  boss with a central bore: it reports candidate bore axes, cap faces, split
+  caps, and construction warnings. `repair_advice()` is especially useful when
+  the intended edit is generic but topology-sensitive, such as extending a
+  bored boss, moving an annular shoulder, or fixing an export-roundtrip sliver
+  after a boolean.
 
 If the requested edit is ambiguous, ask for the missing design intent before
 guessing: which face, which hole pattern, which mating clearance, or which
@@ -71,9 +74,10 @@ Avoid:
 - changing unrelated dimensions because they make the gate pass
 
 Use `measure()` face inventory, `find_holes()`, `find_hole_patterns()`,
-`find_bosses()`, and `find_countersinks()` to identify the feature in code. For
-spatial edits, render with labels or use `render_view(highlights=...)` to confirm
-the face/edge index before changing construction.
+`find_bosses()`, `find_bored_bosses()`, and `find_countersinks()` to identify
+the feature in code. For spatial edits, render with labels or use
+`render_view(highlights=...)` to confirm the face/edge index before changing
+construction.
 
 ## Step 3 - Make One Explicit Edit
 
@@ -212,6 +216,13 @@ repair_advice(
 Typical matches include split bored-boss extension, export-roundtrip sliver
 cleanup, mesh-fragile face repatching, and self-touch boolean redesign. The
 result should guide explicit build123d/OCP code in `execute()`.
+
+Before extending a bored boss, run `find_bored_bosses()` on the baseline. If it
+reports `is_split_cap=true` or multiple `cap_faces`, do not extrude one cap face:
+construct a full extension sleeve/profile from the measured bore axis and
+opening plane, then re-cut the bore continuously through old plus new material.
+Reject candidates that fill the bore, create a second bore segment, or leave
+more than one solid.
 
 ### Preserve Editability
 

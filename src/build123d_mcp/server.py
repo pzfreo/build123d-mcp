@@ -152,7 +152,7 @@ def http_app():
 
 @mcp.tool(annotations=_MUTATING)
 def execute(code: str) -> str:
-    """Execute build123d Python code in the persistent session. Errors include automatic fix hints — read them before retrying. Use show(shape, name) to register named objects (name defaults to 'shape'); show() immediately prints volume and face count confirming the shape is non-empty. After any boolean operation (-, +, &) call measure() to confirm it succeeded (check topology.faces). named_face(shape, name) is a built-in helper: named_face(box, 'top') returns the highest-Z face, 'bottom'/'front'/'back'/'left'/'right' work similarly. find_edges(shape, geom='circle', radius=4.25, at_z=10.2, length=None, tol=0.05) filters edges for fillet/chamfer selection and prints what matched. Analysis primitives are callable IN code and return real Python objects so you compose (filter, do arithmetic) instead of copying numbers out of a tool result: measure(shape) -> dict (measure(part)['volume']), clearance(a, b) -> dict, cross_sections(shape) -> list of {position,area}, find_holes(shape) -> hole records with .location (an (x,y,z) tuple), .diameter, .depth, … ([h for h in find_holes(part) if h.location[0] < 5]); find_bosses(shape) / find_countersinks(shape) / find_hole_patterns(shape) return recogniser records too; align_check(a, b, axis='Z', mode='flush') -> dict (align_check(a,b)['delta'] is a float). shape defaults to the current shape, and measure/clearance/cross_sections stay bounded on large shapes. save_json(name, obj) writes structured analysis data (face inventories, hole tables) to a server scratch file and returns its path — use it instead of printing large results; open()/os stay blocked."""
+    """Execute build123d Python code in the persistent session. Errors include automatic fix hints — read them before retrying. Use show(shape, name) to register named objects (name defaults to 'shape'); show() immediately prints volume and face count confirming the shape is non-empty. After any boolean operation (-, +, &) call measure() to confirm it succeeded (check topology.faces). named_face(shape, name) is a built-in helper: named_face(box, 'top') returns the highest-Z face, 'bottom'/'front'/'back'/'left'/'right' work similarly. find_edges(shape, geom='circle', radius=4.25, at_z=10.2, length=None, tol=0.05) filters edges for fillet/chamfer selection and prints what matched. Analysis primitives are callable IN code and return real Python objects so you compose (filter, do arithmetic) instead of copying numbers out of a tool result: measure(shape) -> dict (measure(part)['volume']), clearance(a, b) -> dict, cross_sections(shape) -> list of {position,area}, find_holes(shape) -> hole records with .location (an (x,y,z) tuple), .diameter, .depth, … ([h for h in find_holes(part) if h.location[0] < 5]); find_bosses(shape) / find_bored_bosses(shape) / find_countersinks(shape) / find_hole_patterns(shape) return recogniser records too; align_check(a, b, axis='Z', mode='flush') -> dict (align_check(a,b)['delta'] is a float). shape defaults to the current shape, and measure/clearance/cross_sections stay bounded on large shapes. save_json(name, obj) writes structured analysis data (face inventories, hole tables) to a server scratch file and returns its path — use it instead of printing large results; open()/os stay blocked."""
     from build123d_mcp.tools.execute import execute_code
 
     result = execute_code(_resolve_session(), code)
@@ -587,6 +587,12 @@ def find_bosses(object_name: str = "") -> str:
 
 
 @mcp.tool(annotations=_READ_ONLY)
+def find_bored_bosses(object_name: str = "") -> str:
+    """Find candidate bored bosses and report target-selection/edit evidence: bore opening location, axis into the part, outward axis, bore diameter/depth, planar cap faces at the opening, whether the cap is split across multiple faces, and construction advice. Use this before extending a square/rounded-square boss with a central bore; it is read-only and diagnostic, not proof of the requested target."""
+    return _resolve_session().find_bored_bosses(object_name)
+
+
+@mcp.tool(annotations=_READ_ONLY)
 def find_countersinks(object_name: str = "") -> str:
     """Recognise countersinks (conical screw-head recesses) on a session object (defaults to current shape) — the feature find_holes reports only as a plain opening. A countersink is an internal cone flaring from a drilled bore out to a larger opening, coaxial with the drill; drill-point cones and external edge chamfers are excluded. Returns JSON: {count, countersinks: [{location (opening centre), axis (into the part), major_diameter (countersink Ø at the surface), drill_diameter, included_angle (deg, e.g. 82/90/100/120), depth}]}. object_name: named object from show() (default: current shape)."""
     return _resolve_session().find_countersinks(object_name)
@@ -670,7 +676,7 @@ BUILD123D-MCP WORKFLOW GUIDE
    Numbers are unambiguous; renders can look correct even when the geometry is wrong.
    Recommended order: execute → measure → render_view (if you need to see it).
    Compose in code: measure/clearance/cross_sections/find_holes/find_bosses/
-   find_countersinks/find_hole_patterns/align_check are callable INSIDE execute() and
+   find_bored_bosses/find_countersinks/find_hole_patterns/align_check are callable INSIDE execute() and
    return real objects — measure(part)["volume"], [h for h in find_holes(part) if
    h.location[0] < 5] — so filter/compute in code instead of copying numbers out of a
    JSON tool result. The standalone tools remain for one-shot queries.
