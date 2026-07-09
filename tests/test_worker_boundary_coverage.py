@@ -169,6 +169,11 @@ def _find_bosses(ws, tmp_path):
     assert "error" not in r and r["bosses"] == []
 
 
+def _find_bored_bosses(ws, tmp_path):
+    r = json.loads(ws.find_bored_bosses("a"))
+    assert "error" not in r and r["candidates"] == []
+
+
 def _find_countersinks(ws, tmp_path):
     # seeded box 'a' has no countersinks; a non-error reply proves the worker's
     # objects were consulted (an empty parent proxy would error on unknown 'a').
@@ -292,6 +297,7 @@ SESSION_STATEFUL_TOOLS = {
     "align_check": _align_check,
     "find_holes": _find_holes,
     "find_bosses": _find_bosses,
+    "find_bored_bosses": _find_bored_bosses,
     "find_countersinks": _find_countersinks,
     "find_hole_patterns": _find_hole_patterns,
     "cross_sections": _cross_sections,
