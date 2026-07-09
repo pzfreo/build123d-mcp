@@ -23,10 +23,19 @@ Before editing, capture what exists.
    print(measure(part))
    ```
 
-5. Run the MCP `validate()` tool on the registered baseline. If the baseline
-   already fails the gate, stop and switch to
-   `build123d://skill/repair`. Do not combine a feature edit with geometry
-   repair unless the requested edit is the repair.
+5. Run the MCP `validate()` tool on the registered baseline, then export the
+   unchanged baseline to a throwaway STEP and read the export gate result. This
+   written STEP gate is the blocking baseline proof: downstream CAD consumers
+   see the exported artifact, not the live session shape.
+6. If the baseline fails either `validate()` or the throwaway export gate, stop
+   and switch to `build123d://skill/repair`. Until a repaired baseline passes
+   the written STEP export gate, the only geometry-changing operations allowed
+   are minimal baseline fixups. Do not move, cut, extend, remove, or replace the
+   requested target feature while the baseline is still invalid. Do not combine
+   a feature edit with geometry repair unless the requested edit is the repair.
+7. After the baseline passes the written export gate, save a snapshot such as
+   `save_snapshot("valid_baseline")`. Only then begin the requested feature or
+   parameter edit.
 
 For file-based work, keep the source of truth in the Python file. The MCP
 session is the proving ground, not the only copy of the edit.
