@@ -969,7 +969,7 @@ def build123d_drawing_skill() -> str:
 @mcp.resource(
     "build123d://skill/modeling",
     mime_type="text/plain",
-    description="The b123d-modeling workflow skill: step-by-step guide for building 3D parts and assemblies with build123d via this server — including extracting a spec from a technical drawing, the incremental build/measure/render loop, snapshots, and export.",
+    description="The b123d-modeling workflow skill: step-by-step guide for building 3D parts and assemblies with build123d via this server — including extracting a spec from a technical drawing, the incremental build/measure/render loop, dominant-form correction after the first render, snapshots, and export.",
 )
 def build123d_modeling_skill() -> str:
     """b123d-modeling workflow skill."""

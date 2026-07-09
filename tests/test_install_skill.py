@@ -39,6 +39,27 @@ def test_load_raw_modeling_returns_skill_content():
     assert len(content) > 1000
 
 
+def test_modeling_skill_contains_dominant_form_correction_loop():
+    content = _load_raw("modeling")
+    start = content.index("### Dominant-form correction")
+    end = content.index("- Assemblies:", start)
+    section = content[start:end]
+
+    assert "first valid render" in section
+    assert "diagnostic checkpoint" in section
+    assert "dominant body family" in section
+    assert "body-class level" in section
+    for phrase in (
+        "Axisymmetric shell",
+        "Repeated radial features",
+        "Blind pocket vs through void",
+        "Sheet metal",
+        "Interface preservation",
+    ):
+        assert phrase in section
+    assert "fixture" not in section.lower()
+
+
 def test_load_raw_edit_returns_skill_content():
     content = _load_raw("edit")
     assert "Edit Existing build123d Geometry" in content

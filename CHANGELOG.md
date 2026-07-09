@@ -5,6 +5,7 @@
 ### Changed
 
 - **MCP comparison calls are now one `compare()` tool.** External prompt authors should replace standalone MCP tool calls to `clearance`, `align_check`, `shape_compare`, and `diff_snapshot` with `compare(kind="fit")`, `compare(kind="align")`, `compare(kind="shape")`, and `compare(kind="snapshot")` respectively. The same computations remain available as composable Python helpers inside `execute()` code, so `clearance(a, b)` and `align_check(a, b)` still work there; the consolidation only changes the advertised standalone MCP surface.
+- **`b123d-modeling` skill: add a dominant-form correction loop for generation fidelity.** The modeling workflow now tells agents to treat the first valid render as a diagnostic checkpoint: classify the dominant body family, name the largest semantic mismatch, and rebuild from the named dimension table when the model is a valid-but-wrong body class rather than patching it with cosmetic cuts. The guidance stays generic CAD workflow advice, with decision rules for axisymmetric shells, repeated radial features, blind pockets versus through voids, sheet-metal bodies, and preserving scored interfaces after fillets/chamfers.
 
 ### Fixed
 

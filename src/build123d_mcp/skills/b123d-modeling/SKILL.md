@@ -108,6 +108,47 @@ large shapes. The standalone MCP tools remain for one-shot queries.
 - Render only after `measure()` agrees with the spec:
   `render_view(save_to="/tmp/part.png")`, then show /tmp/part.png to the user.
   Use `clip_plane`/`clip_at` to reveal internal features.
+
+### Dominant-form correction after the first valid render
+
+A valid, watertight model can still be the wrong *kind* of body. Before final
+export on a model built from a drawing, use the first valid render as a
+diagnostic checkpoint:
+
+1. Render the primary orthographic/isometric views.
+2. Classify the dominant body family, not just the holes and bosses:
+   axisymmetric shell / lathe profile, curved impeller or spoked radial
+   pattern, bent sheet-metal body, cast web with blind pockets, thin-walled
+   cover/housing, drafted casting.
+3. Name the single largest semantic mismatch: block/slab where the drawing
+   shows a casting or shell; through-open gaps where section hatching shows
+   blind pockets and a central web; merged repeated vanes/lobes/spokes; wrong
+   axis/profile interpretation in a revolved part; holes placed on the wrong
+   body surface.
+4. If the mismatch is body-class level, rebuild from the named dimension
+   table. Do not keep patching the wrong representation with cosmetic cuts,
+   fillets, or shallow relief.
+5. After any cosmetic radius pass, re-run `find_holes` / `find_bosses` /
+   relevant recognizers. Reject a fillet/chamfer that changes a through-bore
+   diameter/depth, feature count, or scored interface.
+
+Field-proven decision rules:
+
+- **Axisymmetric shell:** if a revolve is valid but the bbox or section profile
+  is wrong, switch to coaxial cylinders/cones/frustums from the dimension table
+  instead of continuing with the wrong revolve-axis convention.
+- **Repeated radial features:** verify instance count after booleans using a
+  face inventory, recognizer, or render. If vanes/spokes/lobes merge, rebuild
+  with explicit numeric rotations of the analytic feature geometry.
+- **Blind pocket vs through void:** if section views show material remaining,
+  build the full web/body first and subtract shallow pockets from one or both
+  sides. Do not model through truss-like gaps where the section shows solid web.
+- **Sheet metal:** classify constant-thickness folded bodies early. Prefer
+  panels/flanges/bends over solid blocks; boss recognizers should be empty
+  unless the drawing actually has raised bosses.
+- **Interface preservation:** after adding fillets/chamfers, verify hole,
+  bore, boss, and fit features again. Cosmetic rounding is not acceptable if it
+  silently shortens a through-bore or changes a mating feature.
 - Assemblies: use the MCP `compare(a="a", b="b", kind="fit")` tool for fit
   (apart / touching / containing / interpenetrating, with volumes), and
   `compare(a="a", b="b", kind="align", axis="Z", mode="flush")` for

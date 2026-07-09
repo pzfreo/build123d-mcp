@@ -33,7 +33,8 @@ SKILLS = {
         "dir": "b123d-modeling",
         "cursor_description": (
             "3D CAD modeling workflow: build parts and assemblies with build123d "
-            "via the build123d-mcp MCP server"
+            "via the build123d-mcp MCP server, including dominant-form correction "
+            "after the first valid render"
         ),
         # No path affinity — the rule is routed by description (agent-requested).
         "cursor_globs": "",
