@@ -153,6 +153,16 @@ Then choose the evidence that matches the edit:
 - shape should otherwise match a baseline: run
   `compare(a="before", b="edited", kind="shape")`
 
+For imported B-reps, `compare(kind="shape")` can have noisy mesh localisation
+after a valid defeature or analytic face extension. Do not throw away a clean
+validated candidate solely because compare reports spread regions. First prove
+the exact delta directly: no added material when only removal was requested, the
+delta bounding box sits on the intended feature, the target faces are gone or
+changed as requested, and protected feature counts/dimensions are unchanged. If
+that evidence is clean, keep the validated defeatured result instead of replacing
+it with a raw boolean that preserves old face partitioning but creates extra
+seam faces.
+
 `export()` is the final gate because it checks the written and re-imported STEP.
 A `validate()` pass in memory is useful but not the final acceptance proof.
 If the edited shape fails this gate, call `repair_advice(error_text=..., goal=...)`
@@ -217,6 +227,14 @@ Verify with `compare(a="shaft", b="bore_part", kind="fit")` or a measured sectio
 Prefer removing the feature's construction block over adding material back with
 a compensating boolean. If you must patch a removed cut, prove the final face and
 volume match the intended design, then export-gate the result.
+
+For imported fillet or chamfer removal, treat the job as defeaturing when the
+rounded faces are explicit analytic patches. Identify the exact torus, cone, or
+small blend faces, remove those faces, and let adjacent cylinders/planes extend
+or merge. A valid defeatured result with fewer/cleaner faces is usually preferable
+to a topology-preserving cutter that leaves extra cylindrical bands or seam faces.
+Accept the defeature only after the written export gate passes and the delta
+proof shows the removed material is localized to the requested fillet/chamfer.
 
 ### Topology-Sensitive Edits
 
