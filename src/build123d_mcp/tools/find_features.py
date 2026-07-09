@@ -50,6 +50,14 @@ def _dot(a, b) -> float:
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
 
+def _cross(a, b) -> tuple[float, float, float]:
+    return (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
+
+
 def _norm(a) -> float:
     return math.sqrt(_dot(a, a))
 
@@ -79,6 +87,32 @@ def _bbox_projection(shape, axis) -> tuple[float, float]:
     zs = (float(bb.min.Z), float(bb.max.Z))
     vals = [_dot((x, y, z), axis) for x in xs for y in ys for z in zs]
     return (min(vals), max(vals))
+
+
+def _perp_basis(axis) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    ref = (1.0, 0.0, 0.0) if abs(axis[0]) < 0.9 else (0.0, 1.0, 0.0)
+    u = _unit(_cross(axis, ref))
+    return u, _unit(_cross(axis, u))
+
+
+def _bbox_corners(shape) -> list[tuple[float, float, float]]:
+    bb = shape.bounding_box()
+    xs = (float(bb.min.X), float(bb.max.X))
+    ys = (float(bb.min.Y), float(bb.max.Y))
+    zs = (float(bb.min.Z), float(bb.max.Z))
+    return [(x, y, z) for x in xs for y in ys for z in zs]
+
+
+def _perp_spans(shape, axis) -> tuple[float, float]:
+    u, v = _perp_basis(axis)
+    corners = _bbox_corners(shape)
+    us = [_dot(c, u) for c in corners]
+    vs = [_dot(c, v) for c in corners]
+    return (max(us) - min(us), max(vs) - min(vs))
+
+
+def _radial_extent(shape, origin, axis) -> float:
+    return max(_axis_distance(corner, origin, axis) for corner in _bbox_corners(shape))
 
 
 def _face_geom_name(face) -> str:
@@ -112,6 +146,7 @@ def _cap_faces_for_hole(shape, location, axis_into_part, bore_diameter: float) -
             continue
         if area <= 1e-8:
             continue
+        span_u, span_v = _perp_spans(face, axis_into_part)
         cap_faces.append(
             {
                 "index": idx,
@@ -121,6 +156,8 @@ def _cap_faces_for_hole(shape, location, axis_into_part, bore_diameter: float) -
                 "normal_alignment_to_outward_axis": round(normal_alignment, 4),
                 "plane_distance": round(plane_distance, 4),
                 "axis_distance_from_bore": round(radial_distance, 4),
+                "radial_extent_from_bore": round(_radial_extent(face, location, axis_into_part), 4),
+                "perpendicular_span": [round(span_u, 4), round(span_v, 4)],
             }
         )
 
@@ -144,6 +181,19 @@ def _find_bored_boss_candidates(shape) -> list[dict]:
         cap_faces = _cap_faces_for_hole(shape, location, axis, diameter)
         if not cap_faces:
             continue
+
+        shape_span_u, shape_span_v = _perp_spans(shape, axis)
+        local_cap_faces = [
+            face
+            for face in cap_faces
+            if (
+                face["perpendicular_span"][0] < shape_span_u * 0.85
+                or face["perpendicular_span"][1] < shape_span_v * 0.85
+            )
+        ]
+        if not local_cap_faces:
+            continue
+        cap_faces = local_cap_faces
 
         _min_proj, max_proj = _bbox_projection(shape, outward)
         loc_proj = _dot(location, outward)

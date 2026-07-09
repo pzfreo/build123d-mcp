@@ -31,6 +31,7 @@ _INJECTED = frozenset(
         "cross_sections",
         "find_holes",
         "find_bosses",
+        "find_bored_bosses",
         "find_countersinks",
         "find_hole_patterns",
         "align_check",

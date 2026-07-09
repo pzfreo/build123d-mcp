@@ -103,6 +103,31 @@ def test_find_bored_bosses_flags_split_cap_front(session):
     assert "Do not extrude one face" in candidate["construction_advice"]
 
 
+def test_find_bored_bosses_ignores_plain_drilled_plate(session):
+    session.execute("p = Box(40, 40, 8) - Cylinder(3, 12)\nshow(p, 'plate')")
+
+    assert json.loads(find_bored_bosses(session, "plate")) == {
+        "count": 0,
+        "candidates": [],
+        "selection_advice": (
+            "Treat this as a candidate table. Match against the request's visual "
+            "and dimensional qualifiers, mark plausible candidates in a render, "
+            "then measure the current boss length/depth before editing."
+        ),
+    }
+
+
+def test_find_bored_bosses_ignores_shared_plate_face_with_multiple_holes(session):
+    session.execute(
+        "p = Box(80, 40, 8)\n"
+        "p = p - Pos(-20, 0, 0) * Cylinder(3, 12)\n"
+        "p = p - Pos(20, 0, 0) * Cylinder(4, 12)\n"
+        "show(p, 'plate')"
+    )
+
+    assert json.loads(find_bored_bosses(session, "plate"))["count"] == 0
+
+
 def test_plain_box_has_no_features(session):
     session.execute("show(Box(10, 10, 10), 'box')")
     assert json.loads(find_holes(session, "box")) == {"count": 0, "holes": []}

@@ -2019,6 +2019,7 @@ def test_session_state_variables_exclude_injected_helpers(session):
     execute_code(session, "x = 5")
     variables = json.loads(session_state(session))["variables"]
     assert "x" in variables
+    assert "find_bored_bosses" in _INJECTED
     assert not (_INJECTED & set(variables))
 
 
