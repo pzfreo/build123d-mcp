@@ -42,7 +42,7 @@ def test_load_raw_modeling_returns_skill_content():
 def test_modeling_skill_contains_dominant_form_correction_loop():
     content = _load_raw("modeling")
     start = content.index("### Dominant-form correction")
-    end = content.index("- Assemblies:", start)
+    end = content.index("## Step 4", start)
     section = content[start:end]
 
     assert "first valid render" in section
