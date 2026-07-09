@@ -78,3 +78,21 @@ def test_restart_failure_degrades_mid_session(monkeypatch):
         assert json.loads(ws.measure("c"))["volume"] == pytest.approx(27, rel=0.01)
     finally:
         ws._kill_worker()
+
+
+def test_in_process_replay_is_budget_bounded(monkeypatch):
+    """A degraded session rebuilds only what fits the wall-clock budget and keeps the
+    prefix, so a session with hundreds of execute() calls can't stall the degrade."""
+    import time
+
+    monkeypatch.setattr(WorkerSession, "_start_worker", _boom)
+    ws = WorkerSession(exec_timeout=60)  # degrades at construction; in-process Session built
+    ws.execute("from build123d import *")
+
+    # Fake clock: deadline is read once (start), then the per-step check jumps past it
+    # on the second step, so only the first step replays.
+    ticks = iter([1000.0, 1000.0, 9999.0, 9999.0, 9999.0])
+    monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
+
+    restored = ws._replay_execute_history_in_process(["a = 1", "b = 2", "c = 3"])
+    assert restored == 1

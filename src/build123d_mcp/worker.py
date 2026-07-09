@@ -37,7 +37,16 @@ from typing import Any, NamedTuple, TypeVar, cast
 
 from build123d_mcp.tools._budget import OP_BUDGET_FLOOR_S
 
-_WORKER_READY_TIMEOUT = 60  # seconds to wait for worker import + ready signal
+# Two-phase worker startup. worker_main pings {"alive": True} the instant it runs,
+# then imports and builds the Session (build123d loads lazily on first execute, not
+# here) and pings {"ready": True}. _WORKER_ALIVE_TIMEOUT bounds phase 1: a child hung
+# in multiprocessing's spawn bootstrap never runs worker_main and never pings, so it
+# is caught in seconds instead of stalling the full ready budget (#143). The alive
+# path is pure-Python imports (measured ~0.2s; no OCP), so a short budget is safe.
+# _WORKER_READY_TIMEOUT bounds phase 2, which legitimately covers a cold import and
+# --library indexing.
+_WORKER_ALIVE_TIMEOUT = 20  # seconds for the worker to enter worker_main and ping
+_WORKER_READY_TIMEOUT = 60  # seconds to build the Session after the alive ping
 
 
 def _worker_fallback_enabled() -> bool:
@@ -107,6 +116,11 @@ def worker_main(
 
     Loops receiving requests until the parent closes the connection.
     """
+    # Phase 1 signal: spawn bootstrap finished and worker code is running. A child
+    # stuck in multiprocessing's spawn bootstrap never reaches this line, so the
+    # parent's short alive-poll catches that in seconds instead of the full ready
+    # budget (#143). Sent before anything that can block (resource limits, imports).
+    conn.send({"alive": True})
     if memory_limit_mb is not None or cpu_limit_s is not None:
         try:
             import resource
@@ -496,6 +510,42 @@ class WorkerSession:
         child_conn.close()
         self._conn = parent_conn
 
+        # Phase 1 (liveness): worker_main pings {"alive": True} as its first act. A
+        # child hung in multiprocessing's spawn bootstrap never runs worker_main and
+        # so never pings; catch that in _WORKER_ALIVE_TIMEOUT instead of stalling the
+        # full ready budget. This is the #143 sandboxed-host failure (Copilot/Codex
+        # CLI on Windows): the grandchild hangs before importing anything, the case
+        # that would otherwise cost a ~60s stall on every restart.
+        if not self._conn.poll(_WORKER_ALIVE_TIMEOUT):
+            exitcode = self._proc.exitcode  # read before kill: None means still running
+            self._proc.kill()
+            self._proc.join(5)
+            detail = (
+                f"the worker exited with code {exitcode} during spawn bootstrap"
+                if exitcode is not None
+                else f"the worker did not start within {_WORKER_ALIVE_TIMEOUT}s "
+                "(the spawn bootstrap never ran the worker code)"
+            )
+            raise RuntimeError(
+                f"Worker process failed to start: {detail}. If your MCP host blocks "
+                "subprocess creation (seen with sandboxed hosts on Windows, issue #143), "
+                "relaunch the server with --in-process or BUILD123D_IN_PROCESS=1 — a "
+                "degraded mode without crash containment or operation timeouts."
+            )
+        try:
+            self._conn.recv()  # consume the {"alive": True} ping (EOF if it died first)
+        except EOFError:
+            self._proc.join(5)
+            exitcode = self._proc.exitcode
+            raise RuntimeError(
+                f"Worker process failed to start: exited with code {exitcode} during "
+                "spawn bootstrap before signalling alive. If your MCP host blocks "
+                "subprocess creation (sandboxed hosts on Windows, issue #143), relaunch "
+                "with --in-process or BUILD123D_IN_PROCESS=1."
+            )
+
+        # Phase 2 (ready): worker is executing; it now imports and builds the Session
+        # (and indexes --library if set). Slow-but-healthy, so it keeps the longer budget.
         if not self._conn.poll(_WORKER_READY_TIMEOUT):
             exitcode = self._proc.exitcode  # read before kill: None means still running
             self._proc.kill()
@@ -642,12 +692,17 @@ class WorkerSession:
     def _replay_execute_history_in_process(self, history: list[str]) -> int:
         """Re-run `history` against the in-process Session after a #143 degrade, so a
         worker death that triggers the fallback rebuilds prior state instead of wiping
-        it. There is no pipe and no per-op timeout in degraded mode, so this is a plain
-        best-effort re-run that keeps the rebuilt prefix — it stops at the first step
-        that errors, mirroring _replay_execute_history's prefix preservation. Lock
-        held."""
+        it. Bounded by the same wall-clock budget as _replay_execute_history and keeps
+        the rebuilt prefix, so a session with hundreds of execute() calls can't stall
+        the degrade unbounded: it rebuilds what fits the budget and stops. Also stops
+        at the first step that errors, mirroring the worker replay. Lock held."""
+        import time
+
+        deadline = time.monotonic() + max(120, self._exec_timeout)
         restored = 0
         for code in history:
+            if time.monotonic() >= deadline:
+                break  # keep the rebuilt prefix; the rest is dropped, as in the worker replay
             result = self._in_process_call("execute", {"code": code})
             if isinstance(result, str) and result.startswith("Error:"):
                 break
