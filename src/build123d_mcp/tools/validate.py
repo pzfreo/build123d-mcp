@@ -106,47 +106,6 @@ class MeshGateResult:
         return cls(ok=False, refined_verified=False)
 
     @classmethod
-    def from_legacy(cls, value) -> "MeshGateResult":
-        if isinstance(value, cls):
-            return value
-        if len(value) == 6:
-            nm, open_edges, untri, nmv, vdefl, ok = value
-            return cls(
-                nonmanifold_edges=int(nm),
-                open_edges=int(open_edges),
-                untriangulated_faces=int(untri),
-                nonmanifold_vertices=int(nmv),
-                vertex_deflection_defects=int(vdefl),
-                ok=bool(ok),
-                refined_verified=False,
-            )
-        if len(value) == 7:
-            nm, open_edges, untri, refined_untri, nmv, vdefl, ok = value
-            return cls(
-                nonmanifold_edges=int(nm),
-                open_edges=int(open_edges),
-                untriangulated_faces=int(untri),
-                refined_untriangulated_faces=int(refined_untri),
-                nonmanifold_vertices=int(nmv),
-                vertex_deflection_defects=int(vdefl),
-                ok=bool(ok),
-                refined_verified=True,
-            )
-        if len(value) == 8:
-            nm, open_edges, untri, refined_untri, nmv, vdefl, ok, refined_verified = value
-            return cls(
-                nonmanifold_edges=int(nm),
-                open_edges=int(open_edges),
-                untriangulated_faces=int(untri),
-                refined_untriangulated_faces=int(refined_untri),
-                nonmanifold_vertices=int(nmv),
-                vertex_deflection_defects=int(vdefl),
-                ok=bool(ok),
-                refined_verified=bool(refined_verified),
-            )
-        raise ValueError("mesh gate result must have 6, 7, or 8 fields")
-
-    @classmethod
     def from_json(cls, data: dict) -> "MeshGateResult":
         return cls(
             nonmanifold_edges=int(data["nm"]),
@@ -295,9 +254,7 @@ def _run_mesh_gate_subprocess(step_path: str, timeout: float) -> MeshGateResult 
     return None
 
 
-def _gate_report(
-    shape, exact: bool = False, mesh_override: MeshGateResult | tuple | None = None
-) -> dict:
+def _gate_report(shape, exact: bool = False, mesh_override: MeshGateResult | None = None) -> dict:
     """Return the validity-gate verdict for a shape as a plain dict.
 
     Reused by the export tool so a 3D export can warn when the written solid
@@ -354,7 +311,7 @@ def _gate_report(
         # Mesh results computed out-of-process (export's subprocess retry for a
         # part too large to mesh within the in-process budget). Bounded by a hard
         # subprocess timeout there, so it can run the full check without skipping.
-        mesh = MeshGateResult.from_legacy(mesh_override)
+        mesh = mesh_override
         # ok=False means the out-of-process check timed out / couldn't determine —
         # mark it "skipped" so the "mesh validity not verified" warning fires and the
         # caller doesn't report false confidence on an unchecked part.
