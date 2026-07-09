@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.76
+
+### Fixed
+
+- **build123d's per-object INFO logging no longer leaks to the server's stderr, where a hostile host stderr turns it into a logging-error traceback in every tool result.** build123d emits an INFO record on every object construction (`"<ctx> context requested by <op>"`). build123d itself only attaches a `NullHandler`, but FastMCP installs a root stderr handler, so those records propagate to the server's stderr. On a host whose stderr is a pipe where writes fail — the Copilot/Codex CLI on Windows, where each write raises `OSError(EINVAL)` — the standard-library logging machinery prints a `--- Logging error ---` traceback, and it lands in the middle of the tool result the user sees. `_build_session` (the setup path shared by the worker and in-process modes) now sets `logging.getLogger("build123d").propagate = False`, so the per-object chatter stops reaching that handler. build123d keeps its own `NullHandler`, so nothing that wants the log is affected. Thanks @faisal-shah.
+
 ## v0.3.73
 
 ### Fixed

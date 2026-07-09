@@ -44,6 +44,21 @@ def _build_session(
     Shared by worker_main (subprocess mode) and InProcessSession so a future
     setup step cannot be added to one mode and forgotten in the other.
     """
+    # build123d logs at INFO on every object construction ("<ctx> context requested
+    # by <op>"). build123d itself only attaches a NullHandler, but FastMCP installs a
+    # root stderr handler, so those records propagate to the server's stderr. On a
+    # host whose stderr is hostile (the Copilot/Codex CLI on Windows pipes it to a
+    # handle where each write raises OSError), the standard-library logging machinery
+    # then prints a "--- Logging error ---" traceback into the middle of every tool
+    # result. Cut propagation so build123d's per-object chatter stops reaching that
+    # handler; build123d keeps its own NullHandler, so nothing that wants the log is
+    # affected. Set here, the one setup path shared by the worker and in-process
+    # modes, so both are covered. (Getting the logger by name works before build123d
+    # is imported; the flag persists to when it first logs.)
+    import logging as _logging
+
+    _logging.getLogger("build123d").propagate = False
+
     if allow_all_imports or extra_allowed_imports or no_sandbox:
         import build123d_mcp.security as _sec
 
