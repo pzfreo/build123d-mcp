@@ -23,7 +23,7 @@ def test_read_only_query_tools_are_marked_read_only():
         "locate_gate_defects",
         "compare",
         "cross_sections",
-        "feature_audit",
+        "inspect_part",
         "find_holes",
         "find_hole_patterns",
         "find_bosses",

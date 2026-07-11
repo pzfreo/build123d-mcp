@@ -7,7 +7,7 @@ import pytest
 from build123d_mcp._shape_op_subprocess import _run
 from build123d_mcp.session import Session
 from build123d_mcp.tools import _bounded
-from build123d_mcp.tools.feature_audit import feature_audit
+from build123d_mcp.tools.inspect_part import _check_expected_groups, inspect_part
 
 
 @pytest.fixture
@@ -17,7 +17,7 @@ def session():
     return value
 
 
-def test_feature_audit_groups_holes_bosses_and_bolt_circle(session):
+def test_inspect_part_groups_holes_bosses_and_bolt_circle(session):
     session.execute(
         "import math\n"
         "part = Box(80, 80, 8)\n"
@@ -28,7 +28,7 @@ def test_feature_audit_groups_holes_bosses_and_bolt_circle(session):
         "show(part, 'checkpoint')"
     )
 
-    result = json.loads(feature_audit(session, "checkpoint", section_slices=5))
+    result = json.loads(inspect_part(session, "checkpoint", section_slices=5))
 
     assert result["status"] == "INVENTORY"
     assert result["topology"]["solids"] == 1
@@ -49,7 +49,7 @@ def test_feature_audit_groups_holes_bosses_and_bolt_circle(session):
     ]
 
     checked = json.loads(
-        feature_audit(
+        inspect_part(
             session,
             "checkpoint",
             expected=json.dumps(
@@ -70,7 +70,7 @@ def test_feature_audit_groups_holes_bosses_and_bolt_circle(session):
     assert checked["status"] == "PASS"
 
 
-def test_feature_audit_expectations_pass_and_fail(session):
+def test_inspect_part_expectations_pass_and_fail(session):
     session.execute(
         "part = Box(40, 30, 10)\n"
         "part -= Pos(-10, 0, 0) * Cylinder(2, 14)\n"
@@ -83,18 +83,18 @@ def test_feature_audit_expectations_pass_and_fail(session):
         "holes": [{"count": 2, "diameter": 4, "axis": [0, 0, 1], "bottom": "through"}],
     }
 
-    passing = json.loads(feature_audit(session, "plate", expected=json.dumps(expected)))
+    passing = json.loads(inspect_part(session, "plate", expected=json.dumps(expected)))
     assert passing["status"] == "PASS"
     assert passing["passes_expectations"] is True
 
     expected["holes"][0]["count"] = 3
-    failing = json.loads(feature_audit(session, "plate", expected=json.dumps(expected)))
+    failing = json.loads(inspect_part(session, "plate", expected=json.dumps(expected)))
     assert failing["status"] == "FAIL"
     assert failing["passes_expectations"] is False
     assert "expected 3 hole feature(s)" in failing["mismatches"][0]
 
 
-def test_feature_audit_cored_profile_reports_section_variation(session):
+def test_inspect_part_cored_profile_reports_section_variation(session):
     session.execute(
         "outer = Box(40, 40, 20)\n"
         "cavity = Pos(0, 0, 5) * Box(30, 30, 12)\n"
@@ -102,7 +102,7 @@ def test_feature_audit_cored_profile_reports_section_variation(session):
     )
 
     result = json.loads(
-        feature_audit(
+        inspect_part(
             session,
             "cored",
             section_axis="Z",
@@ -116,13 +116,13 @@ def test_feature_audit_cored_profile_reports_section_variation(session):
     assert result["sections"]["variation_ratio"] > 0.1
 
 
-def test_feature_audit_thin_wall_reports_constant_section_profile(session):
+def test_inspect_part_thin_wall_reports_constant_section_profile(session):
     session.execute(
         "outer = Box(40, 40, 20)\ninner = Box(36, 36, 24)\nshow(outer - inner, 'thin_wall')"
     )
 
     result = json.loads(
-        feature_audit(
+        inspect_part(
             session,
             "thin_wall",
             section_slices=5,
@@ -137,7 +137,7 @@ def test_feature_audit_thin_wall_reports_constant_section_profile(session):
     assert areas == pytest.approx([areas[0]] * 5)
 
 
-def test_feature_audit_linear_pattern_preserves_and_checks_relationship(session):
+def test_inspect_part_linear_pattern_preserves_and_checks_relationship(session):
     session.execute(
         "part = Box(60, 30, 8)\n"
         "for x in (-15, -5, 5, 15):\n"
@@ -146,7 +146,7 @@ def test_feature_audit_linear_pattern_preserves_and_checks_relationship(session)
     )
 
     result = json.loads(
-        feature_audit(
+        inspect_part(
             session,
             "linear",
             expected=json.dumps(
@@ -170,7 +170,7 @@ def test_feature_audit_linear_pattern_preserves_and_checks_relationship(session)
     assert result["patterns"]["groups"][0]["member_count"] == 4
 
 
-def test_feature_audit_wrong_pattern_type_is_a_failure_not_an_exception(session):
+def test_inspect_part_wrong_pattern_type_is_a_failure_not_an_exception(session):
     session.execute(
         "import math\n"
         "part = Box(60, 60, 8)\n"
@@ -181,7 +181,7 @@ def test_feature_audit_wrong_pattern_type_is_a_failure_not_an_exception(session)
     )
 
     result = json.loads(
-        feature_audit(
+        inspect_part(
             session,
             "circle",
             expected=json.dumps(
@@ -194,7 +194,7 @@ def test_feature_audit_wrong_pattern_type_is_a_failure_not_an_exception(session)
     assert any("unexpected pattern group" in mismatch for mismatch in result["mismatches"])
 
 
-def test_feature_audit_rejects_unexpected_and_ambiguously_matched_groups(session):
+def test_inspect_part_rejects_unexpected_groups(session):
     session.execute(
         "part = Box(50, 30, 8)\n"
         "part -= Pos(-12, 0, 0) * Cylinder(2, 12)\n"
@@ -204,7 +204,7 @@ def test_feature_audit_rejects_unexpected_and_ambiguously_matched_groups(session
     )
 
     extra = json.loads(
-        feature_audit(
+        inspect_part(
             session,
             "extra_hole",
             expected=json.dumps({"holes": [{"count": 2, "diameter": 4}]}),
@@ -213,30 +213,25 @@ def test_feature_audit_rejects_unexpected_and_ambiguously_matched_groups(session
     assert extra["status"] == "FAIL"
     assert any("unexpected hole group" in mismatch for mismatch in extra["mismatches"])
 
-    ambiguous = json.loads(
-        feature_audit(
-            session,
-            "extra_hole",
-            expected=json.dumps(
-                {
-                    "holes": [
-                        {"count": 2, "diameter": 4},
-                        {"count": 2, "axis": [0, 0, 1]},
-                        {"count": 1, "diameter": 6},
-                    ]
-                }
-            ),
-        )
+
+def test_underspecified_expectation_cannot_absorb_distinct_axis_groups():
+    actual = [
+        {"count": 2, "diameter": 6.0, "axis": [0.0, 0.0, 1.0]},
+        {"count": 2, "diameter": 6.0, "axis": [1.0, 0.0, 0.0]},
+    ]
+
+    mismatches = _check_expected_groups(
+        "hole", actual, [{"count": 4, "diameter": 6.0}], tolerance=0.1
     )
-    assert ambiguous["status"] == "FAIL"
-    assert any("ambiguous hole group" in mismatch for mismatch in ambiguous["mismatches"])
+
+    assert any("underspecified hole expectation" in mismatch for mismatch in mismatches)
 
 
-def test_feature_audit_rejects_non_object_expectations(session):
+def test_inspect_part_rejects_non_object_expectations(session):
     session.execute("show(Box(10, 10, 10), 'box')")
 
     with pytest.raises(ValueError, match="expected must be a JSON object"):
-        feature_audit(session, "box", expected="[]")
+        inspect_part(session, "box", expected="[]")
 
 
 @pytest.mark.parametrize(
@@ -251,17 +246,32 @@ def test_feature_audit_rejects_non_object_expectations(session):
         ({"holes": {"count": 2}}, "must be a JSON array"),
         ({"holes": [{"count": 2, "radius": 3}]}, "unsupported key"),
         ({"patterns": [{"pitch": "ten"}]}, "finite number"),
+        (
+            {"holes": [{"count": 2, "diameter": 6}, {"count": 2, "diameter": 6}]},
+            "overlaps",
+        ),
+        (
+            {"holes": [{"count": 2, "diameter": 6}, {"count": 2, "axis": [0, 0, 1]}]},
+            "overlaps",
+        ),
     ],
 )
-def test_feature_audit_rejects_malformed_expectation_schema(session, expected, message):
+def test_inspect_part_rejects_malformed_expectation_schema(session, expected, message):
     session.execute("show(Box(10, 10, 10), 'box')")
 
     with pytest.raises(ValueError, match=message):
-        feature_audit(session, "box", expected=json.dumps(expected))
+        inspect_part(session, "box", expected=json.dumps(expected))
 
 
-def test_feature_audit_is_dispatched_by_bounded_shape_runner(monkeypatch):
-    import build123d_mcp.tools.feature_audit as audit_module
+def test_inspect_part_wraps_malformed_json(session):
+    session.execute("show(Box(10, 10, 10), 'box')")
+
+    with pytest.raises(ValueError, match="expected must be valid JSON"):
+        inspect_part(session, "box", expected="{bad")
+
+
+def test_inspect_part_is_dispatched_by_bounded_shape_runner(monkeypatch):
+    import build123d_mcp.tools.inspect_part as inspect_module
 
     shape = object()
     params = {
@@ -272,28 +282,32 @@ def test_feature_audit_is_dispatched_by_bounded_shape_runner(monkeypatch):
     }
 
     monkeypatch.setattr(
-        audit_module,
-        "_feature_audit_report",
+        inspect_module,
+        "_inspect_part_report",
         lambda *args: repr(args),
     )
 
-    result = _run("feature_audit", {"": shape}, params)
+    result = _run("inspect_part", {"": shape}, params)
 
     assert result == repr((shape, "part", "Y", 9, {"solid_count": 1}))
 
 
-def test_feature_audit_round_trips_through_real_bounded_subprocess(session, monkeypatch):
-    session.execute("show(Box(12, 10, 8), 'box')")
-    monkeypatch.setattr(_bounded, "_FACE_GATE", 1)
-
-    result = json.loads(
-        feature_audit(
-            session,
-            "box",
-            section_slices=3,
-            expected=json.dumps({"bbox": [12, 10, 8], "solid_count": 1}),
-        )
+def test_inspect_part_round_trips_through_real_bounded_subprocess(session, monkeypatch):
+    session.execute(
+        "import math\n"
+        "part = Box(100, 100, 20)\n"
+        "part -= Cylinder(5, 24)\n"
+        "part -= Pos(0, 0, 7) * Cylinder(9, 6)\n"
+        "part -= Pos(-35, 35, 4) * Cylinder(3, 8)\n"
+        "for i in range(4):\n"
+        "    a = math.radians(90 * i)\n"
+        "    part -= Pos(30 * math.cos(a), 30 * math.sin(a), 0) * Cylinder(2, 24)\n"
+        "part += Pos(35, 35, 9) * Cylinder(6, 8)\n"
+        "show(part, 'featured')"
     )
+    baseline = json.loads(inspect_part(session, "featured", section_slices=5))
+    monkeypatch.setattr(_bounded, "_FACE_GATE", 1)
+    round_tripped = json.loads(inspect_part(session, "featured", section_slices=5))
 
-    assert result["status"] == "PASS"
-    assert result["bbox"] == {"x": 12.0, "y": 10.0, "z": 8.0}
+    for key in ("bbox", "topology", "holes", "bosses", "patterns", "sections", "warnings"):
+        assert round_tripped[key] == baseline[key], key

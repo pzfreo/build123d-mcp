@@ -50,9 +50,9 @@ def test_compare_fit_routes_to_worker(ws):
     assert "status" in result
 
 
-def test_feature_audit_routes_to_worker(ws):
+def test_inspect_part_routes_to_worker(ws):
     result = json.loads(
-        ws.feature_audit(
+        ws.inspect_part(
             "a",
             section_axis="Z",
             section_slices=3,

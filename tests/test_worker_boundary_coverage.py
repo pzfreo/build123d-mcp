@@ -196,6 +196,11 @@ def _cross_sections(ws, tmp_path):
     assert "error" not in r
 
 
+def _inspect_part(ws, tmp_path):
+    r = json.loads(ws.inspect_part("a"))
+    assert "error" not in r and r["topology"]["solids"] == 1
+
+
 def _resolve(ws, tmp_path):
     r = json.loads(ws.resolve("a", ".faces().sort_by(Axis.Z)[-1]"))
     assert r.get("type") == "Face"
@@ -301,6 +306,7 @@ SESSION_STATEFUL_TOOLS = {
     "find_countersinks": _find_countersinks,
     "find_hole_patterns": _find_hole_patterns,
     "cross_sections": _cross_sections,
+    "inspect_part": _inspect_part,
     "resolve": _resolve,
     "suggest_view_layout": _suggest_view_layout,
     "script": _script,

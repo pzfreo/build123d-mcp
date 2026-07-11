@@ -345,14 +345,14 @@ def cross_sections(object_name: str = "", axis: str = "Z", num_slices: int = 10)
 
 
 @mcp.tool(annotations=_READ_ONLY)
-def feature_audit(
+def inspect_part(
     object_name: str = "",
     section_axis: str = "Z",
     section_slices: int = 7,
     expected: str = "",
 ) -> str:
     """Return one compact generation-checkpoint inventory: bbox, solid/topology counts, holes grouped by axis/diameter/depth/bottom, bosses grouped by axis/diameter/height, recognised patterns with member counts, and a cross-section area profile. expected is an optional JSON object derived from the drawing/spec; supported keys are bbox [x,y,z], solid_count, holes/bosses/patterns group lists, section_varying, and tolerance. Pattern groups can check type, diameter, pitch, direction, center, member_count, and member_diameter. A supplied feature category is an exact inventory: unexpected or ambiguously matched groups fail. With expectations, returns explicit PASS/FAIL plus mismatches. Without them, returns INVENTORY plus heuristic warnings for shallow partial cuts and nearly constant sections. Unsupported expectation keys are rejected; this tool contains no built-in fixture expectations."""
-    return _resolve_session().feature_audit(
+    return _resolve_session().inspect_part(
         object_name,
         section_axis=section_axis,
         section_slices=section_slices,

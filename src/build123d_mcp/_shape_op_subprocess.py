@@ -21,7 +21,7 @@ import sys
 
 def _run(op: str, shapes: dict, params: dict) -> str:
     from build123d_mcp.tools.cross_sections import _cross_sections_report
-    from build123d_mcp.tools.feature_audit import _feature_audit_report
+    from build123d_mcp.tools.inspect_part import _inspect_part_report
     from build123d_mcp.tools.measure import _clearance_report, _measure_report
 
     if op == "measure":
@@ -30,8 +30,8 @@ def _run(op: str, shapes: dict, params: dict) -> str:
         return _cross_sections_report(shapes[""], params["axis"], params["num_slices"])
     if op == "clearance":
         return _clearance_report(shapes["a"], shapes["b"])
-    if op == "feature_audit":
-        return _feature_audit_report(
+    if op == "inspect_part":
+        return _inspect_part_report(
             shapes[""],
             params["object_name"],
             params["section_axis"],
@@ -47,9 +47,11 @@ def main(manifest_path: str, out_path: str) -> None:
     with open(manifest_path) as f:
         manifest = json.load(f)
     try:
-        # measure/cross_sections are wrapper-insensitive; clearance normalises the shape
-        # wrapper itself (measure._surface_distance), so the re-imported shape can be used
-        # as-is here regardless of whether STEP round-tripped Solid↔Compound.
+        # measure/cross_sections are wrapper-insensitive; inspect_part's feature
+        # recognisers are covered by a feature-rich in/out round-trip equality test;
+        # clearance normalises the shape wrapper itself (measure._surface_distance).
+        # The re-imported shape can therefore be used as-is regardless of whether STEP
+        # round-tripped Solid↔Compound.
         shapes = {label: import_step(path) for label, path in manifest["shapes"].items()}
         payload = {"result": _run(manifest["op"], shapes, manifest.get("params", {}))}
     except Exception as exc:  # noqa: BLE001 - any failure → structured error, not a crash

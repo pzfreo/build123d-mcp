@@ -770,8 +770,8 @@ class WorkerSession:
     def cross_sections(self, object_name: str = "", axis: str = "Z", num_slices: int = 10) -> str:
         raise NotImplementedError
 
-    @_op(_tool(f"{_T}.feature_audit:feature_audit"), _export_budget)
-    def feature_audit(
+    @_op(_tool(f"{_T}.inspect_part:inspect_part"), _export_budget)
+    def inspect_part(
         self,
         object_name: str = "",
         section_axis: str = "Z",

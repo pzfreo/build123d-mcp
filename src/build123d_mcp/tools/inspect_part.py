@@ -144,11 +144,30 @@ def _group_matches(actual: dict[str, Any], expected: dict[str, Any], tolerance: 
     return True
 
 
+def _expectations_overlap(first: dict[str, Any], second: dict[str, Any], tolerance: float) -> bool:
+    """Return whether one actual group could satisfy both expectation lines."""
+    numeric = {"diameter", "depth", "height", "pitch", "member_diameter"}
+    vectors = {"center"}
+    axes = {"axis", "direction"}
+    exact = {"member_count", "bottom", "type", "cbore", "spotface"}
+    for key in set(first) & set(second) - {"count"}:
+        if key in numeric and not _matches(first[key], second[key], tolerance):
+            return False
+        if key in vectors and not _vector_matches(first[key], second[key], tolerance):
+            return False
+        if key in axes and _axis_key(first[key]) != _axis_key(second[key]):
+            return False
+        if key in exact and first[key] != second[key]:
+            return False
+    return True
+
+
 def _check_expected_groups(
     kind: str, actual: list[dict], expected: list[dict], tolerance: float
 ) -> list[str]:
     mismatches = []
     matched_counts = [0] * len(expected)
+    matched_groups = [0] * len(expected)
     for group in actual:
         matches = [
             index
@@ -164,6 +183,7 @@ def _check_expected_groups(
             )
         else:
             matched_counts[matches[0]] += int(group["count"])
+            matched_groups[matches[0]] += 1
 
     qualifier_keys = (
         "diameter",
@@ -178,7 +198,12 @@ def _check_expected_groups(
         "bottom",
         "type",
     )
-    for wanted, actual_count in zip(expected, matched_counts, strict=True):
+    for index, (wanted, actual_count) in enumerate(zip(expected, matched_counts, strict=True)):
+        if matched_groups[index] > 1:
+            mismatches.append(
+                f"underspecified {kind} expectation matched {matched_groups[index]} distinct "
+                "actual groups; add axis, depth, bottom, or other distinguishing qualifiers"
+            )
         wanted_count = int(wanted.get("count", 1))
         if actual_count != wanted_count:
             qualifiers = ", ".join(
@@ -267,6 +292,14 @@ def _validate_expectation(expectation: dict[str, Any]) -> None:
             for key in ("axis", "direction", "center"):
                 if key in group:
                     _validate_vector(group[key], f"{label}.{key}")
+        for first_index, first in enumerate(groups):
+            for second_index in range(first_index + 1, len(groups)):
+                if _expectations_overlap(first, groups[second_index], tolerance):
+                    raise ValueError(
+                        f"expected.{kind}[{first_index}] overlaps "
+                        f"expected.{kind}[{second_index}]; combine them or add distinguishing "
+                        "qualifiers"
+                    )
 
 
 def _expectation_mismatches(report: dict[str, Any], expected: dict[str, Any]) -> list[str]:
@@ -302,7 +335,7 @@ def _expectation_mismatches(report: dict[str, Any], expected: dict[str, Any]) ->
     return mismatches
 
 
-def feature_audit(
+def inspect_part(
     session,
     object_name: str = "",
     section_axis: str = "Z",
@@ -324,7 +357,10 @@ def feature_audit(
     from build123d_mcp.tools._bounded import run_bounded_shape_op
 
     shape = _resolve_shape(session, object_name)
-    expectation = json.loads(expected) if expected.strip() else {}
+    try:
+        expectation = json.loads(expected) if expected.strip() else {}
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"expected must be valid JSON: {exc.msg}") from exc
     if not isinstance(expectation, dict):
         raise ValueError("expected must be a JSON object")
     if expected.strip():
@@ -333,7 +369,7 @@ def feature_audit(
     slices = max(2, min(int(section_slices), 15))
     return run_bounded_shape_op(
         session,
-        "feature_audit",
+        "inspect_part",
         {"": shape},
         {
             "object_name": object_name,
@@ -341,13 +377,13 @@ def feature_audit(
             "section_slices": slices,
             "expectation": expectation,
         },
-        in_process=lambda: _feature_audit_report(
+        in_process=lambda: _inspect_part_report(
             shape, object_name, section_axis, slices, expectation
         ),
     )
 
 
-def _feature_audit_report(
+def _inspect_part_report(
     shape,
     object_name: str,
     section_axis: str,

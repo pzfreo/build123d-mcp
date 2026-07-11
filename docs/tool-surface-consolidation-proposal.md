@@ -40,9 +40,14 @@ one default product surface.
 
 ### Inspection
 
-- `inspect_part(object_name="", expected="", detail="")`
+- `inspect_part(object_name="", expected="", section_axis="Z", section_slices=7)`
 - `compare(a="", b="", kind="shape")`
 - `validate(object_name="")`
+
+The standalone `measure` MCP tool remains visible during the migration. The normal
+quick loop should use the existing in-`execute()` `measure(shape)` Python helper after
+each boolean; `inspect_part` is the heavier checkpoint, not a replacement for every
+fast measurement.
 
 ### Session
 
@@ -53,9 +58,22 @@ one default product surface.
 - `reset()`
 - `last_error()`
 
-This is approximately 12 to 14 tools rather than 38. The exact list should be
-confirmed by usage analysis before removal, but the categories and consolidation
-boundary should remain stable.
+### Drawing
+
+The drawing tools remain in the default surface until #421 makes an explicit,
+benchmark-backed decision about them:
+
+- `inspect_drawing`;
+- `view_axes`;
+- `lint_drawing`;
+- `render_drawing`;
+- `save_drawing_annotations`;
+- `suggest_view_layout`.
+
+Drawing is a real supported workflow with its own skill. It must not be silently
+dropped to meet an arbitrary tool-count target. Including it means the first
+consolidated surface will likely contain approximately 18 to 20 tools rather than the
+original 12-to-14 estimate.
 
 `validate` remains separate because "is this a valid solid?" is a frequent operation
 with a small, unambiguous contract. `compare` remains separate because before/after
@@ -67,7 +85,8 @@ comparison is central to editing and naturally operates on two objects.
 inspect_part(
     object_name="",
     expected="",
-    detail=""
+    section_axis="Z",
+    section_slices=7
 )
 ```
 
@@ -82,21 +101,12 @@ The default response is compact and always includes:
 - warnings;
 - an optional expectation verdict.
 
-`detail` is only for follow-up diagnosis:
-
-```text
-detail=""
-detail="features"
-detail="sections"
-detail="topology"
-detail="edit_candidates"
-```
-
-It expands evidence but does not alter verdict semantics.
-
-Public `section_axis` and `section_slices` parameters should be removed. The
-implementation should inspect principal axes automatically and use a stable, bounded
-sampling strategy.
+Do not add `detail` modes in the initial consolidation. Compact default plus a
+structured expectation language is already substantial; adding multiple diagnostic
+modes risks turning `inspect_part` into the god tool this proposal explicitly rejects.
+Follow-up evidence should first use the in-`execute()` analysis helpers. Automatic
+principal-axis selection may later remove `section_axis` and `section_slices`, but only
+after its reliability is demonstrated.
 
 ## Expectation contract
 
@@ -143,7 +153,6 @@ the verdict.
 
 The following operations become internal analysers used by `inspect_part`:
 
-- `measure`;
 - `cross_sections`;
 - `find_holes`;
 - `find_hole_patterns`;
@@ -151,10 +160,14 @@ The following operations become internal analysers used by `inspect_part`:
 - `find_bored_bosses`;
 - `find_countersinks`;
 - `locate_gate_defects`;
-- the relevant implementation from `feature_audit`.
+- the relevant implementation from `inspect_part`.
 
 They should remain independently tested Python functions. Consolidation applies to
 MCP exposure, not implementation structure.
+
+`measure` is deliberately excluded from this initial removal list. Its standalone MCP
+exposure can be reconsidered only after benchmark logs show that agents reliably use
+the in-`execute()` helper for the tight boolean-verification loop.
 
 `resolve` should become an `execute()` namespace helper unless usage evidence shows
 that agents need it as a standalone MCP call.
@@ -199,9 +212,8 @@ logs before changing exposure.
 
 ### 2. Finalise `inspect_part`
 
-Rename the issue-417 concept from `feature_audit` to `inspect_part`. Narrow its public
-arguments and expectation schema. Add automatic section-axis selection and bounded,
-compact output.
+Build on the issue-417 `inspect_part` checkpoint. Narrow its public arguments and
+expectation schema. Add automatic section-axis selection and bounded, compact output.
 
 ### 3. Reuse internal analysers
 
@@ -209,16 +221,19 @@ Keep recognisers and measurement functions in their existing modules. Implement
 `inspect_part` as orchestration over those functions rather than moving geometry logic
 into one large module.
 
-### 4. Support editing diagnostics
+### 4. Prove editing coverage
 
-Add compact candidate identifiers and `detail="edit_candidates"` for bored bosses,
-countersinks, likely target holes, and other editing evidence. Candidate identifiers
-must remain stable within a session.
+Confirm that the compact report plus in-`execute()` helpers cover bored bosses,
+countersinks, likely target holes, and other editing evidence. Add a new public
+contract only when benchmark traces demonstrate a specific unresolved need.
 
 ### 5. Reduce default registration
 
-Stop registering consolidated specialist tools by default. Register them only when
-`--specialist-tools` is supplied. Keep worker methods and internal Python APIs intact.
+First put the proposed registration changes behind a temporary development-only CLI
+flag and A/B them against the unchanged default. This is migration scaffolding, not a
+permanent user profile. Flip the normal registration default only after the benchmark
+gate passes; then retain `--specialist-tools` as the explicit additive switch. Keep
+worker methods and internal Python APIs intact.
 
 ### 6. Update skills and prompts
 
@@ -249,10 +264,12 @@ retries, and incorrect tool selections.
 
 ## Acceptance criteria
 
-- The default MCP surface contains no more than 12 to 15 tools.
+- The default surface is materially smaller; its target count explicitly includes the
+  retained drawing workflow rather than achieving a number by dropping capabilities.
 - One default configuration supports both generation and editing.
 - No benchmark-specific behaviour or expectations exist in MCP.
-- `inspect_part` replaces routine calls to the feature and measurement tools.
+- `inspect_part` replaces routine standalone feature-recogniser and cross-section calls;
+  the quick in-`execute()` measurement loop remains available.
 - Specialist recognisers are available through explicit CLI opt-in.
 - Experimental verification remains disabled by default.
 - Generation and editing scores do not regress.
@@ -262,9 +279,8 @@ retries, and incorrect tool selections.
 
 ## Recommendation for PR #420
 
-Do not merge PR #420 with `feature_audit` as an additional public tool. Amend it to
-introduce `inspect_part`, narrow the expectation contract, and make it the consolidated
-inspection entry point.
+Ship PR #420 as the independently useful `inspect_part` checkpoint. Do not block it on
+the broader surface migration tracked in #421.
 
 Move the existing individual inspection tools behind specialist CLI enablement in a
 follow-up PR, after benchmark comparison confirms that `inspect_part` covers editing as

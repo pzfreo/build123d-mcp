@@ -900,6 +900,7 @@ def test_mcp_lists_all_tools():
         "repair_advice",
         "import_cad_file",
         "cross_sections",
+        "inspect_part",
         "inspect_drawing",
         "view_axes",
         "lint_drawing",
