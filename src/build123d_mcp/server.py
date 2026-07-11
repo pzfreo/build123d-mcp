@@ -344,6 +344,22 @@ def cross_sections(object_name: str = "", axis: str = "Z", num_slices: int = 10)
     return _resolve_session().cross_sections(object_name, axis, num_slices)
 
 
+@mcp.tool(annotations=_READ_ONLY)
+def feature_audit(
+    object_name: str = "",
+    section_axis: str = "Z",
+    section_slices: int = 7,
+    expected: str = "",
+) -> str:
+    """Return one compact generation-checkpoint inventory: bbox, solid/topology counts, holes grouped by axis/diameter/depth/bottom, bosses grouped by axis/diameter/height, recognised patterns with member counts, and a cross-section area profile. expected is an optional JSON object derived from the drawing/spec; supported keys are bbox [x,y,z], solid_count, holes/bosses/patterns group lists, section_varying, and tolerance. Pattern groups can check type, diameter, pitch, direction, center, member_count, and member_diameter. A supplied feature category is an exact inventory: unexpected or ambiguously matched groups fail. With expectations, returns explicit PASS/FAIL plus mismatches. Without them, returns INVENTORY plus heuristic warnings for shallow partial cuts and nearly constant sections. Unsupported expectation keys are rejected; this tool contains no built-in fixture expectations."""
+    return _resolve_session().feature_audit(
+        object_name,
+        section_axis=section_axis,
+        section_slices=section_slices,
+        expected=expected,
+    )
+
+
 @mcp.tool(annotations=_IDEMPOTENT)
 def export(filename: str, format: str = "step", object_name: str = "") -> str:
     """Export model. format: step, stl, dxf, svg, or comma-separated list e.g. 'step,stl' or 'dxf,svg'. 3D shapes (solids) export to step/stl; 2D shapes (Sketches and dimensioned drawings composed via build123d.drafting) export to dxf/svg. Mixing 2D and 3D formats for the same shape errors with a clear message. object_name: named object from show(), '*' to export all named shapes as a combined assembly (default: current shape). STEP exports carry the session names as labels — single-object exports use the object_name, '*' exports produce a Compound labelled 'assembly' with each child labelled by its show() name. Downstream CAD tools (FreeCAD, Fusion) will see the structured assembly with named bodies. Use dxf for engineering-drawing handoff to other CAD tools; svg for embedding in docs/wikis. The result echoes the exported shape's volume/bbox/face count (or bbox/edge count for 2D) as a final sanity check that the right, non-degenerate object was written."""

@@ -770,6 +770,16 @@ class WorkerSession:
     def cross_sections(self, object_name: str = "", axis: str = "Z", num_slices: int = 10) -> str:
         raise NotImplementedError
 
+    @_op(_tool(f"{_T}.feature_audit:feature_audit"), _export_budget)
+    def feature_audit(
+        self,
+        object_name: str = "",
+        section_axis: str = "Z",
+        section_slices: int = 7,
+        expected: str = "",
+    ) -> str:
+        raise NotImplementedError
+
     @_op(_op_save_snapshot, _GEOMETRY_TIMEOUT)
     def save_snapshot(self, name: str) -> str:
         raise NotImplementedError

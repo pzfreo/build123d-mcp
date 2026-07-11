@@ -36,6 +36,26 @@ def _record(feature) -> dict:
     return {k: _round(v) for k, v in asdict(feature).items()}
 
 
+def _pattern_record(pattern) -> dict:
+    """Serialise a recognised pattern consistently for all public tools."""
+    from build123d_drafting import BoltCircle, LinearArray
+
+    rec: dict = {"holes": [_record(h) for h in getattr(pattern, "holes", [])]}
+    if isinstance(pattern, BoltCircle):
+        rec["type"] = "bolt_circle"
+        rec["center"] = [round(c, 4) for c in pattern.center]
+        rec["diameter"] = pattern.diameter
+    elif isinstance(pattern, LinearArray):
+        rec["type"] = "linear_array"
+        rec["pitch"] = pattern.pitch
+        rec["direction"] = [round(c, 4) for c in pattern.direction]
+    else:
+        rec["type"] = _snake(type(pattern).__name__)
+        if is_dataclass(pattern) and not isinstance(pattern, type):
+            rec.update({k: _round(v) for k, v in asdict(pattern).items() if k != "holes"})
+    return rec
+
+
 def _vec3(value) -> tuple[float, float, float]:
     if hasattr(value, "X"):
         return (float(value.X), float(value.Y), float(value.Z))
@@ -266,7 +286,6 @@ def find_holes(session, object_name: str = "") -> str:
 
 def find_hole_patterns(session, object_name: str = "") -> str:
     """Recognise bolt-circle / linear-array hole patterns on a session object."""
-    from build123d_drafting import BoltCircle, LinearArray
     from build123d_drafting import find_hole_patterns as _find_patterns
     from build123d_drafting import find_holes as _find_holes
 
@@ -274,26 +293,7 @@ def find_hole_patterns(session, object_name: str = "") -> str:
         shape = _resolve_shape(session, object_name)
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
-    patterns = []
-    for p in _find_patterns(_find_holes(shape)):
-        rec: dict = {"holes": [_record(h) for h in getattr(p, "holes", [])]}
-        if isinstance(p, BoltCircle):
-            rec["type"] = "bolt_circle"
-            rec["center"] = [round(c, 4) for c in p.center]
-            rec["diameter"] = p.diameter
-        elif isinstance(p, LinearArray):
-            rec["type"] = "linear_array"
-            rec["pitch"] = p.pitch
-            rec["direction"] = [round(c, 4) for c in p.direction]
-        else:
-            # Forward-compatible: build123d_drafting can return other pattern
-            # types (e.g. RectGrid). Don't assume LinearArray's .pitch/.direction
-            # — tag the type and serialise its fields generically so the tool can
-            # never crash here (was: AttributeError: 'RectGrid' has no 'pitch').
-            rec["type"] = _snake(type(p).__name__)
-            if is_dataclass(p) and not isinstance(p, type):  # a dataclass instance
-                rec.update({k: _round(v) for k, v in asdict(p).items() if k != "holes"})
-        patterns.append(rec)
+    patterns = [_pattern_record(pattern) for pattern in _find_patterns(_find_holes(shape))]
     # default=str so a generic field of an unknown future pattern type (a
     # Vector, enum, set, …) degrades to a string instead of raising TypeError.
     return json.dumps({"count": len(patterns), "patterns": patterns}, default=str)

@@ -21,6 +21,7 @@ import sys
 
 def _run(op: str, shapes: dict, params: dict) -> str:
     from build123d_mcp.tools.cross_sections import _cross_sections_report
+    from build123d_mcp.tools.feature_audit import _feature_audit_report
     from build123d_mcp.tools.measure import _clearance_report, _measure_report
 
     if op == "measure":
@@ -29,6 +30,14 @@ def _run(op: str, shapes: dict, params: dict) -> str:
         return _cross_sections_report(shapes[""], params["axis"], params["num_slices"])
     if op == "clearance":
         return _clearance_report(shapes["a"], shapes["b"])
+    if op == "feature_audit":
+        return _feature_audit_report(
+            shapes[""],
+            params["object_name"],
+            params["section_axis"],
+            params["section_slices"],
+            params["expectation"],
+        )
     raise ValueError(f"unknown op {op!r}")
 
 
