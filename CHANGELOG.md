@@ -6,7 +6,11 @@
 
 - **`import_cad_file()` now accepts 3MF files.** Single-object files preserve the
   existing named-import contract; multi-object files register an aggregate plus
-  deterministic member names and return per-member topology summaries.
+  deterministic member names and return per-member topology summaries. Automatic
+  renders and viewer updates show the aggregate only, while members remain
+  explicitly selectable. Re-import cleanup is ownership-aware, generated names
+  cannot overwrite unrelated session objects, and ZIP expansion is bounded before
+  Lib3MF parses the archive.
 
 ### Fixed
 

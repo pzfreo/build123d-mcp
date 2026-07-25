@@ -1,7 +1,11 @@
 import json
 import os
 
-from build123d_mcp.tools._paths import check_input_size, safe_input_path
+from build123d_mcp.tools._paths import (
+    check_archive_expansion,
+    check_input_size,
+    safe_input_path,
+)
 
 _STEP_EXTS = frozenset({".step", ".stp"})
 _STL_EXTS = frozenset({".stl"})
@@ -30,21 +34,16 @@ def import_cad_file(session, path: str, name: str = "") -> str:
         shapes = [_load_stl(resolved)]
         fmt = "stl"
     else:
+        check_archive_expansion(resolved, "cad")
         shapes = _load_3mf(resolved)
         fmt = "3mf"
 
     if not shapes:
         raise ValueError(f"{fmt.upper()} file contains no geometry")
     shape = shapes[0] if len(shapes) == 1 else _compound(shapes)
-    session.objects[obj_name] = shape
-    session.current_shape = shape
-    member_names = []
-    if len(shapes) > 1:
-        for index, member in enumerate(shapes, start=1):
-            member_name = f"{obj_name}_{index}"
-            session.objects[member_name] = member
-            member_names.append(member_name)
-
+    member_names = tuple(f"{obj_name}_{index}" for index in range(1, len(shapes) + 1))
+    if len(shapes) == 1:
+        member_names = ()
     result = _shape_summary(shape)
     result.update({"imported": obj_name, "format": fmt, "path": resolved})
     if member_names:
@@ -52,6 +51,39 @@ def import_cad_file(session, path: str, name: str = "") -> str:
             {"name": member_name, **_shape_summary(member)}
             for member_name, member in zip(member_names, shapes, strict=True)
         ]
+
+    owned_before = set(session.object_groups.get(obj_name, ()))
+    owned_elsewhere = {
+        member
+        for aggregate, members in session.object_groups.items()
+        if aggregate != obj_name
+        for member in members
+    }
+    if obj_name in owned_elsewhere:
+        raise ValueError(
+            f"Cannot import as '{obj_name}': that name is a member of another imported aggregate."
+        )
+    collisions = sorted(
+        member_name
+        for member_name in member_names
+        if member_name in session.objects and member_name not in owned_before
+    )
+    if collisions:
+        raise ValueError(
+            "Cannot register 3MF members because these generated names already exist: "
+            + ", ".join(collisions)
+        )
+
+    for old_member in owned_before:
+        session.objects.pop(old_member, None)
+    session.objects[obj_name] = shape
+    for member_name, member in zip(member_names, shapes):
+        session.objects[member_name] = member
+    if member_names:
+        session.object_groups[obj_name] = member_names
+    else:
+        session.object_groups.pop(obj_name, None)
+    session.current_shape = shape
     return json.dumps(result, indent=2)
 
 

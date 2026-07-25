@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextvars
 import os
 import tempfile
+import zipfile
 
 _root_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "b123d_fs_root", default=None
@@ -107,6 +108,29 @@ def check_input_size(path: str, kind: str) -> None:
         raise ValueError(
             f"Input file '{path}' is {size} bytes, exceeding the {max_bytes}-byte limit "
             f"for {kind} inputs. Raise {env_var} to allow a larger file."
+        )
+
+
+def check_archive_expansion(path: str, kind: str) -> None:
+    """Bound ZIP member count and total expanded bytes before a parser opens it."""
+    default_bytes, env_var = _INPUT_SIZE_LIMITS[kind]
+    max_bytes = int(os.environ.get(env_var, default_bytes))
+    max_entries = int(os.environ.get("BUILD123D_MAX_ARCHIVE_ENTRIES", "10000"))
+    try:
+        with zipfile.ZipFile(path) as archive:
+            entries = archive.infolist()
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise ValueError(f"Invalid ZIP-based CAD file '{path}': {exc}") from exc
+    if len(entries) > max_entries:
+        raise ValueError(
+            f"Archive '{path}' contains {len(entries)} entries, exceeding the "
+            f"{max_entries}-entry limit. Raise BUILD123D_MAX_ARCHIVE_ENTRIES to allow it."
+        )
+    expanded = sum(entry.file_size for entry in entries)
+    if expanded > max_bytes:
+        raise ValueError(
+            f"Archive '{path}' expands to {expanded} bytes, exceeding the "
+            f"{max_bytes}-byte limit for {kind} inputs. Raise {env_var} to allow it."
         )
 
 
