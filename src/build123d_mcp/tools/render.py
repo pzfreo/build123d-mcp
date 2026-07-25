@@ -116,7 +116,17 @@ def _resolve_shapes(session, objects: str):
             result.append((name, session.objects[name], color))
         return result
     if session.objects:
-        return [(n, s, None) for n, s in session.objects.items()]
+        grouped_members = {
+            member
+            for aggregate, members in getattr(session, "object_groups", {}).items()
+            if aggregate in session.objects
+            for member in members
+        }
+        return [
+            (name, shape, None)
+            for name, shape in session.objects.items()
+            if name not in grouped_members
+        ]
     if session.current_shape is not None:
         return [("shape", session.current_shape, None)]
     raise ValueError("No shape in session. Execute code to create geometry first.")

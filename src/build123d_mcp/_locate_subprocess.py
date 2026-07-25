@@ -368,6 +368,53 @@ def _mesh_vertex_deflection_defects(shape) -> list:
     return out
 
 
+def _mesh_untriangulated_faces(shape) -> list:
+    """Faces missing triangulation at the gate's base deflection, with coordinates."""
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepGProp import BRepGProp
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.BRepTools import BRepTools
+    from OCP.GProp import GProp_GProps
+    from OCP.TopAbs import TopAbs_FACE
+    from OCP.TopExp import TopExp
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.TopoDS import TopoDS
+    from OCP.TopTools import TopTools_IndexedMapOfShape
+
+    occ = shape.wrapped
+    bb = shape.bounding_box()
+    diag = math.dist((bb.min.X, bb.min.Y, bb.min.Z), (bb.max.X, bb.max.Y, bb.max.Z))
+    if diag <= 0:
+        return []
+    deflection = min(0.5, max(0.005, diag * 1e-3))
+    BRepTools.Clean_s(occ)
+    BRepMesh_IncrementalMesh(occ, deflection, False, 0.5, True)
+
+    faces = TopTools_IndexedMapOfShape()
+    TopExp.MapShapes_s(occ, TopAbs_FACE, faces)
+    out = []
+    for fi in range(1, faces.Size() + 1):
+        face = TopoDS.Face_s(faces.FindKey(fi))
+        if BRep_Tool.Triangulation_s(face, TopLoc_Location()) is not None:
+            continue
+        props = GProp_GProps()
+        BRepGProp.SurfaceProperties_s(face, props)
+        center = props.CentreOfMass()
+        out.append(
+            {
+                "kind": "mesh_untriangulated_face",
+                "face_index": fi,
+                "where": [round(center.X(), 3), round(center.Y(), 3), round(center.Z(), 3)],
+                "deflection_mm": round(deflection, 6),
+                "hint": (
+                    "this face has no triangulation at the gate's base tolerance; "
+                    "simplify or rebuild the local face before export"
+                ),
+            }
+        )
+    return out
+
+
 def _mesh_refined_untriangulated_faces(shape) -> list:
     """Faces that tessellate at the gate's base deflection but fail at base/4.
 
@@ -488,7 +535,14 @@ def collect_defects(shape) -> list:
         defects += _mesh_nonmanifold_edges(welded, coord)
         defects += _mesh_nonmanifold_vertices(welded, coord)
     except Exception as exc:  # noqa: BLE001
-        defects.append({"kind": "locator_error", "detail": repr(exc)[:200]})
+        try:
+            base_untriangulated = _mesh_untriangulated_faces(shape)
+        except Exception:  # noqa: BLE001 - preserve the original, more useful failure
+            base_untriangulated = []
+        if base_untriangulated:
+            defects += base_untriangulated
+        else:
+            defects.append({"kind": "locator_error", "detail": repr(exc)[:200]})
     try:
         defects += _mesh_vertex_deflection_defects(shape)
     except Exception as exc:  # noqa: BLE001

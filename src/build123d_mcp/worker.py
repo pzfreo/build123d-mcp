@@ -307,7 +307,15 @@ def _op_pull_viewer_deltas(session: Any, args: dict, library_index: Any) -> Any:
     tool, only while a viewer is attached.
     """
     baseline = session._viewer_baseline
-    objects = session.objects
+    grouped_members = {
+        member
+        for aggregate, members in getattr(session, "object_groups", {}).items()
+        if aggregate in session.objects
+        for member in members
+    }
+    objects = {
+        name: shape for name, shape in session.objects.items() if name not in grouped_members
+    }
     upsert_names = [name for name, shape in objects.items() if baseline.get(name) != id(shape)]
     remove = [name for name in baseline if name not in objects]
 

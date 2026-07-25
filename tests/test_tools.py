@@ -2226,6 +2226,136 @@ def test_import_stl_round_trip(session, tmp_path, monkeypatch):
     assert "ref_stl" in session.objects
 
 
+def test_import_3mf_registers_aggregate_and_members(session, tmp_path):
+    from build123d import Box, Mesher, Pos
+
+    from build123d_mcp.tools.import_step import import_cad_file
+
+    path = tmp_path / "assembly.3mf"
+    mesher = Mesher()
+    mesher.add_shape([Box(10, 10, 10), Pos(20, 0, 0) * Box(5, 5, 5)])
+    mesher.write(path)
+
+    data = json.loads(import_cad_file(session, str(path), "assembly"))
+
+    assert data["format"] == "3mf"
+    assert data["imported"] == "assembly"
+    assert data["solids"] == 2
+    assert [member["name"] for member in data["members"]] == ["assembly_1", "assembly_2"]
+    assert all(member["solids"] == 1 for member in data["members"])
+    assert {"assembly", "assembly_1", "assembly_2"} <= session.objects.keys()
+    assert session.current_shape is session.objects["assembly"]
+    from build123d_mcp.tools.render import _resolve_shapes
+
+    assert [name for name, _shape, _color in _resolve_shapes(session, "")] == ["assembly"]
+    assert [name for name, _shape, _color in _resolve_shapes(session, "assembly_1")] == [
+        "assembly_1"
+    ]
+
+
+def test_import_3mf_reimport_removes_owned_members(session, tmp_path):
+    from build123d import Box, Mesher, Pos
+
+    from build123d_mcp.tools.import_step import import_cad_file
+
+    multi = tmp_path / "multi.3mf"
+    writer = Mesher()
+    writer.add_shape([Box(10, 10, 10), Pos(20, 0, 0) * Box(5, 5, 5)])
+    writer.write(multi)
+    import_cad_file(session, str(multi), "part")
+
+    single = tmp_path / "single.3mf"
+    writer = Mesher()
+    writer.add_shape(Box(2, 2, 2))
+    writer.write(single)
+    import_cad_file(session, str(single), "part")
+
+    assert set(session.objects) == {"part"}
+    assert "part" not in session.object_groups
+
+
+def test_import_3mf_member_collision_is_transactional(session, tmp_path):
+    from build123d import Box, Mesher, Pos
+
+    from build123d_mcp.tools.import_step import import_cad_file
+
+    existing = Box(3, 3, 3)
+    session.objects["part_1"] = existing
+    session.current_shape = existing
+    path = tmp_path / "multi.3mf"
+    writer = Mesher()
+    writer.add_shape([Box(1, 1, 1), Pos(3, 0, 0) * Box(1, 1, 1)])
+    writer.write(path)
+
+    with pytest.raises(ValueError, match="part_1"):
+        import_cad_file(session, str(path), "part")
+
+    assert session.objects == {"part_1": existing}
+    assert session.current_shape is existing
+    assert session.object_groups == {}
+
+
+def test_explicit_member_replacement_detaches_import_ownership(session, tmp_path):
+    from build123d import Box, Mesher, Pos
+
+    from build123d_mcp.tools.import_step import import_cad_file
+    from build123d_mcp.tools.render import _resolve_shapes
+
+    path = tmp_path / "multi.3mf"
+    writer = Mesher()
+    writer.add_shape([Box(1, 1, 1), Pos(3, 0, 0) * Box(1, 1, 1)])
+    writer.write(path)
+    import_cad_file(session, str(path), "part")
+
+    session.namespace["show"](Box(2, 2, 2), "part_1")
+
+    assert session.object_groups["part"] == ("part_2",)
+    assert [name for name, _shape, _color in _resolve_shapes(session, "")] == [
+        "part",
+        "part_1",
+    ]
+
+
+def test_viewer_deltas_publish_3mf_aggregate_only(session, tmp_path, monkeypatch):
+    from build123d import Box, Mesher, Pos
+
+    import build123d_mcp.tools.render as render_module
+    from build123d_mcp.tools.import_step import import_cad_file
+    from build123d_mcp.worker import _op_pull_viewer_deltas
+
+    path = tmp_path / "multi.3mf"
+    writer = Mesher()
+    writer.add_shape([Box(1, 1, 1), Pos(3, 0, 0) * Box(1, 1, 1)])
+    writer.write(path)
+    import_cad_file(session, str(path), "part")
+
+    seen = []
+
+    def _fake_tessellate(shapes, _quality):
+        seen.extend(name for name, _shape, _color in shapes)
+        return ({name: ([], []) for name in seen}, [])
+
+    monkeypatch.setattr(render_module, "_tessellate_shapes_bounded", _fake_tessellate)
+    result = _op_pull_viewer_deltas(session, {}, None)
+
+    assert seen == ["part"]
+    assert set(result["upsert"]) == {"part"}
+
+
+def test_import_3mf_rejects_empty_file(session, tmp_path, monkeypatch):
+    import zipfile
+
+    from build123d_mcp.tools import import_step
+
+    path = tmp_path / "empty.3mf"
+    with zipfile.ZipFile(path, "w"):
+        pass
+    monkeypatch.setattr(import_step, "_load_3mf", lambda _path: [])
+
+    with pytest.raises(ValueError, match="contains no geometry"):
+        import_step.import_cad_file(session, str(path))
+
+
 def test_import_cad_file_missing_file_raises(session, tmp_path):
     from build123d_mcp.tools.import_step import import_cad_file
 

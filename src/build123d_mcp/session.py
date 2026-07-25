@@ -66,6 +66,10 @@ class Session:
         self.namespace: dict[str, Any] = {}
         self.current_shape: Any = None
         self.objects: dict[str, Any] = {}
+        # Aggregate object name -> member object names. Multi-object imports expose
+        # members for explicit selection while default render/viewer paths show only
+        # the aggregate, avoiding duplicate co-located geometry.
+        self.object_groups: dict[str, tuple[str, ...]] = {}
         self.snapshots: dict[str, Any] = {}
         self.last_error_detail: dict[str, Any] | None = None
         self.drawing_annotations: dict[str, Any] = {}
@@ -80,6 +84,19 @@ class Session:
         # post-exec variable scan from overriding that registration (#236).
         self._shape_explicitly_set = False
         self._inject_builtins()
+
+    def release_object_name(self, name: str) -> None:
+        """Detach a name from import-group ownership before explicitly replacing it."""
+        for member in self.object_groups.pop(name, ()):
+            self.objects.pop(member, None)
+        for aggregate, members in list(self.object_groups.items()):
+            if name not in members:
+                continue
+            remaining = tuple(member for member in members if member != name)
+            if remaining:
+                self.object_groups[aggregate] = remaining
+            else:
+                self.object_groups.pop(aggregate, None)
 
     def _inject_builtins(self) -> None:
         self.namespace["__builtins__"] = make_restricted_builtins()
@@ -177,6 +194,7 @@ class Session:
                 except Exception:
                     pass
             drawing_annotations[name] = meta
+            session_ref.release_object_name(name)
             objects[name] = shape
             session_ref.current_shape = shape
             session_ref._shape_explicitly_set = True
@@ -187,6 +205,7 @@ class Session:
         def show(shape: Any, name: str | None = None) -> None:
             if name is None:
                 name = "shape"
+            session_ref.release_object_name(name)
             objects[name] = shape
             session_ref.current_shape = shape
             session_ref._shape_explicitly_set = True
@@ -242,6 +261,7 @@ class Session:
             if name is None:
                 name = "centerline"
             drawing_annotations[name] = {"type": "centerline"}
+            session_ref.release_object_name(name)
             objects[name] = shape
             session_ref.current_shape = shape
             session_ref._shape_explicitly_set = True
@@ -708,6 +728,7 @@ class Session:
         }
         shape_before = self.current_shape
         objects_before = dict(self.objects)
+        object_groups_before = dict(self.object_groups)
         annotations_before = dict(self.drawing_annotations)
         self._shape_explicitly_set = False
         # Reference point for the execute() timeout: an in-namespace analysis primitive
@@ -746,6 +767,8 @@ class Session:
             self.current_shape = shape_before
             self.objects.clear()
             self.objects.update(objects_before)
+            self.object_groups.clear()
+            self.object_groups.update(object_groups_before)
             self.drawing_annotations.clear()
             self.drawing_annotations.update(annotations_before)
             self.last_error_detail = {
@@ -760,6 +783,8 @@ class Session:
             self.current_shape = shape_before
             self.objects.clear()
             self.objects.update(objects_before)
+            self.object_groups.clear()
+            self.object_groups.update(object_groups_before)
             self.drawing_annotations.clear()
             self.drawing_annotations.update(annotations_before)
             msg = str(e) or "Constraint failed"
@@ -905,6 +930,7 @@ class Session:
         self.snapshots[name] = {
             "current_shape": self._copy_shape(self.current_shape),
             "objects": {k: self._copy_shape(v) for k, v in self.objects.items()},
+            "object_groups": dict(self.object_groups),
         }
 
     def restore_snapshot(self, name: str) -> None:
@@ -914,6 +940,8 @@ class Session:
         self.current_shape = snap["current_shape"]
         self.objects.clear()
         self.objects.update(snap["objects"])
+        self.object_groups.clear()
+        self.object_groups.update(snap.get("object_groups", {}))
 
     def _summarise_var_changes(self, before: dict) -> str:
         """Return a compact summary of scalar variables added or changed since *before*.
@@ -950,6 +978,7 @@ class Session:
         self.namespace.clear()
         self.current_shape = None
         self.objects.clear()
+        self.object_groups.clear()
         self.snapshots.clear()
         self.drawing_annotations.clear()
         self.drawing_page = None

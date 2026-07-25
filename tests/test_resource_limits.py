@@ -19,6 +19,7 @@ real defaults are generous.
 """
 
 import json
+import zipfile
 
 import pytest
 
@@ -112,6 +113,27 @@ def test_import_cad_file_rejects_oversized_file(session, tmp_path, monkeypatch):
     big.write_bytes(b"x" * 100)
     with pytest.raises(ValueError, match="exceeding"):
         import_cad_file(session, str(big))
+
+
+def test_import_3mf_rejects_oversized_expanded_archive(session, tmp_path, monkeypatch):
+    monkeypatch.setenv("BUILD123D_MAX_CAD_BYTES", "500")
+    path = tmp_path / "bomb.3mf"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("3D/3dmodel.model", "x" * 1000)
+
+    with pytest.raises(ValueError, match="expands to"):
+        import_cad_file(session, str(path))
+
+
+def test_import_3mf_rejects_excessive_archive_entries(session, tmp_path, monkeypatch):
+    monkeypatch.setenv("BUILD123D_MAX_ARCHIVE_ENTRIES", "2")
+    path = tmp_path / "many.3mf"
+    with zipfile.ZipFile(path, "w") as archive:
+        for index in range(3):
+            archive.writestr(f"entry-{index}", "x")
+
+    with pytest.raises(ValueError, match="entry limit"):
+        import_cad_file(session, str(path))
 
 
 # --- sidecar (.dims.json) size preflight -----------------------------------

@@ -87,6 +87,14 @@ _DEFECT_DIAGNOSTICS = {
             "then run the export gate."
         ),
     },
+    "mesh_untriangulated_face": {
+        "diagnostic_class": "mesh_quality",
+        "repair_family": "rebuild_unmeshable_face",
+        "next_step": (
+            "Use face_index/where to find the face that cannot be triangulated at the "
+            "base tolerance, then simplify or rebuild it before export."
+        ),
+    },
     "mesh_vertex_deflection_defect": {
         "diagnostic_class": "mesh_quality",
         "repair_family": "repatch_boundary_to_vertices",
@@ -112,6 +120,7 @@ _DEFECT_PRIORITY = (
     "mesh_open_edge",
     "mesh_nonmanifold_edge",
     "mesh_nonmanifold_vertex",
+    "mesh_untriangulated_face",
     "mesh_refined_untriangulated_face",
     "mesh_vertex_deflection_defect",
     "locator_error",
@@ -214,8 +223,9 @@ def locate_gate_defects(session, object_name: str = "") -> str:
     than the gate's own exact topology-stitched check; re-check with the export
     gate after a fix), the mesh self-touches a CAD scorer rejects —
     ``mesh_nonmanifold_edge`` and ``mesh_nonmanifold_vertex`` (corner-to-corner
-    touch), ``mesh_refined_untriangulated_face`` (a face that only fails to
-    tessellate at a finer tolerance) — and ``mesh_vertex_deflection_defect`` (a
+    touch), ``mesh_untriangulated_face`` (a face that fails to tessellate at the
+    base tolerance), ``mesh_refined_untriangulated_face`` (a face that only fails
+    at a finer tolerance) — and ``mesh_vertex_deflection_defect`` (a
     tessellated edge endpoint
     that misses its BREP vertex by more than the mesh deflection — a
     patched/healed face whose boundary is topologically closed but
