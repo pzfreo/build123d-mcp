@@ -126,6 +126,8 @@ def check_archive_expansion(path: str, kind: str) -> None:
             f"Archive '{path}' contains {len(entries)} entries, exceeding the "
             f"{max_entries}-entry limit. Raise BUILD123D_MAX_ARCHIVE_ENTRIES to allow it."
         )
+    # Best-effort bound: file_size comes from the (untrusted) central directory.
+    # A mismatched declaration surfaces as a BadZipFile when the parser reads it.
     expanded = sum(entry.file_size for entry in entries)
     if expanded > max_bytes:
         raise ValueError(

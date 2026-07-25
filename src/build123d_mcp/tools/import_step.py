@@ -41,9 +41,11 @@ def import_cad_file(session, path: str, name: str = "") -> str:
     if not shapes:
         raise ValueError(f"{fmt.upper()} file contains no geometry")
     shape = shapes[0] if len(shapes) == 1 else _compound(shapes)
-    member_names = tuple(f"{obj_name}_{index}" for index in range(1, len(shapes) + 1))
-    if len(shapes) == 1:
-        member_names = ()
+    member_names = (
+        tuple(f"{obj_name}_{index}" for index in range(1, len(shapes) + 1))
+        if len(shapes) > 1
+        else ()
+    )
     result = _shape_summary(shape)
     result.update({"imported": obj_name, "format": fmt, "path": resolved})
     if member_names:
@@ -77,7 +79,8 @@ def import_cad_file(session, path: str, name: str = "") -> str:
     for old_member in owned_before:
         session.objects.pop(old_member, None)
     session.objects[obj_name] = shape
-    for member_name, member in zip(member_names, shapes):
+    # Single-object imports have empty member_names; multi-object imports pair 1:1.
+    for member_name, member in zip(member_names, shapes, strict=False):
         session.objects[member_name] = member
     if member_names:
         session.object_groups[obj_name] = member_names
