@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.3.80
+
+### Added
+
+- **`import_cad_file()` now accepts 3MF files.** Single-object files preserve the
+  existing named-import contract; multi-object files register an aggregate plus
+  deterministic member names and return per-member topology summaries.
+
+### Fixed
+
+- **`locate_gate_defects()` now identifies faces missing triangulation at the base
+  gate tolerance.** It returns `mesh_untriangulated_face` with face index and center
+  instead of collapsing the tessellation failure into a coordinate-free
+  `locator_error`.
+
+### Changed
+
+- **`b123d-edit` documents verification for mesh-derived solids.** The workflow now
+  covers inherited topology defects, coincident cutter boundaries, post-boolean
+  solid-count checks, recognizer limitations on faceted faces, and control-based fit
+  checks without presenting fixture-specific tolerances as universal rules.
+
 ## v0.3.78
 
 ### Changed

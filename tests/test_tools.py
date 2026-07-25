@@ -2226,6 +2226,38 @@ def test_import_stl_round_trip(session, tmp_path, monkeypatch):
     assert "ref_stl" in session.objects
 
 
+def test_import_3mf_registers_aggregate_and_members(session, tmp_path):
+    from build123d import Box, Mesher, Pos
+
+    from build123d_mcp.tools.import_step import import_cad_file
+
+    path = tmp_path / "assembly.3mf"
+    mesher = Mesher()
+    mesher.add_shape([Box(10, 10, 10), Pos(20, 0, 0) * Box(5, 5, 5)])
+    mesher.write(path)
+
+    data = json.loads(import_cad_file(session, str(path), "assembly"))
+
+    assert data["format"] == "3mf"
+    assert data["imported"] == "assembly"
+    assert data["solids"] == 2
+    assert [member["name"] for member in data["members"]] == ["assembly_1", "assembly_2"]
+    assert all(member["solids"] == 1 for member in data["members"])
+    assert {"assembly", "assembly_1", "assembly_2"} <= session.objects.keys()
+    assert session.current_shape is session.objects["assembly"]
+
+
+def test_import_3mf_rejects_empty_file(session, tmp_path, monkeypatch):
+    from build123d_mcp.tools import import_step
+
+    path = tmp_path / "empty.3mf"
+    path.write_bytes(b"not inspected because Mesher is stubbed")
+    monkeypatch.setattr(import_step, "_load_3mf", lambda _path: [])
+
+    with pytest.raises(ValueError, match="contains no geometry"):
+        import_step.import_cad_file(session, str(path))
+
+
 def test_import_cad_file_missing_file_raises(session, tmp_path):
     from build123d_mcp.tools.import_step import import_cad_file
 

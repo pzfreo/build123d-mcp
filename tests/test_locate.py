@@ -104,6 +104,32 @@ def test_mesh_vertex_deflection_defect_with_coordinates(monkeypatch):
     assert d["max_deviation_mm"] == pytest.approx(1.0, abs=0.05)
 
 
+def test_base_untriangulated_face_has_coordinates_without_weld_crash(monkeypatch):
+    """A face missing at the base mesh tolerance is the defect, not locator_error."""
+    from build123d import Box
+    from OCP.BRep import BRep_Tool
+
+    from build123d_mcp._locate_subprocess import collect_defects
+
+    box = Box(10, 10, 10)
+    target = box.faces()[0].wrapped
+    orig_tri = BRep_Tool.Triangulation_s
+
+    def _missing_tri(face, loc):
+        if face.IsSame(target):
+            return None
+        return orig_tri(face, loc)
+
+    monkeypatch.setattr(BRep_Tool, "Triangulation_s", staticmethod(_missing_tri))
+
+    defects = collect_defects(box)
+    missing = [d for d in defects if d["kind"] == "mesh_untriangulated_face"]
+    assert len(missing) == 1, defects
+    assert missing[0]["face_index"] >= 1
+    assert len(missing[0]["where"]) == 3
+    assert not any(d["kind"] == "locator_error" and "NbNodes" in d["detail"] for d in defects)
+
+
 def test_refined_untriangulated_face_with_coordinates(monkeypatch):
     """The locator should point at a face that only disappears during the refined
     triangulation probe, matching the gate's `refined_untriangulated_faces` count."""

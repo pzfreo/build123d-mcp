@@ -163,6 +163,27 @@ that evidence is clean, keep the validated defeatured result instead of replacin
 it with a raw boolean that preserves old face partitioning but creates extra
 seam faces.
 
+For mesh-derived solids imported from 3MF or reconstructed from tessellated data,
+add these checks to the loop:
+
+- Record the baseline solid count and gate result before editing. Faceted input can
+  contain inherited seams or near-coincident shells that only separate when a
+  boolean forces OCC to rebuild topology.
+- Do not place a cutter boundary exactly on the face being moved. Extend it a small,
+  scale-appropriate distance into open space, then verify that the result contains
+  no zero-thickness fragments. Treat `0.05 mm` as an observed example, not a
+  universal tolerance.
+- After every boolean, assert the intended solid count. If an unintended microscopic
+  gap appears, diagnose it before considering a tolerant fuse; choose any fuse
+  tolerance from the measured gap and verify protected dimensions afterwards.
+- Analytic recognisers can legitimately return zero on faceted cylinders. Confirm
+  whether the faces are analytic before interpreting an empty `find_holes()` or
+  `find_bosses()` result as absence of the feature.
+- Mesh booleans and before/after intersections can be unstable on dirty inputs.
+  Cross-check the result's direct dimensions, solid count, and fit properties. For
+  collision tests near facet noise, compare against an unchanged control and sweep
+  a small allowance rather than trusting one absolute overlap volume.
+
 `export()` is the final gate because it checks the written and re-imported STEP.
 A `validate()` pass in memory is useful but not the final acceptance proof.
 If the edited shape fails this gate, call `repair_advice(error_text=..., goal=...)`
