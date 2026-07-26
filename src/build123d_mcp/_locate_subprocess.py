@@ -1,9 +1,12 @@
 """Out-of-process defect locator for ``locate_gate_defects`` (see tools/locate.py).
 
-Run as ``python -m build123d_mcp._locate_subprocess <in.step> <out.json>``. Imports
-the STEP, runs the same checks the validity gate uses, and writes a JSON list of
-defects **with 3D coordinates** — so the agent can repair a specific edge/face
+Run as ``python -m build123d_mcp._locate_subprocess <in.step> <out.json> [budget_s]``.
+Imports the STEP, runs the same checks the validity gate uses, and writes a JSON list
+of defects **with 3D coordinates** — so the agent can repair a specific edge/face
 instead of guessing blindly (the validate/export gate reports only counts).
+``budget_s`` is the wall-clock the parent will wait before killing us; the mesh
+checks bound themselves below it so a slow check returns a per-check error instead
+of losing every defect the cheap checks already found.
 
 Why a subprocess: the mesh non-manifold check tessellates (OCC ``BRepMesh``, an
 un-interruptible native call that can run for minutes on a complex part). The
@@ -17,12 +20,17 @@ import math
 import sys
 import time
 
-# Base triangle and wall-clock budgets for the vertex-deflection exact pass. The
-# finite deadline also activates the gate's finer-rung triangle ceiling, so the
-# same bounds apply when process creation is unavailable and collect_defects()
-# runs in-process.
+# Base triangle budget for the vertex-deflection exact pass. The wall-clock bound
+# comes from the caller's deadline (the parent's own subprocess budget, less the
+# margin below); with no deadline the gate applies its own _GATE_MESH_BUDGET_S.
+# Either way the deadline is finite, which is what activates the gate's finer-rung
+# triangle ceiling — so the same bounds apply when process creation is unavailable
+# and collect_defects() runs in-process.
 _VERTEX_DEFLECTION_MAX_TRIS = 300_000
-_VERTEX_DEFLECTION_BUDGET_S = 35.0
+
+# Wall-clock reserved out of the parent's budget for importing the STEP and writing
+# the JSON, so we finish reporting before the parent's hard kill lands.
+_OUTPUT_MARGIN_S = 5.0
 
 
 def _brep_invalid_faces(solid) -> list:
@@ -242,7 +250,7 @@ def _mesh_nonmanifold_vertices(welded, coord) -> list:
     return out
 
 
-def _mesh_vertex_deflection_defects(shape) -> list:
+def _mesh_vertex_deflection_defects(shape, deadline: float | None = None) -> list:
     """Return the exact gate's vertex-deflection evidence with coordinates.
 
     The gate owns the deflection ladder and stops at the first rung that closes
@@ -256,14 +264,20 @@ def _mesh_vertex_deflection_defects(shape) -> list:
     result = _mesh_defects_exact(
         shape,
         max_triangles=_VERTEX_DEFLECTION_MAX_TRIS,
-        deadline=time.monotonic() + _VERTEX_DEFLECTION_BUDGET_S,
+        deadline=deadline,
         vertex_deflection_evidence=evidence,
         run_refined_probe=False,
     )
     if not result.ok:
+        # The gate could not reach a verdict — too large to mesh/stitch in budget,
+        # or open at the base rung and above the ladder's base-triangle cap so the
+        # finer rungs never ran. Either way the ladder-only vertices this locator
+        # exists to find were not examined; say so rather than return an empty list
+        # the caller would read as "no vertex-deflection defects".
         raise RuntimeError(
-            "exact vertex-deflection locator exceeded its mesh budget — "
-            "skipped, other locators still ran"
+            "the exact mesh gate could not analyse this shape within its triangle/time "
+            "budget, so vertex-deflection defects were not located — other locators "
+            "still ran"
         )
 
     out = []
@@ -428,7 +442,7 @@ def _mesh_refined_untriangulated_faces(shape) -> list:
     return out
 
 
-def collect_defects(shape) -> list:
+def collect_defects(shape, deadline: float | None = None) -> list:
     """Run every locator on a build123d shape and return the defect list.
 
     B-rep checks run on the WHOLE shape (not just the first solid) so a multi-solid
@@ -436,6 +450,11 @@ def collect_defects(shape) -> list:
     whole shape. The mesh soup is welded once and shared by the edge + vertex
     checks. One failing check records a ``locator_error`` rather than losing the
     rest. Shared by the subprocess ``main`` and the tool's in-process fallback.
+
+    ``deadline`` is a ``time.monotonic()`` instant the exact vertex-deflection pass
+    must stay under — the caller's own budget, so that pass cannot overrun the hard
+    kill (or the worker op-timeout on the in-process path) and lose the defects the
+    cheap checks already collected. ``None`` leaves the gate's own budget in force.
     """
     defects: list = []
     for finder in (
@@ -461,7 +480,7 @@ def collect_defects(shape) -> list:
         else:
             defects.append({"kind": "locator_error", "detail": repr(exc)[:200]})
     try:
-        defects += _mesh_vertex_deflection_defects(shape)
+        defects += _mesh_vertex_deflection_defects(shape, deadline)
     except Exception as exc:  # noqa: BLE001
         defects.append({"kind": "locator_error", "detail": repr(exc)[:200]})
     try:
@@ -471,13 +490,14 @@ def collect_defects(shape) -> list:
     return defects
 
 
-def main(in_step: str, out_json: str) -> None:
+def main(in_step: str, out_json: str, budget_s: float | None = None) -> None:
     from build123d import import_step
 
-    defects = collect_defects(import_step(in_step))
+    deadline = None if budget_s is None else time.monotonic() + budget_s - _OUTPUT_MARGIN_S
+    defects = collect_defects(import_step(in_step), deadline)
     with open(out_json, "w") as f:
         json.dump({"defects": defects}, f)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    main(sys.argv[1], sys.argv[2], float(sys.argv[3]) if len(sys.argv) > 3 else None)

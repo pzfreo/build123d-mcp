@@ -262,7 +262,14 @@ def locate_gate_defects(session, object_name: str = "") -> str:
 
         try:
             proc = subprocess.run(
-                [sys.executable, "-m", "build123d_mcp._locate_subprocess", in_step, out_json],
+                [
+                    sys.executable,
+                    "-m",
+                    "build123d_mcp._locate_subprocess",
+                    in_step,
+                    out_json,
+                    str(remaining),
+                ],
                 capture_output=True,
                 text=True,
                 timeout=remaining,
@@ -279,7 +286,9 @@ def locate_gate_defects(session, object_name: str = "") -> str:
             # subprocess and no worker op-timeout to kill, so run in-process.
             from build123d_mcp._locate_subprocess import collect_defects
 
-            return _format(collect_defects(shape))
+            # Same budget, minus no output margin: there is no JSON file to write
+            # here, but the worker op-timeout still bounds us.
+            return _format(collect_defects(shape, time.monotonic() + remaining))
 
         if proc.returncode != 0 or not os.path.exists(out_json):
             return json.dumps({"error": "defect locator failed: " + (proc.stderr or "")[-300:]})
