@@ -102,6 +102,43 @@ def test_mesh_vertex_deflection_defect_with_coordinates(monkeypatch):
     assert d["kind"] == "mesh_vertex_deflection_defect"
     assert len(d["where"]) == 3
     assert d["max_deviation_mm"] == pytest.approx(1.0, abs=0.05)
+    assert d["deflection_mm"] == pytest.approx(0.017321, abs=1e-6)
+
+
+def test_mesh_vertex_deflection_locator_uses_gate_ladder(monkeypatch):
+    """#398: locate the same ladder-only vertex that the gate counts.
+
+    The missing face keeps the shell open through every rung. The 0.01 mm
+    displacement is below the base threshold but above base/4, so a base-only
+    locator returns nothing while the gate and this locator must both report it.
+    """
+    from build123d import Box, Shell
+    from OCP.BRep import BRep_Tool
+    from OCP.gp import gp_Pnt
+
+    from build123d_mcp._locate_subprocess import _mesh_vertex_deflection_defects
+    from build123d_mcp.tools.validate import _mesh_defects_exact
+
+    shell = Shell(Box(10, 10, 10).faces()[:5])
+    target = shell.vertices()[0].wrapped
+    orig_pnt_s = BRep_Tool.Pnt_s
+
+    def _lying_pnt_s(v):
+        p = orig_pnt_s(v)
+        if v.IsSame(target):
+            return gp_Pnt(p.X() + 0.01, p.Y(), p.Z())
+        return p
+
+    monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
+
+    gate = _mesh_defects_exact(shell)
+    defects = _mesh_vertex_deflection_defects(shell)
+
+    assert gate.vertex_deflection_defects == 1
+    assert len(gate.vertex_deflection_locations) == 1
+    assert len(defects) == gate.vertex_deflection_defects
+    assert defects[0]["max_deviation_mm"] == pytest.approx(0.01, abs=0.001)
+    assert defects[0]["deflection_mm"] < 0.01
 
 
 def test_base_untriangulated_face_has_coordinates_without_weld_crash(monkeypatch):

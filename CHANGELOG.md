@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.81
+
+### Fixed
+
+- **`locate_gate_defects()` now returns coordinates for vertex-deflection defects
+  found only on the gate's finer open-edge ladder rungs.** The exact gate carries
+  each visited rung's vertex location, measured deviation, and active deflection
+  through its structured result inside the bounded locator subprocess. The locator
+  consumes that authoritative evidence instead of repeating a base-only
+  approximation, so visited `/4`, `/16`, or `/32` rungs can expose the same
+  tolerance-sensitive patched boundary in both the gate and locator.
+
 ## v0.3.80
 
 ### Added

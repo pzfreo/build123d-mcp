@@ -519,6 +519,8 @@ def test_mesh_defects_exact_detects_vertex_deflection(monkeypatch):
     result = _mesh_defects_exact(box)
     assert result.ok
     assert result.vertex_deflection_defects == 1
+    assert len(result.vertex_deflection_locations) == 1
+    assert result.vertex_deflection_locations[0][3] == pytest.approx(1.0, abs=0.05)
     assert result.nonmanifold_edges == 0
     assert result.untriangulated_faces == 0
     assert result.refined_untriangulated_faces == 0
@@ -561,6 +563,8 @@ def test_mesh_defects_exact_open_ladder_catches_vertex_deflection_too(monkeypatc
     assert result.open_edges == 4  # the missing face's 4 rim edges — unaffected by the guard
     assert result.refined_untriangulated_faces == 0
     assert result.vertex_deflection_defects == 1  # only reachable via the ladder guard
+    assert len(result.vertex_deflection_locations) == 1
+    assert result.vertex_deflection_locations[0][4] < 0.01
 
 
 def test_mesh_defects_exact_counts_multiple_ladder_only_vertices(monkeypatch):
@@ -597,6 +601,7 @@ def test_mesh_defects_exact_counts_multiple_ladder_only_vertices(monkeypatch):
     assert result.open_edges == 4
     assert result.refined_untriangulated_faces == 0
     assert result.vertex_deflection_defects == 2  # both distinct vertices counted
+    assert len(result.vertex_deflection_locations) == 2
 
 
 def test_mesh_defects_exact_no_double_count_when_base_and_ladder_agree(monkeypatch):
@@ -625,6 +630,7 @@ def test_mesh_defects_exact_no_double_count_when_base_and_ladder_agree(monkeypat
     assert result.open_edges == 4
     assert result.refined_untriangulated_faces == 0
     assert result.vertex_deflection_defects == 1  # same vertex found twice, deduped
+    assert len(result.vertex_deflection_locations) == 1
 
 
 # --- out-of-process mesh gate (export retry for parts too large to mesh in-budget) ---
