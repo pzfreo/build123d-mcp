@@ -1206,9 +1206,7 @@ def render_view(
             )
             result["png"] = png_bytes
             if png_failed:
-                result["png_warnings"] = [
-                    f"Skipped shapes (tessellation failed): {', '.join(png_failed)}"
-                ]
+                result["png_warnings"] = [f"Tessellation warnings: {', '.join(png_failed)}"]
         except _RenderBudgetExceeded:
             # The render already consumed its hard budget; the unbounded SVG (HLR)
             # fallback below could push the op past the parent watchdog and kill the

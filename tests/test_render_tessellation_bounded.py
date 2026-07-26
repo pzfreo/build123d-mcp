@@ -96,6 +96,23 @@ def test_in_process_tessellation_reports_all_faces_missing(monkeypatch):
     ]
 
 
+def test_render_view_labels_partial_tessellation_as_warning(monkeypatch):
+    from build123d_mcp.session import Session
+    from build123d_mcp.tools.render import render_view
+
+    session = Session()
+    session.execute("from build123d import *")
+    session.execute("show(Box(10, 10, 10), 'box')")
+    partial = "box: missing triangulation for face(s) 1; rendered remaining faces"
+
+    monkeypatch.setattr(render, "_do_render_png", lambda *args, **kwargs: (b"PNG", [partial]))
+
+    result = render_view(session)
+
+    assert result["png_warnings"] == [f"Tessellation warnings: {partial}"]
+    assert "Skipped shapes" not in result["png_warnings"][0]
+
+
 def test_tessellate_bounded_returns_mesh():
     """A normal shape tessellates via the subprocess and comes back as a mesh."""
     meshes, failed = _tessellate_shapes_bounded(
