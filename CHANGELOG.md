@@ -14,6 +14,13 @@
 
 ### Fixed
 
+- **`render_view()` no longer dereferences a missing face triangulation.** The
+  bounded tessellation worker extracts OCC meshes per face, reports the indexes of
+  faces whose triangulation is missing, and renders the remaining healthy faces
+  when possible. If every face is unmeshable, the existing skipped-shape path now
+  returns an actionable missing-triangulation diagnostic instead of a raw
+  `None.NbNodes` error.
+
 - **`locate_gate_defects()` now returns coordinates for vertex-deflection defects
   found only on the gate's finer open-edge ladder rungs.** The exact gate carries
   each visited rung's vertex location, measured deviation, and active deflection

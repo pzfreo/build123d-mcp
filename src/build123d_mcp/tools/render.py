@@ -416,10 +416,20 @@ def _tessellate_in_process(shapes, tess) -> tuple[dict, list[str]]:
     so there is no worker to SIGKILL — nothing to bound against."""
     meshes: dict = {}
     failed: list[str] = []
+    from build123d_mcp._tessellate_subprocess import (
+        _missing_faces_message,
+        tessellate_shape_faces,
+    )
+
     for name, shape, _color in shapes:
         try:
-            verts, tris = shape.tessellate(tess["linear_deflection"], tess["angular_deflection"])
-            meshes[name] = ([(v.X, v.Y, v.Z) for v in verts], [list(t) for t in tris])
+            verts, tris, missing_faces = tessellate_shape_faces(
+                shape, tess["linear_deflection"], tess["angular_deflection"]
+            )
+            if tris or not missing_faces:
+                meshes[name] = (verts, tris)
+            if missing_faces:
+                failed.append(_missing_faces_message(name, missing_faces, bool(tris)))
         except Exception as exc:  # noqa: BLE001 - skip a shape that won't tessellate
             failed.append(f"{name}: {exc}")
     return meshes, failed
