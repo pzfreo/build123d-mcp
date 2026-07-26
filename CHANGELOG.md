@@ -22,9 +22,12 @@
   or `/32` rungs can expose the same tolerance-sensitive patched boundary in both
   the gate and locator. A vertex seen at several rungs reports the coarsest
   (base-authoritative) measurement. The locator's exact pass is bounded by the
-  caller's own remaining budget in both subprocess and in-process fallback modes,
-  and skips the unrelated refined-face probe that the existing face locator runs
-  separately.
+  caller's own remaining subprocess budget and skips the unrelated refined-face
+  probe that the existing face locator runs separately. Every native mesh stage
+  checks the shared deadline before starting;
+  when a host blocks the required killable child process, the tool returns bounded
+  B-rep diagnostics plus an explicit mesh-location warning instead of risking an
+  uninterruptible in-process tessellation.
 
 - **`locate_gate_defects()` now identifies faces missing triangulation at the base
   gate tolerance.** It returns `mesh_untriangulated_face` with face index and center

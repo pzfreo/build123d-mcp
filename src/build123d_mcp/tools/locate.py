@@ -282,13 +282,13 @@ def locate_gate_defects(session, object_name: str = "") -> str:
                 }
             )
         except OSError:
-            # Host blocks child-process creation (#143 / InProcessSession): no
-            # subprocess and no worker op-timeout to kill, so run in-process.
+            # Host blocks child-process creation (#143 / InProcessSession). OCC
+            # tessellation is uninterruptible, and this path has no child process
+            # to kill, so keep the safe B-rep diagnostics and report mesh location
+            # as unavailable instead of risking an unbounded in-process call.
             from build123d_mcp._locate_subprocess import collect_defects
 
-            # Same budget, minus no output margin: there is no JSON file to write
-            # here, but the worker op-timeout still bounds us.
-            return _format(collect_defects(shape, time.monotonic() + remaining))
+            return _format(collect_defects(shape, include_mesh_checks=False))
 
         if proc.returncode != 0 or not os.path.exists(out_json):
             return json.dumps({"error": "defect locator failed: " + (proc.stderr or "")[-300:]})

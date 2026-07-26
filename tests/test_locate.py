@@ -201,6 +201,8 @@ def test_mesh_vertex_deflection_locator_stops_at_first_closed_rung(monkeypatch):
 
 def test_mesh_vertex_deflection_locator_bounds_exact_gate(monkeypatch):
     """The caller's deadline reaches the gate; without one the gate's own budget applies."""
+    import time
+
     from build123d import Box
 
     import build123d_mcp.tools.validate as validate_module
@@ -217,8 +219,9 @@ def test_mesh_vertex_deflection_locator_bounds_exact_gate(monkeypatch):
 
     monkeypatch.setattr(validate_module, "_mesh_defects_exact", _bounded_exact)
 
-    assert _mesh_vertex_deflection_defects(Box(10, 10, 10), 1234.5) == []
-    assert captured["deadline"] == 1234.5
+    deadline = time.monotonic() + 100
+    assert _mesh_vertex_deflection_defects(Box(10, 10, 10), deadline) == []
+    assert captured["deadline"] == deadline
     assert captured["run_refined_probe"] is False
     assert captured["max_triangles"] == _VERTEX_DEFLECTION_MAX_TRIS
 
@@ -226,6 +229,41 @@ def test_mesh_vertex_deflection_locator_bounds_exact_gate(monkeypatch):
     # is what keeps the finer-rung triangle ceiling active.
     assert _mesh_vertex_deflection_defects(Box(10, 10, 10)) == []
     assert captured["deadline"] is None
+
+
+def test_expired_deadline_does_not_start_locator_mesh(monkeypatch):
+    import time
+
+    from build123d import Box
+
+    from build123d_mcp._locate_subprocess import _weld
+
+    box = Box(10, 10, 10)
+
+    def _unexpected_tessellate(*args, **kwargs):
+        raise AssertionError("expired locator started native tessellation")
+
+    monkeypatch.setattr(box, "tessellate", _unexpected_tessellate)
+
+    with pytest.raises(RuntimeError, match="not enough time remains"):
+        _weld(box, time.monotonic() - 1)
+
+
+def test_expired_deadline_does_not_start_refined_probe(monkeypatch):
+    import time
+
+    import OCP.BRepMesh as brep_mesh
+    from build123d import Box
+
+    from build123d_mcp._locate_subprocess import _mesh_refined_untriangulated_faces
+
+    def _unexpected_mesh(*args, **kwargs):
+        raise AssertionError("expired locator started refined native tessellation")
+
+    monkeypatch.setattr(brep_mesh, "BRepMesh_IncrementalMesh", _unexpected_mesh)
+
+    with pytest.raises(RuntimeError, match="not enough time remains"):
+        _mesh_refined_untriangulated_faces(Box(10, 10, 10), time.monotonic() - 1)
 
 
 def test_locate_passes_its_own_budget_to_the_subprocess(session, monkeypatch):
@@ -345,8 +383,7 @@ def test_refined_untriangulated_locator_ignores_base_missing_face(monkeypatch):
 
 
 def test_locate_falls_back_in_process_when_subprocess_blocked(session, monkeypatch):
-    """On a host that blocks child processes (#143 / InProcessSession), subprocess.run
-    raises OSError — the tool must still locate defects in-process, not break."""
+    """A host without child processes gets bounded B-rep diagnostics, not native mesh."""
     execute_code(session, "show(Box(10, 10, 10) + Pos(10, 10, 0) * Box(10, 10, 10), 'tt')")
 
     def _blocked(*a, **k):
@@ -355,7 +392,10 @@ def test_locate_falls_back_in_process_when_subprocess_blocked(session, monkeypat
     monkeypatch.setattr(subprocess, "run", _blocked)
     out = locate_gate_defects(session, "tt")
     defects = _payload(out)["defects"]
-    assert any(d["kind"] == "mesh_nonmanifold_edge" for d in defects)
+    assert any(
+        d["kind"] == "locator_error" and "bounded child process" in d["detail"] for d in defects
+    )
+    assert not any(d["kind"].startswith("mesh_") for d in defects)
 
 
 def test_locate_timeout_is_a_clean_error(session, monkeypatch):

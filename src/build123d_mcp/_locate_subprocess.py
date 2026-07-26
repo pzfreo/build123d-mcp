@@ -31,6 +31,17 @@ _VERTEX_DEFLECTION_MAX_TRIS = 300_000
 # Wall-clock reserved out of the parent's budget for importing the STEP and writing
 # the JSON, so we finish reporting before the parent's hard kill lands.
 _OUTPUT_MARGIN_S = 5.0
+# A native OCC mesh call cannot be interrupted in-process. Do not start another
+# one when only output/teardown-scale time remains before the caller's deadline.
+_MESH_START_MIN_S = 5.0
+
+
+def _require_mesh_budget(deadline: float | None, operation: str) -> None:
+    if deadline is not None and deadline - time.monotonic() < _MESH_START_MIN_S:
+        raise RuntimeError(
+            f"not enough time remains to start {operation} safely — "
+            "skipped, other locators still ran"
+        )
 
 
 def _brep_invalid_faces(solid) -> list:
@@ -119,7 +130,7 @@ def _brep_edge_defects(solid) -> list:
     return out
 
 
-def _weld(shape) -> tuple[list, dict]:
+def _weld(shape, deadline: float | None = None) -> tuple[list, dict]:
     """Tessellate and coordinate-weld (exactly as the gate's mesh check). Returns
     ``(welded_tris, coord)`` where welded_tris is a list of (a, b, c) welded-node
     triangles and coord maps a welded node to a representative (x, y, z)."""
@@ -127,6 +138,7 @@ def _weld(shape) -> tuple[list, dict]:
     diag = math.dist((bb.min.X, bb.min.Y, bb.min.Z), (bb.max.X, bb.max.Y, bb.max.Z))
     if diag <= 0:
         return [], {}
+    _require_mesh_budget(deadline, "the welded-mesh locator")
     verts, tris = shape.tessellate(max(diag * 1e-3, 1e-4))
     if not verts or not tris:
         return [], {}
@@ -260,6 +272,7 @@ def _mesh_vertex_deflection_defects(shape, deadline: float | None = None) -> lis
     """
     from build123d_mcp.tools.validate import _mesh_defects_exact
 
+    _require_mesh_budget(deadline, "the exact vertex-deflection locator")
     evidence: dict[tuple[float, float, float], tuple[float, float]] = {}
     result = _mesh_defects_exact(
         shape,
@@ -299,7 +312,7 @@ def _mesh_vertex_deflection_defects(shape, deadline: float | None = None) -> lis
     return out
 
 
-def _mesh_untriangulated_faces(shape) -> list:
+def _mesh_untriangulated_faces(shape, deadline: float | None = None) -> list:
     """Faces missing triangulation at the gate's base deflection, with coordinates."""
     from OCP.BRep import BRep_Tool
     from OCP.BRepGProp import BRepGProp
@@ -318,6 +331,7 @@ def _mesh_untriangulated_faces(shape) -> list:
     if diag <= 0:
         return []
     deflection = min(0.5, max(0.005, diag * 1e-3))
+    _require_mesh_budget(deadline, "the base untriangulated-face locator")
     BRepTools.Clean_s(occ)
     BRepMesh_IncrementalMesh(occ, deflection, False, 0.5, True)
 
@@ -346,7 +360,7 @@ def _mesh_untriangulated_faces(shape) -> list:
     return out
 
 
-def _mesh_refined_untriangulated_faces(shape) -> list:
+def _mesh_refined_untriangulated_faces(shape, deadline: float | None = None) -> list:
     """Faces that tessellate at the gate's base deflection but fail at base/4.
 
     This mirrors the refined probe in ``tools.validate._mesh_defects_exact`` and
@@ -382,6 +396,7 @@ def _mesh_refined_untriangulated_faces(shape) -> list:
     # modest refinement". Clear any cached triangulation first so an in-process
     # fallback after another mesh-heavy tool does not mistake a retained refined
     # mesh for the base pass.
+    _require_mesh_budget(deadline, "the refined untriangulated-face base pass")
     BRepTools.Clean_s(occ)
     BRepMesh_IncrementalMesh(occ, base_deflection, False, 0.5, True)
 
@@ -405,6 +420,7 @@ def _mesh_refined_untriangulated_faces(shape) -> list:
             f"base triangles > {_REFINED_UNTRIANGULATED_MAX_TRIS}) — skipped, other locators still ran"
         )
 
+    _require_mesh_budget(deadline, "the refined untriangulated-face finer pass")
     BRepMesh_IncrementalMesh(occ, refined_deflection, False, 0.5, True)
 
     out = []
@@ -442,7 +458,9 @@ def _mesh_refined_untriangulated_faces(shape) -> list:
     return out
 
 
-def collect_defects(shape, deadline: float | None = None) -> list:
+def collect_defects(
+    shape, deadline: float | None = None, *, include_mesh_checks: bool = True
+) -> list:
     """Run every locator on a build123d shape and return the defect list.
 
     B-rep checks run on the WHOLE shape (not just the first solid) so a multi-solid
@@ -465,14 +483,25 @@ def collect_defects(shape, deadline: float | None = None) -> list:
             defects += finder()
         except Exception as exc:  # noqa: BLE001 - one check failing shouldn't lose the rest
             defects.append({"kind": "locator_error", "detail": repr(exc)[:200]})
+    if not include_mesh_checks:
+        defects.append(
+            {
+                "kind": "locator_error",
+                "detail": (
+                    "mesh defect location was skipped because this host blocks the "
+                    "bounded child process required for uninterruptible OCC tessellation"
+                ),
+            }
+        )
+        return defects
     try:
-        welded, coord = _weld(shape)
+        welded, coord = _weld(shape, deadline)
         defects += _mesh_open_edges(welded, coord)
         defects += _mesh_nonmanifold_edges(welded, coord)
         defects += _mesh_nonmanifold_vertices(welded, coord)
     except Exception as exc:  # noqa: BLE001
         try:
-            base_untriangulated = _mesh_untriangulated_faces(shape)
+            base_untriangulated = _mesh_untriangulated_faces(shape, deadline)
         except Exception:  # noqa: BLE001 - preserve the original, more useful failure
             base_untriangulated = []
         if base_untriangulated:
@@ -484,7 +513,7 @@ def collect_defects(shape, deadline: float | None = None) -> list:
     except Exception as exc:  # noqa: BLE001
         defects.append({"kind": "locator_error", "detail": repr(exc)[:200]})
     try:
-        defects += _mesh_refined_untriangulated_faces(shape)
+        defects += _mesh_refined_untriangulated_faces(shape, deadline)
     except Exception as exc:  # noqa: BLE001
         defects.append({"kind": "locator_error", "detail": repr(exc)[:200]})
     return defects

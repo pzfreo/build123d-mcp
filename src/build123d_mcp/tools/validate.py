@@ -695,6 +695,8 @@ def _mesh_defects_exact(
         _ladder_ceil = float("inf") if _open_deadline == float("inf") else _OPEN_LADDER_MAX_TRIS
 
         def _open_pass(defl: float) -> tuple[int, int, _VertexDeflectionEvidence]:
+            if time.monotonic() > _open_deadline:
+                return -1, 0, {}
             BRepMesh_IncrementalMesh(occ, defl, False, 0.5, True)
             fmap = TopTools_IndexedMapOfShape()
             TopExp.MapShapes_s(occ, TopAbs_FACE, fmap)
@@ -997,6 +999,8 @@ def _mesh_defects_exact(
         # pass below FIRST. The open-edge ladder (which refines the cached
         # triangulation, and OCC never coarsens it back) runs LAST so it cannot
         # inflate this base mesh past the triangle budget.
+        if time.monotonic() > _open_deadline:
+            return MeshGateResult.unchecked()
         BRepMesh_IncrementalMesh(occ, deflection, False, 0.5, True)
 
         faces = TopTools_IndexedMapOfShape()
