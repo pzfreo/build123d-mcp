@@ -14,6 +14,21 @@
 
 ### Fixed
 
+- **`locate_gate_defects()` now returns coordinates for vertex-deflection defects
+  found only on the gate's finer open-edge ladder rungs.** The exact gate carries
+  each visited rung's vertex location, measured deviation, and active deflection
+  through a locator-only evidence sink. The locator consumes that authoritative
+  evidence instead of repeating a base-only approximation, so visited `/4`, `/16`,
+  or `/32` rungs can expose the same tolerance-sensitive patched boundary in both
+  the gate and locator. A vertex seen at several rungs reports the coarsest
+  (base-authoritative) measurement. The locator's exact pass is bounded by the
+  caller's own remaining subprocess budget and skips the unrelated refined-face
+  probe that the existing face locator runs separately. Every native mesh stage
+  checks the shared deadline before starting;
+  when a host blocks the required killable child process, the tool returns bounded
+  B-rep diagnostics plus an explicit mesh-location warning instead of risking an
+  uninterruptible in-process tessellation.
+
 - **`locate_gate_defects()` now identifies faces missing triangulation at the base
   gate tolerance.** It returns `mesh_untriangulated_face` with face index and center
   instead of collapsing the tessellation failure into a coordinate-free

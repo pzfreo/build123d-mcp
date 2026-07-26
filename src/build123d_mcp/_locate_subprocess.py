@@ -1,9 +1,12 @@
 """Out-of-process defect locator for ``locate_gate_defects`` (see tools/locate.py).
 
-Run as ``python -m build123d_mcp._locate_subprocess <in.step> <out.json>``. Imports
-the STEP, runs the same checks the validity gate uses, and writes a JSON list of
-defects **with 3D coordinates** — so the agent can repair a specific edge/face
+Run as ``python -m build123d_mcp._locate_subprocess <in.step> <out.json> [budget_s]``.
+Imports the STEP, runs the same checks the validity gate uses, and writes a JSON list
+of defects **with 3D coordinates** — so the agent can repair a specific edge/face
 instead of guessing blindly (the validate/export gate reports only counts).
+``budget_s`` is the wall-clock the parent will wait before killing us; the mesh
+checks bound themselves below it so a slow check returns a per-check error instead
+of losing every defect the cheap checks already found.
 
 Why a subprocess: the mesh non-manifold check tessellates (OCC ``BRepMesh``, an
 un-interruptible native call that can run for minutes on a complex part). The
@@ -15,14 +18,30 @@ worker. The B-rep checks (BRepCheck, edge→face map) are cheap and run here too
 import json
 import math
 import sys
+import time
 
-# Triangle-count budget for the vertex-deflection check specifically (the other
-# checks here share one cheap welded mesh already built by _weld()). Matches
-# tools/validate.py's _EXACT_ISOLATED_MAX_TRIS — this subprocess is bounded the
-# same way _gate_subprocess.py's isolated exact check is, by a hard external
-# subprocess timeout rather than an in-loop deadline, so a triangle ceiling
-# (checked once, before the per-edge walk) is the right-sized guard here.
+# Base triangle budget for the vertex-deflection exact pass. The wall-clock bound
+# comes from the caller's deadline (the parent's own subprocess budget, less the
+# margin below); with no deadline the gate applies its own _GATE_MESH_BUDGET_S.
+# Either way the deadline is finite, which is what activates the gate's finer-rung
+# triangle ceiling — so the same bounds apply when process creation is unavailable
+# and collect_defects() runs in-process.
 _VERTEX_DEFLECTION_MAX_TRIS = 300_000
+
+# Wall-clock reserved out of the parent's budget for importing the STEP and writing
+# the JSON, so we finish reporting before the parent's hard kill lands.
+_OUTPUT_MARGIN_S = 5.0
+# A native OCC mesh call cannot be interrupted in-process. Do not start another
+# one when only output/teardown-scale time remains before the caller's deadline.
+_MESH_START_MIN_S = 5.0
+
+
+def _require_mesh_budget(deadline: float | None, operation: str) -> None:
+    if deadline is not None and deadline - time.monotonic() < _MESH_START_MIN_S:
+        raise RuntimeError(
+            f"not enough time remains to start {operation} safely — "
+            "skipped, other locators still ran"
+        )
 
 
 def _brep_invalid_faces(solid) -> list:
@@ -111,7 +130,7 @@ def _brep_edge_defects(solid) -> list:
     return out
 
 
-def _weld(shape) -> tuple[list, dict]:
+def _weld(shape, deadline: float | None = None) -> tuple[list, dict]:
     """Tessellate and coordinate-weld (exactly as the gate's mesh check). Returns
     ``(welded_tris, coord)`` where welded_tris is a list of (a, b, c) welded-node
     triangles and coord maps a welded node to a representative (x, y, z)."""
@@ -119,6 +138,7 @@ def _weld(shape) -> tuple[list, dict]:
     diag = math.dist((bb.min.X, bb.min.Y, bb.min.Z), (bb.max.X, bb.max.Y, bb.max.Z))
     if diag <= 0:
         return [], {}
+    _require_mesh_budget(deadline, "the welded-mesh locator")
     verts, tris = shape.tessellate(max(diag * 1e-3, 1e-4))
     if not verts or not tris:
         return [], {}
@@ -242,133 +262,57 @@ def _mesh_nonmanifold_vertices(welded, coord) -> list:
     return out
 
 
-def _mesh_vertex_deflection_defects(shape) -> list:
-    """BREP vertices where a tessellated edge-polygon endpoint misses the vertex's
-    analytic position by more than the mesh deflection (``mesh_vertex_deflection_defects``
-    in the gate report), with the vertex's own coordinates.
+def _mesh_vertex_deflection_defects(shape, deadline: float | None = None) -> list:
+    """Return the exact gate's vertex-deflection evidence with coordinates.
 
-    Unlike the other mesh checks here, this is NOT a coordinate weld — welding would
-    hide exactly this defect by merging the mismatched points, the same way the gate's
-    old vertex-merge code silently unioned them. It walks each edge's per-face
-    ``PolygonOnTriangulation`` (the true topology-stitch data) and checks its first/last
-    node against ``TopExp.FirstVertex_s``/``LastVertex_s`` directly — the same guard
-    ``_mesh_defects_exact`` runs (same max-per-axis deflection comparison, not Euclidean —
-    they must agree, or this locator can flag a "defect" the authoritative gate does not
-    actually fail on), and the same check CADGenBench's own mesh sanity validator uses. A
-    patched/healed face (a sliver sew, a tolerance-fudged patch) whose boundary is
-    topologically closed but geometrically off-vertex reads as fine to a coordinate-weld
-    check and to BRepCheck, yet fails a CAD scorer's own mesh gate.
+    The gate owns the deflection ladder and stops at the first rung that closes
+    the tessellated boundary. Reusing its result here prevents the locator from
+    missing defects found only at a visited finer rung or inventing defects from
+    finer rungs the gate never reached.
+    """
+    from build123d_mcp.tools.validate import _mesh_defects_exact
 
-    Triangle-budgeted (``_VERTEX_DEFLECTION_MAX_TRIS``): raises rather than running
-    unbounded on a huge shape, so ``collect_defects()``'s try/except records a
-    ``locator_error`` for this one check instead of risking the whole subprocess's
-    external timeout — which would otherwise lose every defect the other, already-
-    cheap checks in the same run had already found.
-
-    This re-tessellates rather than reusing ``_weld()``'s triangulation from moments
-    earlier in ``collect_defects()`` — tried making it reuse ``_weld()``'s finer
-    ``angular_tolerance=0.1`` (via ``shape.mesh()``, so OCC's own "already meshed"
-    check would skip the second pass) and measured it directly: on the real submission
-    this check was written to catch, that finer angle balloons the tessellation from
-    42722 triangles (at this function's own ``angular=0.5``, matching
-    ``_mesh_defects_exact``) to 611387 — 14x worse, not a saving. The two checks need
-    different tessellation density for legitimate reasons (this one mirrors the exact
-    gate's coarser, cheaper setting on purpose), so a second full pass at the coarser
-    setting is the correct tradeoff; the triangle budget above is what actually bounds
-    the worst case, not tessellation sharing."""
-    from OCP.BRep import BRep_Tool
-    from OCP.BRepMesh import BRepMesh_IncrementalMesh
-    from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_VERTEX
-    from OCP.TopExp import TopExp
-    from OCP.TopLoc import TopLoc_Location
-    from OCP.TopoDS import TopoDS
-    from OCP.TopTools import TopTools_IndexedMapOfShape
-
-    from build123d_mcp.tools.validate import _edge_face_adjacency
-
-    occ = shape.wrapped
-    bb = shape.bounding_box()
-    diag = math.dist((bb.min.X, bb.min.Y, bb.min.Z), (bb.max.X, bb.max.Y, bb.max.Z))
-    if diag <= 0:
-        return []
-    deflection = min(0.5, max(0.005, diag * 1e-3))
-    BRepMesh_IncrementalMesh(occ, deflection, False, 0.5, True)
-
-    faces = TopTools_IndexedMapOfShape()
-    TopExp.MapShapes_s(occ, TopAbs_FACE, faces)
-    face_tri = {}
-    n_tris = 0
-    for fi in range(1, faces.Size() + 1):
-        face = TopoDS.Face_s(faces.FindKey(fi))
-        loc = TopLoc_Location()
-        tri = BRep_Tool.Triangulation_s(face, loc)
-        if tri is not None:
-            face_tri[fi] = (tri, loc)
-            n_tris += tri.NbTriangles()
-    if not face_tri:
-        return []
-    if n_tris > _VERTEX_DEFLECTION_MAX_TRIS:
+    _require_mesh_budget(deadline, "the exact vertex-deflection locator")
+    evidence: dict[tuple[float, float, float], tuple[float, float]] = {}
+    result = _mesh_defects_exact(
+        shape,
+        max_triangles=_VERTEX_DEFLECTION_MAX_TRIS,
+        deadline=deadline,
+        vertex_deflection_evidence=evidence,
+        run_refined_probe=False,
+    )
+    if not result.ok:
+        # The gate could not reach a verdict — too large to mesh/stitch in budget,
+        # or open at the base rung and above the ladder's base-triangle cap so the
+        # finer rungs never ran. Either way the ladder-only vertices this locator
+        # exists to find were not examined; say so rather than return an empty list
+        # the caller would read as "no vertex-deflection defects".
         raise RuntimeError(
-            f"shape too large for the vertex-deflection check ({n_tris} triangles > "
-            f"{_VERTEX_DEFLECTION_MAX_TRIS}) — skipped, other locators still ran"
+            "the exact mesh gate could not analyse this shape within its triangle/time "
+            "budget, so vertex-deflection defects were not located — other locators "
+            "still ran"
         )
 
-    vmap = TopTools_IndexedMapOfShape()
-    TopExp.MapShapes_s(occ, TopAbs_VERTEX, vmap)
-    emap = TopTools_IndexedMapOfShape()
-    TopExp.MapShapes_s(occ, TopAbs_EDGE, emap)
-    edge_adj = _edge_face_adjacency(occ, faces, emap)
-
-    vertex_nodes: dict = {}  # vertex index -> list of (x, y, z) world points
-    for ei in range(1, emap.Size() + 1):
-        edge = TopoDS.Edge_s(emap.FindKey(ei))
-        v_first = vmap.FindIndex(TopExp.FirstVertex_s(edge))
-        v_last = vmap.FindIndex(TopExp.LastVertex_s(edge))
-        if not v_first and not v_last:
-            continue
-        for fi in edge_adj.get(ei, ()):
-            if fi not in face_tri:
-                continue
-            tri, loc = face_tri[fi]
-            poly = BRep_Tool.PolygonOnTriangulation_s(edge, tri, loc)
-            if poly is None:
-                continue
-            nodes = list(poly.Nodes())
-            if not nodes:
-                continue
-            trsf = loc.Transformation()
-            if v_first:
-                p = tri.Node(nodes[0]).Transformed(trsf)
-                vertex_nodes.setdefault(v_first, []).append((p.X(), p.Y(), p.Z()))
-            if v_last:
-                p = tri.Node(nodes[-1]).Transformed(trsf)
-                vertex_nodes.setdefault(v_last, []).append((p.X(), p.Y(), p.Z()))
-
     out = []
-    for vi, pts in vertex_nodes.items():
-        vp = BRep_Tool.Pnt_s(TopoDS.Vertex_s(vmap.FindKey(vi)))
-        vx, vy, vz = vp.X(), vp.Y(), vp.Z()
-        # Max-per-axis (Chebyshev), matching _mesh_defects_exact's
-        # np.abs(verts[nodes] - vertex_xyz).max() exactly — NOT Euclidean.
-        worst = max(max(abs(x - vx), abs(y - vy), abs(z - vz)) for x, y, z in pts)
-        if worst > deflection:
-            out.append(
-                {
-                    "kind": "mesh_vertex_deflection_defect",
-                    "where": [round(vx, 3), round(vy, 3), round(vz, 3)],
-                    "max_deviation_mm": round(worst, 4),
-                    "hint": (
-                        "a tessellated edge endpoint here misses this BREP vertex by "
-                        f"{worst:.3g}mm (> deflection {deflection:.3g}mm) — a patched/healed "
-                        "face's boundary is topologically closed but geometrically off-vertex; "
-                        "re-patch or re-sew this face at a tighter tolerance"
-                    ),
-                }
-            )
+    for (x, y, z), (worst, deflection) in sorted(evidence.items()):
+        out.append(
+            {
+                "kind": "mesh_vertex_deflection_defect",
+                "where": [round(x, 3), round(y, 3), round(z, 3)],
+                "max_deviation_mm": round(worst, 4),
+                "deflection_mm": round(deflection, 6),
+                "hint": (
+                    "a tessellated edge endpoint here misses this BREP vertex by "
+                    f"{worst:.3g}mm (> deflection {deflection:.3g}mm) — a patched/healed "
+                    "face's boundary is topologically closed but geometrically off-vertex; "
+                    "re-patch or re-sew this face at a tighter tolerance"
+                ),
+            }
+        )
     return out
 
 
-def _mesh_untriangulated_faces(shape) -> list:
+def _mesh_untriangulated_faces(shape, deadline: float | None = None) -> list:
     """Faces missing triangulation at the gate's base deflection, with coordinates."""
     from OCP.BRep import BRep_Tool
     from OCP.BRepGProp import BRepGProp
@@ -387,6 +331,7 @@ def _mesh_untriangulated_faces(shape) -> list:
     if diag <= 0:
         return []
     deflection = min(0.5, max(0.005, diag * 1e-3))
+    _require_mesh_budget(deadline, "the base untriangulated-face locator")
     BRepTools.Clean_s(occ)
     BRepMesh_IncrementalMesh(occ, deflection, False, 0.5, True)
 
@@ -415,7 +360,7 @@ def _mesh_untriangulated_faces(shape) -> list:
     return out
 
 
-def _mesh_refined_untriangulated_faces(shape) -> list:
+def _mesh_refined_untriangulated_faces(shape, deadline: float | None = None) -> list:
     """Faces that tessellate at the gate's base deflection but fail at base/4.
 
     This mirrors the refined probe in ``tools.validate._mesh_defects_exact`` and
@@ -451,6 +396,7 @@ def _mesh_refined_untriangulated_faces(shape) -> list:
     # modest refinement". Clear any cached triangulation first so an in-process
     # fallback after another mesh-heavy tool does not mistake a retained refined
     # mesh for the base pass.
+    _require_mesh_budget(deadline, "the refined untriangulated-face base pass")
     BRepTools.Clean_s(occ)
     BRepMesh_IncrementalMesh(occ, base_deflection, False, 0.5, True)
 
@@ -474,6 +420,7 @@ def _mesh_refined_untriangulated_faces(shape) -> list:
             f"base triangles > {_REFINED_UNTRIANGULATED_MAX_TRIS}) — skipped, other locators still ran"
         )
 
+    _require_mesh_budget(deadline, "the refined untriangulated-face finer pass")
     BRepMesh_IncrementalMesh(occ, refined_deflection, False, 0.5, True)
 
     out = []
@@ -511,7 +458,9 @@ def _mesh_refined_untriangulated_faces(shape) -> list:
     return out
 
 
-def collect_defects(shape) -> list:
+def collect_defects(
+    shape, deadline: float | None = None, *, include_mesh_checks: bool = True
+) -> list:
     """Run every locator on a build123d shape and return the defect list.
 
     B-rep checks run on the WHOLE shape (not just the first solid) so a multi-solid
@@ -519,6 +468,11 @@ def collect_defects(shape) -> list:
     whole shape. The mesh soup is welded once and shared by the edge + vertex
     checks. One failing check records a ``locator_error`` rather than losing the
     rest. Shared by the subprocess ``main`` and the tool's in-process fallback.
+
+    ``deadline`` is a ``time.monotonic()`` instant the exact vertex-deflection pass
+    must stay under — the caller's own budget, so that pass cannot overrun the hard
+    kill (or the worker op-timeout on the in-process path) and lose the defects the
+    cheap checks already collected. ``None`` leaves the gate's own budget in force.
     """
     defects: list = []
     for finder in (
@@ -529,14 +483,25 @@ def collect_defects(shape) -> list:
             defects += finder()
         except Exception as exc:  # noqa: BLE001 - one check failing shouldn't lose the rest
             defects.append({"kind": "locator_error", "detail": repr(exc)[:200]})
+    if not include_mesh_checks:
+        defects.append(
+            {
+                "kind": "locator_error",
+                "detail": (
+                    "mesh defect location was skipped because this host blocks the "
+                    "bounded child process required for uninterruptible OCC tessellation"
+                ),
+            }
+        )
+        return defects
     try:
-        welded, coord = _weld(shape)
+        welded, coord = _weld(shape, deadline)
         defects += _mesh_open_edges(welded, coord)
         defects += _mesh_nonmanifold_edges(welded, coord)
         defects += _mesh_nonmanifold_vertices(welded, coord)
     except Exception as exc:  # noqa: BLE001
         try:
-            base_untriangulated = _mesh_untriangulated_faces(shape)
+            base_untriangulated = _mesh_untriangulated_faces(shape, deadline)
         except Exception:  # noqa: BLE001 - preserve the original, more useful failure
             base_untriangulated = []
         if base_untriangulated:
@@ -544,23 +509,24 @@ def collect_defects(shape) -> list:
         else:
             defects.append({"kind": "locator_error", "detail": repr(exc)[:200]})
     try:
-        defects += _mesh_vertex_deflection_defects(shape)
+        defects += _mesh_vertex_deflection_defects(shape, deadline)
     except Exception as exc:  # noqa: BLE001
         defects.append({"kind": "locator_error", "detail": repr(exc)[:200]})
     try:
-        defects += _mesh_refined_untriangulated_faces(shape)
+        defects += _mesh_refined_untriangulated_faces(shape, deadline)
     except Exception as exc:  # noqa: BLE001
         defects.append({"kind": "locator_error", "detail": repr(exc)[:200]})
     return defects
 
 
-def main(in_step: str, out_json: str) -> None:
+def main(in_step: str, out_json: str, budget_s: float | None = None) -> None:
     from build123d import import_step
 
-    defects = collect_defects(import_step(in_step))
+    deadline = None if budget_s is None else time.monotonic() + budget_s - _OUTPUT_MARGIN_S
+    defects = collect_defects(import_step(in_step), deadline)
     with open(out_json, "w") as f:
         json.dump({"defects": defects}, f)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    main(sys.argv[1], sys.argv[2], float(sys.argv[3]) if len(sys.argv) > 3 else None)

@@ -102,6 +102,185 @@ def test_mesh_vertex_deflection_defect_with_coordinates(monkeypatch):
     assert d["kind"] == "mesh_vertex_deflection_defect"
     assert len(d["where"]) == 3
     assert d["max_deviation_mm"] == pytest.approx(1.0, abs=0.05)
+    assert d["deflection_mm"] == pytest.approx(0.017321, abs=1e-6)
+
+
+def test_mesh_vertex_deflection_locator_uses_gate_ladder(monkeypatch):
+    """#398: locate the same ladder-only vertex that the gate counts.
+
+    The missing face keeps the shell open through every rung. The 0.01 mm
+    displacement is below the base threshold but above base/4, so a base-only
+    locator returns nothing while the gate and this locator must both report it.
+    """
+    from build123d import Box, Shell
+    from OCP.BRep import BRep_Tool
+    from OCP.gp import gp_Pnt
+
+    from build123d_mcp._locate_subprocess import _mesh_vertex_deflection_defects
+    from build123d_mcp.tools.validate import _mesh_defects_exact
+
+    shell = Shell(Box(10, 10, 10).faces()[:5])
+    target = shell.vertices()[0].wrapped
+    orig_pnt_s = BRep_Tool.Pnt_s
+
+    def _lying_pnt_s(v):
+        p = orig_pnt_s(v)
+        if v.IsSame(target):
+            return gp_Pnt(p.X() + 0.01, p.Y(), p.Z())
+        return p
+
+    monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
+
+    evidence = {}
+    gate = _mesh_defects_exact(shell, vertex_deflection_evidence=evidence)
+    defects = _mesh_vertex_deflection_defects(shell)
+
+    assert gate.vertex_deflection_defects == 1
+    assert len(evidence) == 1
+    assert len(defects) == gate.vertex_deflection_defects
+    assert defects[0]["max_deviation_mm"] == pytest.approx(0.01, abs=0.001)
+    assert defects[0]["deflection_mm"] < 0.01
+
+
+def test_mesh_vertex_deflection_locator_reports_the_coarsest_failing_rung(monkeypatch):
+    """A vertex that already misses at base must report the BASE threshold.
+
+    The shell stays open through every rung, so /4../32 also flag this vertex. Were
+    the finest rung to win, a 1 mm miss would be reported against a ~0.0005 mm
+    deflection and read as a hair-splitting tolerance issue rather than the gross
+    defect the gate actually fails on.
+    """
+    from build123d import Box, Shell
+    from OCP.BRep import BRep_Tool
+    from OCP.gp import gp_Pnt
+
+    from build123d_mcp._locate_subprocess import _mesh_vertex_deflection_defects
+
+    shell = Shell(Box(10, 10, 10).faces()[:5])
+    target = shell.vertices()[0].wrapped
+    orig_pnt_s = BRep_Tool.Pnt_s
+
+    def _lying_pnt_s(v):
+        p = orig_pnt_s(v)
+        if v.IsSame(target):
+            return gp_Pnt(p.X() + 1.0, p.Y(), p.Z())
+        return p
+
+    monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
+
+    defects = _mesh_vertex_deflection_defects(shell)
+
+    assert len(defects) == 1, defects
+    assert defects[0]["max_deviation_mm"] == pytest.approx(1.0, abs=0.05)
+    assert defects[0]["deflection_mm"] == pytest.approx(0.017321, abs=1e-6)
+
+
+def test_mesh_vertex_deflection_locator_stops_at_first_closed_rung(monkeypatch):
+    """A clean base rung must not expose a defect that exists only below base."""
+    from build123d import Box
+    from OCP.BRep import BRep_Tool
+    from OCP.gp import gp_Pnt
+
+    from build123d_mcp._locate_subprocess import _mesh_vertex_deflection_defects
+
+    box = Box(10, 10, 10)
+    target = box.vertices()[0].wrapped
+    orig_pnt_s = BRep_Tool.Pnt_s
+
+    def _lying_pnt_s(v):
+        p = orig_pnt_s(v)
+        if v.IsSame(target):
+            return gp_Pnt(p.X() + 0.01, p.Y(), p.Z())
+        return p
+
+    monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
+
+    # Base deflection is ~0.0173 mm and the closed Box does not enter /4.
+    assert _mesh_vertex_deflection_defects(box) == []
+
+
+def test_mesh_vertex_deflection_locator_bounds_exact_gate(monkeypatch):
+    """The caller's deadline reaches the gate; without one the gate's own budget applies."""
+    import time
+
+    from build123d import Box
+
+    import build123d_mcp.tools.validate as validate_module
+    from build123d_mcp._locate_subprocess import (
+        _VERTEX_DEFLECTION_MAX_TRIS,
+        _mesh_vertex_deflection_defects,
+    )
+
+    captured = {}
+
+    def _bounded_exact(shape, **kwargs):
+        captured.update(kwargs)
+        return validate_module.MeshGateResult(ok=True)
+
+    monkeypatch.setattr(validate_module, "_mesh_defects_exact", _bounded_exact)
+
+    deadline = time.monotonic() + 100
+    assert _mesh_vertex_deflection_defects(Box(10, 10, 10), deadline) == []
+    assert captured["deadline"] == deadline
+    assert captured["run_refined_probe"] is False
+    assert captured["max_triangles"] == _VERTEX_DEFLECTION_MAX_TRIS
+
+    # No caller deadline: the gate falls back to its own finite mesh budget, which
+    # is what keeps the finer-rung triangle ceiling active.
+    assert _mesh_vertex_deflection_defects(Box(10, 10, 10)) == []
+    assert captured["deadline"] is None
+
+
+def test_expired_deadline_does_not_start_locator_mesh(monkeypatch):
+    import time
+
+    from build123d import Box
+
+    from build123d_mcp._locate_subprocess import _weld
+
+    box = Box(10, 10, 10)
+
+    def _unexpected_tessellate(*args, **kwargs):
+        raise AssertionError("expired locator started native tessellation")
+
+    monkeypatch.setattr(box, "tessellate", _unexpected_tessellate)
+
+    with pytest.raises(RuntimeError, match="not enough time remains"):
+        _weld(box, time.monotonic() - 1)
+
+
+def test_expired_deadline_does_not_start_refined_probe(monkeypatch):
+    import time
+
+    import OCP.BRepMesh as brep_mesh
+    from build123d import Box
+
+    from build123d_mcp._locate_subprocess import _mesh_refined_untriangulated_faces
+
+    def _unexpected_mesh(*args, **kwargs):
+        raise AssertionError("expired locator started refined native tessellation")
+
+    monkeypatch.setattr(brep_mesh, "BRepMesh_IncrementalMesh", _unexpected_mesh)
+
+    with pytest.raises(RuntimeError, match="not enough time remains"):
+        _mesh_refined_untriangulated_faces(Box(10, 10, 10), time.monotonic() - 1)
+
+
+def test_locate_passes_its_own_budget_to_the_subprocess(session, monkeypatch):
+    """The subprocess must know the deadline it is killed at, or its internal mesh
+    budget can outlast the parent and lose every defect the cheap checks found."""
+    execute_code(session, "from build123d import *\nresult = Box(10, 10, 10)")
+    captured = {}
+
+    def _capture(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["timeout"] = kwargs["timeout"]
+        raise subprocess.TimeoutExpired(cmd="locate", timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", _capture)
+    locate_gate_defects(session)
+
+    assert float(captured["cmd"][-1]) == pytest.approx(captured["timeout"])
 
 
 def test_base_untriangulated_face_has_coordinates_without_weld_crash(monkeypatch):
@@ -204,8 +383,7 @@ def test_refined_untriangulated_locator_ignores_base_missing_face(monkeypatch):
 
 
 def test_locate_falls_back_in_process_when_subprocess_blocked(session, monkeypatch):
-    """On a host that blocks child processes (#143 / InProcessSession), subprocess.run
-    raises OSError — the tool must still locate defects in-process, not break."""
+    """A host without child processes gets bounded B-rep diagnostics, not native mesh."""
     execute_code(session, "show(Box(10, 10, 10) + Pos(10, 10, 0) * Box(10, 10, 10), 'tt')")
 
     def _blocked(*a, **k):
@@ -214,7 +392,10 @@ def test_locate_falls_back_in_process_when_subprocess_blocked(session, monkeypat
     monkeypatch.setattr(subprocess, "run", _blocked)
     out = locate_gate_defects(session, "tt")
     defects = _payload(out)["defects"]
-    assert any(d["kind"] == "mesh_nonmanifold_edge" for d in defects)
+    assert any(
+        d["kind"] == "locator_error" and "bounded child process" in d["detail"] for d in defects
+    )
+    assert not any(d["kind"].startswith("mesh_") for d in defects)
 
 
 def test_locate_timeout_is_a_clean_error(session, monkeypatch):

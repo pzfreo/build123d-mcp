@@ -627,6 +627,42 @@ def test_mesh_defects_exact_no_double_count_when_base_and_ladder_agree(monkeypat
     assert result.vertex_deflection_defects == 1  # same vertex found twice, deduped
 
 
+def test_mesh_defects_exact_can_return_evidence_without_refined_probe(monkeypatch):
+    """Locator mode keeps vertex evidence but does not pay for the separate /4 probe."""
+    from build123d import Box
+    from OCP.BRep import BRep_Tool
+    from OCP.gp import gp_Pnt
+
+    import build123d_mcp.tools.validate as validate_module
+
+    box = Box(10, 10, 10)
+    target = box.vertices()[0].wrapped
+    orig_pnt_s = BRep_Tool.Pnt_s
+    evidence = {}
+
+    def _lying_pnt_s(v):
+        p = orig_pnt_s(v)
+        if v.IsSame(target):
+            return gp_Pnt(p.X() + 1.0, p.Y(), p.Z())
+        return p
+
+    monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
+
+    result = validate_module._mesh_defects_exact(
+        box,
+        vertex_deflection_evidence=evidence,
+        run_refined_probe=False,
+    )
+
+    assert result.ok
+    assert result.refined_verified is False
+    assert result.vertex_deflection_defects == 1
+    assert len(evidence) == 1
+    ((_, (worst, deflection)),) = evidence.items()
+    assert worst == pytest.approx(1.0, abs=0.05)
+    assert deflection == pytest.approx(0.017321, abs=1e-6)
+
+
 # --- out-of-process mesh gate (export retry for parts too large to mesh in-budget) ---
 
 

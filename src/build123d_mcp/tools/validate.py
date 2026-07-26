@@ -87,6 +87,9 @@ _MESH_GATE_MIN_S = 10.0
 # small/moderate open part still ladders and is caught; only large parts degrade.
 _LADDER_BASE_MAX_TRIS = 40000
 
+_VertexDeflectionKey = tuple[float, float, float]
+_VertexDeflectionEvidence = dict[_VertexDeflectionKey, tuple[float, float]]
+
 
 @dataclass(frozen=True)
 class MeshGateResult:
@@ -579,7 +582,12 @@ def _mesh_defects(shape, deadline: float | None = None) -> tuple[int, bool]:
 
 
 def _mesh_defects_exact(
-    shape, max_triangles: int | None = None, deadline: float | None = None
+    shape,
+    max_triangles: int | None = None,
+    deadline: float | None = None,
+    *,
+    vertex_deflection_evidence: _VertexDeflectionEvidence | None = None,
+    run_refined_probe: bool = True,
 ) -> MeshGateResult:
     """Accurate mesh non-manifold count via a topology-stitched tessellation.
 
@@ -629,6 +637,12 @@ def _mesh_defects_exact(
     so ``mesh_open_edges`` on its own can legitimately read 0 for a shape that
     still fails via ``vertex_deflection_defects`` — that is not a contradiction,
     it means the boundary stitches closed but isn't conformal at that vertex.
+
+    ``vertex_deflection_evidence`` is an optional internal sink used by the defect
+    locator to retain each visited rung's coordinate, maximum deviation, and active
+    deflection without changing the serialized gate result. ``run_refined_probe``
+    can be disabled by that caller because refined untriangulated faces are located
+    separately; normal validation and export calls retain the default probe.
 
     The open-edge (closedness) verdict is computed by a separate seam-aware
     conformal stitch run over a DEFLECTION LADDER: a part is closed iff ANY rung
@@ -680,7 +694,9 @@ def _mesh_defects_exact(
         # keeps the ceiling (its un-interruptible BRepMesh calls must stay bounded).
         _ladder_ceil = float("inf") if _open_deadline == float("inf") else _OPEN_LADDER_MAX_TRIS
 
-        def _open_pass(defl: float) -> tuple[int, int, set]:
+        def _open_pass(defl: float) -> tuple[int, int, _VertexDeflectionEvidence]:
+            if time.monotonic() > _open_deadline:
+                return -1, 0, {}
             BRepMesh_IncrementalMesh(occ, defl, False, 0.5, True)
             fmap = TopTools_IndexedMapOfShape()
             TopExp.MapShapes_s(occ, TopAbs_FACE, fmap)
@@ -712,9 +728,9 @@ def _mesh_defects_exact(
                 # budget — before paying the rest of the O(triangles) append +
                 # the stitch — so a single huge rung can't run the gate long.
                 if len(T) > _ladder_ceil or time.monotonic() > _open_deadline:
-                    return -1, len(T), set()
+                    return -1, len(T), {}
             if not T:
-                return 0, 0, set()
+                return 0, 0, {}
             Va = np.asarray(V, dtype=np.float64)
             Ta = np.asarray(T, dtype=np.int64)
             if Ta.shape[0] > _ladder_ceil or time.monotonic() > _open_deadline:
@@ -722,7 +738,7 @@ def _mesh_defects_exact(
                 # Signal UNDETERMINED (-1) BEFORE paying the O(triangles) stitch,
                 # so the ladder defers to the fast check rather than risk the
                 # worker op-timeout (session loss) or a wrong verdict.
-                return -1, int(Ta.shape[0]), set()
+                return -1, int(Ta.shape[0]), {}
             par = list(range(len(V)))
 
             def fnd(x: int) -> int:
@@ -764,7 +780,7 @@ def _mesh_defects_exact(
             vnodes: dict = defaultdict(list)
             for ei in range(1, emap.Size() + 1):
                 if time.monotonic() > _open_deadline:
-                    return -1, len(T), set()  # stitch over budget — undetermined
+                    return -1, len(T), {}  # stitch over budget — undetermined
                 edge = TopoDS.Edge_s(emap.FindKey(ei))
                 nls = []
                 for fi in eadj.get(ei, ()):
@@ -827,14 +843,16 @@ def _mesh_defects_exact(
             # distinct BREP vertices, typically far fewer than edges, but a
             # pathological vertex count on a huge part shouldn't run unbounded
             # within a rung the caller has already committed wall-clock to).
-            pass_vdefl: set = set()
+            pass_vdefl: _VertexDeflectionEvidence = {}
             for vi, ns in vnodes.items():
                 if time.monotonic() > _open_deadline:
                     return -1, len(T), pass_vdefl  # stitch over budget — undetermined
                 vp = BRep_Tool.Pnt_s(TopoDS.Vertex_s(vm.FindKey(vi)))
                 vertex_xyz = np.array([vp.X(), vp.Y(), vp.Z()], dtype=np.float64)
-                if float(np.abs(Va[ns] - vertex_xyz).max()) > defl:
-                    pass_vdefl.add((round(vp.X(), 6), round(vp.Y(), 6), round(vp.Z(), 6)))
+                worst = float(np.abs(Va[ns] - vertex_xyz).max())
+                if worst > defl:
+                    key = (round(vp.X(), 6), round(vp.Y(), 6), round(vp.Z(), 6))
+                    pass_vdefl[key] = (worst, defl)
                 for n in ns[1:]:
                     uni(ns[0], n)
             # (d) coordinate-weld backstop
@@ -860,7 +878,7 @@ def _mesh_defects_exact(
             co = _edge_incidence_counts(mfo, nn)
             return int((co == 1).sum()), int(Ta.shape[0]), pass_vdefl
 
-        def _open_ladder() -> tuple[int, set]:
+        def _open_ladder() -> tuple[int, _VertexDeflectionEvidence]:
             # A part is closed iff ANY ladder rung yields zero open edges. A valid
             # periodic/curved face can leave a non-conformal seam open at one
             # deflection that closes at a finer one; a genuine gap stays open at
@@ -897,7 +915,13 @@ def _mesh_defects_exact(
                 if time.monotonic() > _open_deadline:
                     return -1, vdefl_any  # out of budget — do not start another (finer) rung
                 openK, _, vdeflK = _open_pass(deflection / d)
-                vdefl_any = vdefl_any | vdeflK
+                # Keep the COARSEST rung's measurement for a vertex seen at several
+                # rungs: a vertex that already misses at base is a gross defect, and
+                # reporting a /32 threshold instead would read as a hair-splitting
+                # tolerance issue. New keys still accumulate — that is the ladder-only
+                # evidence this union exists for.
+                for k, v in vdeflK.items():
+                    vdefl_any.setdefault(k, v)
                 if openK < 0:
                     return -1, vdefl_any  # finer rung too large / out of time — undetermined
                 if openK == 0:
@@ -942,25 +966,31 @@ def _mesh_defects_exact(
             open_edges: int,
             base_untriangulated: int,
             nmv: int,
-            vdefl: int,
+            vdefl: _VertexDeflectionEvidence,
         ) -> MeshGateResult:
-            refined_untriangulated, refined_ok = _refined_untriangulated_faces()
-            if not refined_ok and not (
-                nm_edges
-                or open_edges
-                or base_untriangulated
-                or refined_untriangulated
-                or nmv
-                or vdefl
-            ):
-                return MeshGateResult.unchecked()
+            refined_untriangulated, refined_ok = 0, False
+            if run_refined_probe:
+                refined_untriangulated, refined_ok = _refined_untriangulated_faces()
+                if not refined_ok and not (
+                    nm_edges
+                    or open_edges
+                    or base_untriangulated
+                    or refined_untriangulated
+                    or nmv
+                    or vdefl
+                ):
+                    return MeshGateResult.unchecked()
+            # Only after the unchecked() bail: the sink must never be populated for a
+            # result the caller is told carries no verdict.
+            if vertex_deflection_evidence is not None:
+                vertex_deflection_evidence.update(vdefl)
             return MeshGateResult(
                 nonmanifold_edges=nm_edges,
                 open_edges=open_edges,
                 untriangulated_faces=base_untriangulated,
                 refined_untriangulated_faces=refined_untriangulated,
                 nonmanifold_vertices=nmv,
-                vertex_deflection_defects=vdefl,
+                vertex_deflection_defects=len(vdefl),
                 ok=True,
                 refined_verified=refined_ok,
             )
@@ -969,6 +999,8 @@ def _mesh_defects_exact(
         # pass below FIRST. The open-edge ladder (which refines the cached
         # triangulation, and OCC never coarsens it back) runs LAST so it cannot
         # inflate this base mesh past the triangle budget.
+        if time.monotonic() > _open_deadline:
+            return MeshGateResult.unchecked()
         BRepMesh_IncrementalMesh(occ, deflection, False, 0.5, True)
 
         faces = TopTools_IndexedMapOfShape()
@@ -1114,20 +1146,23 @@ def _mesh_defects_exact(
         # `deflection` of that vertex's analytic position — union first,
         # verify never lets a genuinely-off-vertex node (a patched face whose
         # polygon endpoint misses its vertex) merge in silently as "the same
-        # point". Record each offending vertex's own world-space position
-        # (rounded — a set, not a count, so it can be unioned by IDENTITY
-        # against the open-edge ladder's own separate finding below rather
-        # than by a boolean OR that would silently cap the total at +1
-        # regardless of how many DISTINCT vertices the ladder alone catches),
+        # point". Record each offending vertex's own world-space position and
+        # measurement (rounded position as the key — a coordinate-keyed mapping,
+        # not a count, so it can be unioned by IDENTITY against the open-edge
+        # ladder's own separate finding below rather than by a boolean OR that
+        # would silently cap the total at +1 regardless of how many DISTINCT
+        # vertices the ladder alone catches),
         # then union anyway so the rest of the stitch (and the open-edge
         # ladder) still closes normally around it — this check's job is to
         # REPORT the defect, not repair it.
-        vertex_defl_coords: set = set()
+        vertex_defl_coords: _VertexDeflectionEvidence = {}
         for vi, nodes in vertex_nodes.items():
             vp = BRep_Tool.Pnt_s(TopoDS.Vertex_s(vmap.FindKey(vi)))
             vertex_xyz = np.array([vp.X(), vp.Y(), vp.Z()], dtype=np.float64)
-            if float(np.abs(verts[nodes] - vertex_xyz).max()) > deflection:
-                vertex_defl_coords.add((round(vp.X(), 6), round(vp.Y(), 6), round(vp.Z(), 6)))
+            worst = float(np.abs(verts[nodes] - vertex_xyz).max())
+            if worst > deflection:
+                key = (round(vp.X(), 6), round(vp.Y(), 6), round(vp.Z(), 6))
+                vertex_defl_coords[key] = (worst, deflection)
             base_node = nodes[0]
             for n in nodes[1:]:
                 union(base_node, n)
@@ -1140,7 +1175,7 @@ def _mesh_defects_exact(
         mf = mf[keep]
         if mf.shape[0] == 0:
             _ov, _ov_vdefl = _open_ladder()
-            _vd = len(vertex_defl_coords | _ov_vdefl)
+            _vd = {**_ov_vdefl, **vertex_defl_coords}  # base measurement wins
             if _ov >= 0:
                 return _finish(0, _ov, untriangulated, nmv, _vd)
             # open undetermined — a face that failed to tessellate (or a pinch
@@ -1184,7 +1219,7 @@ def _mesh_defects_exact(
         mf = mf[keep2]
         if mf.shape[0] == 0:
             _ov, _ov_vdefl = _open_ladder()
-            _vd = len(vertex_defl_coords | _ov_vdefl)
+            _vd = {**_ov_vdefl, **vertex_defl_coords}  # base measurement wins
             if _ov >= 0:
                 return _finish(0, _ov, untriangulated, nmv, _vd)
             # open undetermined — a face that failed to tessellate (or a pinch
@@ -1204,7 +1239,7 @@ def _mesh_defects_exact(
         counts = _edge_incidence_counts(mf, n)
         nm_edges = int((counts > 2).sum())
         _ov, _ov_vdefl = _open_ladder()
-        _vd = len(vertex_defl_coords | _ov_vdefl)
+        _vd = {**_ov_vdefl, **vertex_defl_coords}  # base measurement wins
         if _ov >= 0:
             return _finish(nm_edges, _ov, untriangulated, nmv, _vd)
         # open undetermined — a non-manifold, untriangulated, non-manifold-vertex,
