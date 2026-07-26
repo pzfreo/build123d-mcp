@@ -89,7 +89,6 @@ _LADDER_BASE_MAX_TRIS = 40000
 
 _VertexDeflectionKey = tuple[float, float, float]
 _VertexDeflectionEvidence = dict[_VertexDeflectionKey, tuple[float, float]]
-_VertexDeflectionLocation = tuple[float, float, float, float, float]
 
 
 @dataclass(frozen=True)
@@ -102,7 +101,6 @@ class MeshGateResult:
     refined_untriangulated_faces: int = 0
     nonmanifold_vertices: int = 0
     vertex_deflection_defects: int = 0
-    vertex_deflection_locations: tuple[_VertexDeflectionLocation, ...] = ()
     ok: bool = False
     refined_verified: bool = False
 
@@ -584,7 +582,12 @@ def _mesh_defects(shape, deadline: float | None = None) -> tuple[int, bool]:
 
 
 def _mesh_defects_exact(
-    shape, max_triangles: int | None = None, deadline: float | None = None
+    shape,
+    max_triangles: int | None = None,
+    deadline: float | None = None,
+    *,
+    vertex_deflection_evidence: _VertexDeflectionEvidence | None = None,
+    run_refined_probe: bool = True,
 ) -> MeshGateResult:
     """Accurate mesh non-manifold count via a topology-stitched tessellation.
 
@@ -634,6 +637,12 @@ def _mesh_defects_exact(
     so ``mesh_open_edges`` on its own can legitimately read 0 for a shape that
     still fails via ``vertex_deflection_defects`` — that is not a contradiction,
     it means the boundary stitches closed but isn't conformal at that vertex.
+
+    ``vertex_deflection_evidence`` is an optional internal sink used by the defect
+    locator to retain each visited rung's coordinate, maximum deviation, and active
+    deflection without changing the serialized gate result. ``run_refined_probe``
+    can be disabled by that caller because refined untriangulated faces are located
+    separately; normal validation and export calls retain the default probe.
 
     The open-edge (closedness) verdict is computed by a separate seam-aware
     conformal stitch run over a DEFLECTION LADDER: a part is closed iff ANY rung
@@ -951,14 +960,23 @@ def _mesh_defects_exact(
             nmv: int,
             vdefl: _VertexDeflectionEvidence,
         ) -> MeshGateResult:
-            refined_untriangulated, refined_ok = _refined_untriangulated_faces()
-            if not refined_ok and not (
-                nm_edges
-                or open_edges
-                or base_untriangulated
-                or refined_untriangulated
-                or nmv
-                or vdefl
+            if vertex_deflection_evidence is not None:
+                vertex_deflection_evidence.update(vdefl)
+            if run_refined_probe:
+                refined_untriangulated, refined_ok = _refined_untriangulated_faces()
+            else:
+                refined_untriangulated, refined_ok = 0, False
+            if (
+                run_refined_probe
+                and not refined_ok
+                and not (
+                    nm_edges
+                    or open_edges
+                    or base_untriangulated
+                    or refined_untriangulated
+                    or nmv
+                    or vdefl
+                )
             ):
                 return MeshGateResult.unchecked()
             return MeshGateResult(
@@ -968,10 +986,6 @@ def _mesh_defects_exact(
                 refined_untriangulated_faces=refined_untriangulated,
                 nonmanifold_vertices=nmv,
                 vertex_deflection_defects=len(vdefl),
-                vertex_deflection_locations=tuple(
-                    (*where, round(worst, 9), round(defl, 9))
-                    for where, (worst, defl) in sorted(vdefl.items())
-                ),
                 ok=True,
                 refined_verified=refined_ok,
             )

@@ -131,14 +131,65 @@ def test_mesh_vertex_deflection_locator_uses_gate_ladder(monkeypatch):
 
     monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
 
-    gate = _mesh_defects_exact(shell)
+    evidence = {}
+    gate = _mesh_defects_exact(shell, vertex_deflection_evidence=evidence)
     defects = _mesh_vertex_deflection_defects(shell)
 
     assert gate.vertex_deflection_defects == 1
-    assert len(gate.vertex_deflection_locations) == 1
+    assert len(evidence) == 1
     assert len(defects) == gate.vertex_deflection_defects
     assert defects[0]["max_deviation_mm"] == pytest.approx(0.01, abs=0.001)
     assert defects[0]["deflection_mm"] < 0.01
+
+
+def test_mesh_vertex_deflection_locator_stops_at_first_closed_rung(monkeypatch):
+    """A clean base rung must not expose a defect that exists only below base."""
+    from build123d import Box
+    from OCP.BRep import BRep_Tool
+    from OCP.gp import gp_Pnt
+
+    from build123d_mcp._locate_subprocess import _mesh_vertex_deflection_defects
+
+    box = Box(10, 10, 10)
+    target = box.vertices()[0].wrapped
+    orig_pnt_s = BRep_Tool.Pnt_s
+
+    def _lying_pnt_s(v):
+        p = orig_pnt_s(v)
+        if v.IsSame(target):
+            return gp_Pnt(p.X() + 0.01, p.Y(), p.Z())
+        return p
+
+    monkeypatch.setattr(BRep_Tool, "Pnt_s", staticmethod(_lying_pnt_s))
+
+    # Base deflection is ~0.0173 mm and the closed Box does not enter /4.
+    assert _mesh_vertex_deflection_defects(box) == []
+
+
+def test_mesh_vertex_deflection_locator_bounds_exact_gate(monkeypatch):
+    import time
+
+    from build123d import Box
+
+    import build123d_mcp.tools.validate as validate_module
+    from build123d_mcp._locate_subprocess import (
+        _VERTEX_DEFLECTION_BUDGET_S,
+        _mesh_vertex_deflection_defects,
+    )
+
+    captured = {}
+
+    def _bounded_exact(shape, **kwargs):
+        captured.update(kwargs)
+        return validate_module.MeshGateResult(ok=True)
+
+    before = time.monotonic()
+    monkeypatch.setattr(validate_module, "_mesh_defects_exact", _bounded_exact)
+
+    assert _mesh_vertex_deflection_defects(Box(10, 10, 10)) == []
+    assert before < captured["deadline"] <= before + _VERTEX_DEFLECTION_BUDGET_S + 1
+    assert captured["run_refined_probe"] is False
+    assert captured["max_triangles"] == 300_000
 
 
 def test_base_untriangulated_face_has_coordinates_without_weld_crash(monkeypatch):

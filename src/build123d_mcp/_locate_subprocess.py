@@ -15,14 +15,14 @@ worker. The B-rep checks (BRepCheck, edge→face map) are cheap and run here too
 import json
 import math
 import sys
+import time
 
-# Triangle-count budget for the vertex-deflection check specifically (the other
-# checks here share one cheap welded mesh already built by _weld()). Matches
-# tools/validate.py's _EXACT_ISOLATED_MAX_TRIS — this subprocess is bounded the
-# same way _gate_subprocess.py's isolated exact check is, by a hard external
-# subprocess timeout rather than an in-loop deadline, so a triangle ceiling
-# (checked once, before the per-edge walk) is the right-sized guard here.
+# Base triangle and wall-clock budgets for the vertex-deflection exact pass. The
+# finite deadline also activates the gate's finer-rung triangle ceiling, so the
+# same bounds apply when process creation is unavailable and collect_defects()
+# runs in-process.
 _VERTEX_DEFLECTION_MAX_TRIS = 300_000
+_VERTEX_DEFLECTION_BUDGET_S = 35.0
 
 
 def _brep_invalid_faces(solid) -> list:
@@ -252,10 +252,13 @@ def _mesh_vertex_deflection_defects(shape) -> list:
     """
     from build123d_mcp.tools.validate import _mesh_defects_exact
 
+    evidence: dict[tuple[float, float, float], tuple[float, float]] = {}
     result = _mesh_defects_exact(
         shape,
         max_triangles=_VERTEX_DEFLECTION_MAX_TRIS,
-        deadline=float("inf"),
+        deadline=time.monotonic() + _VERTEX_DEFLECTION_BUDGET_S,
+        vertex_deflection_evidence=evidence,
+        run_refined_probe=False,
     )
     if not result.ok:
         raise RuntimeError(
@@ -264,7 +267,7 @@ def _mesh_vertex_deflection_defects(shape) -> list:
         )
 
     out = []
-    for x, y, z, worst, deflection in result.vertex_deflection_locations:
+    for (x, y, z), (worst, deflection) in sorted(evidence.items()):
         out.append(
             {
                 "kind": "mesh_vertex_deflection_defect",
