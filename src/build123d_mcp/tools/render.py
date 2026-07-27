@@ -414,12 +414,19 @@ def _tessellate_in_process(shapes, tess) -> tuple[dict, list[str]]:
     child-process creation (#143 / InProcessSession), where ``subprocess.run``
     raises ``OSError``. Unbounded, but those hosts also run no worker op-timeout,
     so there is no worker to SIGKILL — nothing to bound against."""
+    from build123d_mcp._tessellate_subprocess import (
+        record_tessellation_result,
+        tessellate_shape_faces,
+    )
+
     meshes: dict = {}
     failed: list[str] = []
     for name, shape, _color in shapes:
         try:
-            verts, tris = shape.tessellate(tess["linear_deflection"], tess["angular_deflection"])
-            meshes[name] = ([(v.X, v.Y, v.Z) for v in verts], [list(t) for t in tris])
+            verts, tris, missing_faces = tessellate_shape_faces(
+                shape, tess["linear_deflection"], tess["angular_deflection"]
+            )
+            record_tessellation_result(meshes, failed, name, verts, tris, missing_faces)
         except Exception as exc:  # noqa: BLE001 - skip a shape that won't tessellate
             failed.append(f"{name}: {exc}")
     return meshes, failed
@@ -1196,9 +1203,7 @@ def render_view(
             )
             result["png"] = png_bytes
             if png_failed:
-                result["png_warnings"] = [
-                    f"Skipped shapes (tessellation failed): {', '.join(png_failed)}"
-                ]
+                result["png_warnings"] = [f"Tessellation warnings: {', '.join(png_failed)}"]
         except _RenderBudgetExceeded:
             # The render already consumed its hard budget; the unbounded SVG (HLR)
             # fallback below could push the op past the parent watchdog and kill the
