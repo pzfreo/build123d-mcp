@@ -40,7 +40,7 @@ def tessellate_shape_faces(shape, lin: float, ang: float) -> tuple[list, list, l
         face = TopoDS.Face_s(faces.FindKey(fi))
         loc = TopLoc_Location()
         tri = BRep_Tool.Triangulation_s(face, loc)
-        if tri is None:
+        if tri is None or tri.NbTriangles() == 0:
             missing_faces.append(fi)
             continue
 
@@ -76,7 +76,7 @@ def record_tessellation_result(
 
     indices = ", ".join(str(index) for index in missing_faces)
     outcome = "rendered remaining faces" if triangles else "no renderable faces remain"
-    failed.append(f"{name}: missing triangulation for face(s) {indices}; {outcome}")
+    failed.append(f"{name}: no usable triangulation for face(s) {indices}; {outcome}")
 
 
 def main(

@@ -57,6 +57,32 @@ def test_face_tessellation_preserves_imported_stl_mesh(tmp_path):
     assert missing == []
 
 
+def test_face_tessellation_rejects_empty_triangulations(monkeypatch):
+    from OCP.BRep import BRep_Tool
+
+    from build123d_mcp.tools.render import _tessellate_in_process
+
+    class _EmptyTriangulation:
+        @staticmethod
+        def NbTriangles():
+            return 0
+
+    monkeypatch.setattr(
+        BRep_Tool,
+        "Triangulation_s",
+        staticmethod(lambda face, loc: _EmptyTriangulation()),
+    )
+
+    meshes, failed = _tessellate_in_process(
+        [("box", Box(10, 10, 10), None)], render._QUALITY["standard"]
+    )
+
+    assert meshes == {}
+    assert failed == [
+        "box: no usable triangulation for face(s) 1, 2, 3, 4, 5, 6; no renderable faces remain"
+    ]
+
+
 def test_in_process_tessellation_reports_partial_render(monkeypatch):
     from OCP.BRep import BRep_Tool
 
@@ -76,7 +102,7 @@ def test_in_process_tessellation_reports_partial_render(monkeypatch):
     meshes, failed = _tessellate_in_process([("box", box, None)], render._QUALITY["standard"])
 
     assert "box" in meshes
-    assert failed == ["box: missing triangulation for face(s) 1; rendered remaining faces"]
+    assert failed == ["box: no usable triangulation for face(s) 1; rendered remaining faces"]
 
 
 def test_in_process_tessellation_reports_all_faces_missing(monkeypatch):
@@ -92,7 +118,7 @@ def test_in_process_tessellation_reports_all_faces_missing(monkeypatch):
 
     assert meshes == {}
     assert failed == [
-        "box: missing triangulation for face(s) 1, 2, 3, 4, 5, 6; no renderable faces remain"
+        "box: no usable triangulation for face(s) 1, 2, 3, 4, 5, 6; no renderable faces remain"
     ]
 
 
@@ -103,7 +129,7 @@ def test_render_view_labels_partial_tessellation_as_warning(monkeypatch):
     session = Session()
     session.execute("from build123d import *")
     session.execute("show(Box(10, 10, 10), 'box')")
-    partial = "box: missing triangulation for face(s) 1; rendered remaining faces"
+    partial = "box: no usable triangulation for face(s) 1; rendered remaining faces"
 
     monkeypatch.setattr(render, "_do_render_png", lambda *args, **kwargs: (b"PNG", [partial]))
 
