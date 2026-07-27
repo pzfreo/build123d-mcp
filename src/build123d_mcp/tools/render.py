@@ -414,22 +414,19 @@ def _tessellate_in_process(shapes, tess) -> tuple[dict, list[str]]:
     child-process creation (#143 / InProcessSession), where ``subprocess.run``
     raises ``OSError``. Unbounded, but those hosts also run no worker op-timeout,
     so there is no worker to SIGKILL — nothing to bound against."""
-    meshes: dict = {}
-    failed: list[str] = []
     from build123d_mcp._tessellate_subprocess import (
-        _missing_faces_message,
+        record_tessellation_result,
         tessellate_shape_faces,
     )
 
+    meshes: dict = {}
+    failed: list[str] = []
     for name, shape, _color in shapes:
         try:
             verts, tris, missing_faces = tessellate_shape_faces(
                 shape, tess["linear_deflection"], tess["angular_deflection"]
             )
-            if tris or not missing_faces:
-                meshes[name] = (verts, tris)
-            if missing_faces:
-                failed.append(_missing_faces_message(name, missing_faces, bool(tris)))
+            record_tessellation_result(meshes, failed, name, verts, tris, missing_faces)
         except Exception as exc:  # noqa: BLE001 - skip a shape that won't tessellate
             failed.append(f"{name}: {exc}")
     return meshes, failed

@@ -19,11 +19,7 @@ import sys
 
 
 def tessellate_shape_faces(shape, lin: float, ang: float) -> tuple[list, list, list[int]]:
-    """Tessellate a B-rep face-by-face, skipping faces OCC could not mesh.
-
-    STL-derived shapes can contain renderable mesh data without topological OCC
-    faces. Keep build123d's native mesh path for that representation.
-    """
+    """Tessellate a B-rep face-by-face, skipping faces OCC could not mesh."""
     from OCP.BRep import BRep_Tool
     from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED
     from OCP.TopExp import TopExp
@@ -36,13 +32,6 @@ def tessellate_shape_faces(shape, lin: float, ang: float) -> tuple[list, list, l
     shape.mesh(lin, ang)
     faces = TopTools_IndexedMapOfShape()
     TopExp.MapShapes_s(shape.wrapped, TopAbs_FACE, faces)
-    if faces.Size() == 0:
-        verts, tris = shape.tessellate(lin, ang)
-        return (
-            [(vertex.X, vertex.Y, vertex.Z) for vertex in verts],
-            [tuple(triangle) for triangle in tris],
-            [],
-        )
 
     vertices: list = []
     triangles: list = []
@@ -68,24 +57,26 @@ def tessellate_shape_faces(shape, lin: float, ang: float) -> tuple[list, list, l
                 a, b = b, a
             triangles.append((base + a - 1, base + b - 1, base + c - 1))
 
-    # STEP-wrapped STL shells can expose topological faces whose attached OCC
-    # triangulations contain no triangles, while build123d can still recover the
-    # original mesh. This is distinct from an actual missing (`None`) face mesh.
-    if not triangles and not missing_faces:
-        verts, tris = shape.tessellate(lin, ang)
-        return (
-            [(vertex.X, vertex.Y, vertex.Z) for vertex in verts],
-            [tuple(triangle) for triangle in tris],
-            [],
-        )
-
     return vertices, triangles, missing_faces
 
 
-def _missing_faces_message(name: str, missing_faces: list[int], rendered: bool) -> str:
+def record_tessellation_result(
+    meshes: dict,
+    failed: list[str],
+    name: str,
+    vertices: list,
+    triangles: list,
+    missing_faces: list[int],
+) -> None:
+    """Record one shape's mesh and any missing-face warning."""
+    if triangles or not missing_faces:
+        meshes[name] = (vertices, triangles)
+    if not missing_faces:
+        return
+
     indices = ", ".join(str(index) for index in missing_faces)
-    outcome = "rendered remaining faces" if rendered else "no renderable faces remain"
-    return f"{name}: missing triangulation for face(s) {indices}; {outcome}"
+    outcome = "rendered remaining faces" if triangles else "no renderable faces remain"
+    failed.append(f"{name}: missing triangulation for face(s) {indices}; {outcome}")
 
 
 def main(
@@ -103,10 +94,7 @@ def main(
         try:
             shape = import_step(item["step"])
             verts, tris, missing_faces = tessellate_shape_faces(shape, lin, ang)
-            if tris or not missing_faces:
-                meshes[item["name"]] = (verts, tris)
-            if missing_faces:
-                failed.append(_missing_faces_message(item["name"], missing_faces, bool(tris)))
+            record_tessellation_result(meshes, failed, item["name"], verts, tris, missing_faces)
         except Exception as exc:  # noqa: BLE001 - one bad shape shouldn't fail the render
             failed.append(f"{item['name']}: {exc}")
 
