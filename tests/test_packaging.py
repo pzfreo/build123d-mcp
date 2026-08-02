@@ -6,6 +6,18 @@ behaviour for end users without surfacing in the in-process tests.
 
 from importlib.metadata import requires
 
+from packaging.requirements import Requirement
+
+
+def test_mcp_v2_is_excluded_until_protocol_migration():
+    """A fresh install must not resolve SDK v2 before migration issue #428."""
+    deps = [Requirement(raw) for raw in (requires("build123d-mcp") or [])]
+    mcp = next(dep for dep in deps if dep.name == "mcp")
+
+    assert not mcp.specifier.contains("2.0.0"), (
+        "MCP SDK v2 removes mcp.server.fastmcp; keep it excluded until #428 is complete"
+    )
+
 
 def test_build123d_drafting_helpers_is_runtime_dependency():
     """build123d-drafting-helpers must ship as a runtime dependency (issue #106).

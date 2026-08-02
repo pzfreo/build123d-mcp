@@ -102,6 +102,13 @@ Known limits: memory exhaustion is not bounded; Python introspection chains can 
 
 **Never edit `pyproject.toml` manually. Never push tags manually.** Manual edits/tags don't trigger the publish workflow and create orphan tags + version drift. If you see `pyproject.toml` showing `0.3.14.dev0`, that means `0.3.13` is the current PyPI release and `0.3.14` is the next planned release; don't "fix" the version.
 
+For a deliberate major/minor release, first merge a release-preparation PR that
+runs `uv version X.Y.0.dev0` and updates the changelog heading. This is version
+planning, not release publication; the release is still cut only with
+`gh release create vX.Y.0 --generate-notes`. Patch releases need no preparation
+because the publish workflow automatically leaves `main` at the next patch
+`.dev0` after each release.
+
 **Version convention:** between releases, `pyproject.toml` carries a `.dev0` suffix (PEP 440 dev release). `0.3.12 < 0.3.13.dev0 < 0.3.13.dev99 < 0.3.13` — TestPyPI builds (`.devN`) are always newer than the last published release but older than the eventual real release.
 
 **Before cutting a release:** make sure `CHANGELOG.md`'s top entry matches the version you're about to release (strip the `.dev0` suffix mentally — `pyproject.toml = 0.3.14.dev0` means you're cutting `v0.3.14`).
