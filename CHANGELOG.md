@@ -8,7 +8,7 @@
   v2 removes the `mcp.server.fastmcp` API used by this release, so the runtime
   dependency is now capped at `<2` instead of allowing a fresh installation to
   resolve an incompatible SDK and fail during server import. Migration to the
-  MCP 2026-07-28 protocol and SDK v2 is tracked separately.
+  MCP 2026-07-28 protocol and SDK v2 is tracked separately in #428.
 
 ## v0.3.80
 
