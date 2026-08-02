@@ -157,7 +157,7 @@ requires-dist = [
     { name = "build123d", specifier = ">=0.10,<0.12" },
     { name = "build123d-drafting-helpers", specifier = ">=0.10.0" },
     { name = "defusedxml", specifier = ">=0.7.1" },
-    { name = "mcp", specifier = ">=1.9" },
+    { name = "mcp", specifier = ">=1.9,<2" },
     { name = "resvg-py" },
     { name = "scipy" },
     { name = "uvicorn", marker = "extra == 'http'" },

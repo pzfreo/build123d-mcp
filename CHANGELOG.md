@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.81
+
+### Fixed
+
+- **Fresh installs remain on the compatible MCP Python SDK v1 line.** MCP SDK
+  v2 removes the `mcp.server.fastmcp` API used by this release, so the runtime
+  dependency is now capped at `<2` instead of allowing a fresh installation to
+  resolve an incompatible SDK and fail during server import. Migration to the
+  MCP 2026-07-28 protocol and SDK v2 is tracked separately.
+
 ## v0.3.80
 
 ### Added

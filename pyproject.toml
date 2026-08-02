@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "mcp>=1.9",
+    "mcp>=1.9,<2",
     # build123d is pre-1.0 and 0.x minor bumps may break the API.
     # We test against both 0.10 and 0.11 (CI matrix), so the range spans both.
     # bump deliberately.
