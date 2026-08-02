@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "build123d-mcp"
-version = "0.3.81.dev0"
+version = "0.3.82.dev0"
 description = "MCP server wrapping build123d for interactive 3D CAD"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
