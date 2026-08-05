@@ -1,6 +1,6 @@
 """HTTP/ASGI transport and per-request session acceptance coverage (#268).
 
-#268 added FastMCP HTTP hosting hooks (shipped in v0.3.50). Two of its
+#268 added MCP HTTP hosting hooks (shipped in v0.3.50). Two of its
 acceptance criteria had no regression test:
 
   1. Concurrent requests with different session keys resolve to different
@@ -125,14 +125,56 @@ def test_http_app_is_mountable_asgi():
     parent = Starlette(routes=[Mount("/mcp", app=app)])
     mount = next((r for r in parent.routes if getattr(r, "path", None) == "/mcp"), None)
     assert mount is not None
-    assert mount.app is app  # the FastMCP app is what got mounted
+    assert mount.app is app  # the MCPServer app is what got mounted
 
 
-def test_fastmcp_is_stateless_http():
+def test_http_app_is_stateless_http():
     """http_app() relies on stateless HTTP (session identity comes from the
     embedder's headers, not MCP session IDs) — pin that the server is built
-    that way so the ASGI hook stays embeddable."""
-    assert server.mcp.settings.stateless_http is True
+    that way so the ASGI hook stays embeddable.
+
+    SDK v2 moved ``stateless_http`` off the server settings onto the transport
+    factory. Asserting the real session manager the app actually builds, rather
+    than that ``http_app()`` passed a keyword, keeps this a state assertion: a
+    future SDK that renamed or ignored the flag would fail here."""
+    server.http_app()
+
+    manager = server.mcp._lowlevel_server.session_manager
+    assert manager.stateless is True
+
+
+def test_serves_both_protocol_eras():
+    """SDK v2 serves the 2026-07-28 protocol alongside the 2025 era, so the
+    migration widened the surface clients can reach — `server/discover` and the
+    stateless per-request lifecycle did not exist before it.
+
+    The conformance job cannot gate that era (the suite has no server scenarios
+    for it yet), so pin it here: both eras negotiable, and discover answering
+    with OUR capabilities and instructions rather than an SDK default."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from mcp.types.version import SUPPORTED_PROTOCOL_VERSIONS
+
+    assert "2026-07-28" in SUPPORTED_PROTOCOL_VERSIONS
+    assert "2025-06-18" in SUPPORTED_PROTOCOL_VERSIONS
+
+    lowlevel = server.mcp._lowlevel_server
+    ctx = SimpleNamespace(protocol_version="2026-07-28")
+    result = asyncio.run(lowlevel._handle_discover(ctx, None))
+
+    assert result.supported_versions == ["2026-07-28"]
+    assert result.instructions == server._INSTRUCTIONS
+    assert result.capabilities.tools is not None
+
+
+def test_server_info_reports_our_own_version():
+    """serverInfo.version is what a user quotes in a bug report, so it must be
+    this package's version. SDK v1 defaulted it to the SDK's own version and v2
+    defaults it to "", so it only holds while we pass it explicitly."""
+    from importlib.metadata import version
+
+    assert server.mcp._lowlevel_server.version == version("build123d-mcp")
 
 
 def test_compare_missing_support_error_does_not_mask_internal_attribute_errors():

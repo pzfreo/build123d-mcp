@@ -1,7 +1,7 @@
 """WorkerSession IPC must be concurrency-safe (issue #322).
 
 Under HTTP transport one WorkerSession is shared across concurrent requests
-(FastMCP runs sync tool closures off the event loop). The request/reply pair
+(the MCP server runs sync tool closures off the event loop). The request/reply pair
 over the single worker Pipe (send -> poll -> recv) is not atomic, so without a
 lock two threads can interleave and one can recv() the other's response —
 returning the wrong result to the wrong caller. A threading.Lock in _call()
