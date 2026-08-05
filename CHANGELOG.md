@@ -15,8 +15,18 @@
   (`mime_type`, `read_only_hint`), which affects attribute reads but not the
   wire format — clients see byte-identical JSON. Protocol negotiation now spans
   `2024-11-05` through `2026-07-28`, so existing 2025-era clients are
-  unaffected. Verified against the official conformance suite: identical
-  results before and after the port (#428).
+  unaffected. Verified against the official conformance suite and by diffing
+  the actual wire responses of a v1 and a v2 server side by side: `initialize`
+  capabilities, all 36 listed tool schemas, `structuredContent` and the
+  `ImageContent` shape returned by `render_view` are identical (#428).
+
+### Fixed
+
+- **`serverInfo.version` reports this package's version.** SDK v1 defaulted the
+  field to the *SDK's* own version, so clients saw `1.27.0`; SDK v2 defaults it
+  to the empty string. Neither identifies the server, so the version is now
+  passed explicitly and clients see e.g. `0.3.82` — the number worth quoting in
+  a bug report.
 
 ### Added
 

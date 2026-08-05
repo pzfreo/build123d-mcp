@@ -82,16 +82,20 @@ jobs:
         run: |
           uv run build123d-mcp --transport http --host 127.0.0.1 --port 3111 &
           echo $! > /tmp/server.pid
+          # JSON-RPC reports errors at HTTP 200, so an exit-status check would
+          # accept a server that is listening but failing every request. Require
+          # an actual initialize *result* carrying the negotiated version.
           for i in $(seq 1 60); do
-            if curl -sf -o /dev/null -X POST http://127.0.0.1:3111/mcp \
-                 -H 'Content-Type: application/json' \
-                 -H 'Accept: application/json, text/event-stream' \
-                 -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'; then
+            body=$(curl -s -X POST http://127.0.0.1:3111/mcp \
+                     -H 'Content-Type: application/json' \
+                     -H 'Accept: application/json, text/event-stream' \
+                     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' || true)
+            if printf '%s' "$body" | grep -q '"protocolVersion":"2025-06-18"'; then
               echo "server up after ${i}s"; exit 0
             fi
             sleep 1
           done
-          echo "server failed to start"; exit 1
+          echo "server failed to start; last response: $body"; exit 1
 
       # Pinned deliberately: an unpinned suite would turn newly published
       # scenarios into unexpected failures on unrelated PRs. Bump on purpose,

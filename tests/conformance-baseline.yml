@@ -18,6 +18,13 @@
 # resources-list, prompts-list and dns-rebinding-protection must all keep
 # passing.
 #
+# Entries are whole scenarios rather than the finer `scenario:check-id` form.
+# That is not masking sibling checks: each baselined scenario here emits exactly
+# one check, and it fails on the missing fixture before any wire traffic the
+# suite could schema-check is produced. `tools-call-image` and friends therefore
+# cannot reach render_view/render_drawing at all — the ImageContent wire shape
+# they would otherwise cover is pinned by tests/test_marshal.py instead.
+#
 # To refresh: run the suite against a local `--transport http` server and
 # reconcile the failures listed below with the run summary.
 
