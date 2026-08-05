@@ -2,7 +2,7 @@ import contextvars
 import json
 import sys
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import PromptMessage, TextContent, ToolAnnotations
 
 from build123d_mcp.tools._marshal import marshal_render_drawing, marshal_render_view
@@ -39,12 +39,12 @@ install_skill().
 # is a query and the file is a directed output, not a surprising mutation. idempotentHint
 # is set only on mutating-but-idempotent ops (per the spec it's meaningful only when
 # readOnlyHint is false). No wire/behaviour change for clients that ignore annotations.
-_READ_ONLY = ToolAnnotations(readOnlyHint=True)
-_MUTATING = ToolAnnotations(readOnlyHint=False, destructiveHint=False)
-_IDEMPOTENT = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True)
-_DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True)
+_READ_ONLY = ToolAnnotations(read_only_hint=True)
+_MUTATING = ToolAnnotations(read_only_hint=False, destructive_hint=False)
+_IDEMPOTENT = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True)
+_DESTRUCTIVE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True)
 
-mcp = FastMCP("build123d-mcp", instructions=_INSTRUCTIONS, stateless_http=True)
+mcp = MCPServer("build123d-mcp", instructions=_INSTRUCTIONS)
 _session: WorkerSession
 _session_var: contextvars.ContextVar[WorkerSession | None] = contextvars.ContextVar(
     "b123d_session", default=None
@@ -136,7 +136,7 @@ def _publish_reset() -> None:
 
 
 def http_app():
-    """Return the FastMCP ASGI app for use with an ASGI server (e.g. uvicorn).
+    """Return the MCPServer ASGI app for use with an ASGI server (e.g. uvicorn).
 
     **Single-session mode (default)**: all HTTP requests share the module-level
     WorkerSession set by ``configure()``.  This is correct for single-user
@@ -147,8 +147,13 @@ def http_app():
     ``_session_var`` to a per-request ``WorkerSession`` before the MCP handler
     runs; ``_resolve_session()`` will then return that session instead of the
     singleton.  No such middleware is included — this hook exists for embedders.
+
+    ``stateless_http=True`` is set here rather than on the ``MCPServer``
+    constructor: SDK v2 moved the flag off the server object onto the transport
+    factory.  It stays on because CAD session identity is ours (the module-level
+    WorkerSession / ``_session_var``), never the protocol's — see ADR 0001.
     """
-    return mcp.streamable_http_app()
+    return mcp.streamable_http_app(stateless_http=True)
 
 
 @mcp.tool(annotations=_MUTATING)
@@ -243,7 +248,7 @@ def register_experimental_tools() -> None:
     """Register the experimental, not-yet-production-ready tools (verify_spec,
     suggest_spec) into the served tool set. Called by ``cli.main()`` ONLY when
     ``--experimental`` / ``BUILD123D_EXPERIMENTAL`` is set — they are off by default
-    (#362). Idempotent: FastMCP warns on duplicate registration, so guard on it."""
+    (#362). Idempotent: MCPServer warns on duplicate registration, so guard on it."""
     existing = {t.name for t in mcp._tool_manager.list_tools()}
     for fn in (verify_spec, suggest_spec):
         if fn.__name__ not in existing:

@@ -16,12 +16,12 @@ The target is 100% passing. There are no accepted pre-existing failures — if t
 uv tool run --python 3.12 build123d-mcp
 ```
 
-Communicates over stdio (FastMCP). When configuring an MCP client, set `cwd` to the project root.
+Communicates over stdio (MCP SDK v2 `MCPServer`). When configuring an MCP client, set `cwd` to the project root.
 
 ## Project structure
 
 ```
-server.py          — FastMCP entry point; registers all MCP tools; holds module-level _session singleton
+server.py          — MCPServer entry point; registers all MCP tools; holds module-level _session singleton
 session.py         — Persistent state: namespace, current_shape, objects dict, snapshots
 security.py        — Three-layer defence: AST check → restricted builtins → exec timeout
 tools/execute.py   — Thin wrapper delegating to session.execute()

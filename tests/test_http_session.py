@@ -1,6 +1,6 @@
 """HTTP/ASGI transport and per-request session acceptance coverage (#268).
 
-#268 added FastMCP HTTP hosting hooks (shipped in v0.3.50). Two of its
+#268 added MCP HTTP hosting hooks (shipped in v0.3.50). Two of its
 acceptance criteria had no regression test:
 
   1. Concurrent requests with different session keys resolve to different
@@ -125,14 +125,25 @@ def test_http_app_is_mountable_asgi():
     parent = Starlette(routes=[Mount("/mcp", app=app)])
     mount = next((r for r in parent.routes if getattr(r, "path", None) == "/mcp"), None)
     assert mount is not None
-    assert mount.app is app  # the FastMCP app is what got mounted
+    assert mount.app is app  # the MCPServer app is what got mounted
 
 
-def test_fastmcp_is_stateless_http():
+def test_http_app_is_stateless_http(monkeypatch):
     """http_app() relies on stateless HTTP (session identity comes from the
     embedder's headers, not MCP session IDs) — pin that the server is built
-    that way so the ASGI hook stays embeddable."""
-    assert server.mcp.settings.stateless_http is True
+    that way so the ASGI hook stays embeddable.
+
+    SDK v2 moved ``stateless_http`` off the server settings onto the transport
+    factory, so the flag is asserted where it is now passed."""
+    captured = {}
+
+    def fake_streamable_http_app(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(server.mcp, "streamable_http_app", fake_streamable_http_app)
+    server.http_app()
+    assert captured["stateless_http"] is True
 
 
 def test_compare_missing_support_error_does_not_mask_internal_attribute_errors():

@@ -416,7 +416,7 @@ class WorkerSession:
         self._proc: Any = None
         # Serialises the request/reply critical section (send -> poll -> recv)
         # over the single worker Pipe. Under HTTP transport one WorkerSession is
-        # shared across concurrent requests (FastMCP runs sync tools off the
+        # shared across concurrent requests (the MCP server runs sync tools off the
         # event loop); without this lock two threads can interleave on the pipe
         # and one can recv() the other's response. A single OCC worker is serial
         # anyway, so serialising costs no real throughput. (#322)

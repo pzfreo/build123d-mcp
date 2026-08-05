@@ -1017,7 +1017,7 @@ def test_mcp_render_returns_image_and_file_path():
         result = await mcp.call_tool("render_view", {"direction": "iso"})
         img = result.content[0]
         path_item = result.content[1]
-        return img.type, img.data, img.mimeType, path_item.type, path_item.text
+        return img.type, img.data, img.mime_type, path_item.type, path_item.text
 
     img_type, img_data, mime, path_type, path_text = asyncio.run(_mcp_session(run))
     # ImageContent with base64 PNG

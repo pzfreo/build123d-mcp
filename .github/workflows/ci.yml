@@ -51,3 +51,72 @@ jobs:
 
       - name: Run tests
         run: uv run pytest tests/ -v --timeout=300
+
+  # Official MCP conformance suite (#428), run against a real server over
+  # Streamable HTTP. Linux-only and independent of the build123d matrix: this
+  # tests protocol behaviour, which neither the OS nor the CAD kernel affects.
+  #
+  # The suite's server mode is written against the spec's reference "everything
+  # server", so scenarios that require its fixture primitives are baselined in
+  # tests/conformance-baseline.yml. The gate is real in both directions — a
+  # newly failing scenario AND a stale baseline entry both fail the job.
+  conformance:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: uv sync --group dev --extra http
+
+      - name: Start server (Streamable HTTP)
+        run: |
+          uv run build123d-mcp --transport http --host 127.0.0.1 --port 3111 &
+          echo $! > /tmp/server.pid
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null -X POST http://127.0.0.1:3111/mcp \
+                 -H 'Content-Type: application/json' \
+                 -H 'Accept: application/json, text/event-stream' \
+                 -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'; then
+              echo "server up after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "server failed to start"; exit 1
+
+      # Pinned deliberately: an unpinned suite would turn newly published
+      # scenarios into unexpected failures on unrelated PRs. Bump on purpose,
+      # reconciling the baseline in the same commit.
+      - name: Install conformance suite
+        run: |
+          mkdir -p /tmp/conformance
+          cd /tmp/conformance
+          npm init -y > /dev/null
+          npm install @modelcontextprotocol/conformance@0.1.16
+
+      # Both currently testable protocol eras. 2026-07-28 is not yet a valid
+      # --spec-version in the suite (server scenarios for it have not shipped),
+      # so it cannot be gated here — tracked in #428.
+      - name: Run conformance suite
+        run: |
+          for version in 2025-06-18 2025-11-25; do
+            echo "::group::conformance $version"
+            /tmp/conformance/node_modules/.bin/conformance server \
+              --url http://127.0.0.1:3111/mcp \
+              --spec-version "$version" \
+              --expected-failures "$GITHUB_WORKSPACE/tests/conformance-baseline.yml"
+            echo "::endgroup::"
+          done
+
+      - name: Stop server
+        if: always()
+        run: kill "$(cat /tmp/server.pid)" || true

@@ -21,7 +21,7 @@ Two facts collide under the HTTP transport (`--transport http`, added in
    `WorkerSession` for *all* requests. The `_session_var` contextvar exists as
    an extension hook, but the shipped CLI does not wire per-request sessions.
 2. **Concurrent execution.** The streamable-HTTP ASGI app fields requests
-   concurrently, and FastMCP runs the sync tool closures off the event loop.
+   concurrently, and the MCP server runs the sync tool closures off the event loop.
    So two requests can be inside `WorkerSession._call()` at the same time.
 
 `_call()` did `send -> poll -> recv` on the pipe with **no lock**. That pair is

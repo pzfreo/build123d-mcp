@@ -47,7 +47,7 @@ def test_read_only_query_tools_are_marked_read_only():
         "workflow_hints",
         "health_check",
     ):
-        assert a[n].readOnlyHint is True, n
+        assert a[n].read_only_hint is True, n
 
 
 def test_mutating_tools_are_not_read_only():
@@ -59,24 +59,24 @@ def test_mutating_tools_are_not_read_only():
         "install_skill",
         "save_drawing_annotations",
     ):
-        assert a[n].readOnlyHint is False, n
+        assert a[n].read_only_hint is False, n
 
 
 def test_idempotent_mutations_are_flagged():
     a = _annotations()
     # resolve(label=) writes session.geometry_refs — mutating, but idempotent (overwrite).
     for n in ("export", "save_snapshot", "restore_snapshot", "resolve"):
-        assert a[n].readOnlyHint is False and a[n].idempotentHint is True, n
+        assert a[n].read_only_hint is False and a[n].idempotent_hint is True, n
 
 
 def test_reset_is_destructive():
     a = _annotations()["reset"]
-    assert a.readOnlyHint is False and a.destructiveHint is True and a.idempotentHint is True
+    assert a.read_only_hint is False and a.destructive_hint is True and a.idempotent_hint is True
 
 
 def test_no_tool_is_both_read_only_and_destructive():
     # A read-only tool that also claims to be destructive is a classification bug.
-    bad = [n for n, a in _annotations().items() if a.readOnlyHint and a.destructiveHint]
+    bad = [n for n, a in _annotations().items() if a.read_only_hint and a.destructive_hint]
     assert bad == [], bad
 
 
@@ -85,8 +85,8 @@ def test_experimental_tools_are_read_only_when_enabled():
     server.register_experimental_tools()
     try:
         a = _annotations()
-        assert a["verify_spec"].readOnlyHint is True
-        assert a["suggest_spec"].readOnlyHint is True
+        assert a["verify_spec"].read_only_hint is True
+        assert a["suggest_spec"].read_only_hint is True
     finally:
         for name in ("verify_spec", "suggest_spec"):
             try:

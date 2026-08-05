@@ -1,7 +1,7 @@
 """Command-line entry point for the build123d MCP server.
 
 Parses CLI arguments / environment variables, wires up the ``WorkerSession``,
-and starts the FastMCP server defined in ``server.py``. Kept separate so
+and starts the MCP server defined in ``server.py``. Kept separate so
 ``server.py`` stays focused on tool/resource/prompt registration.
 """
 
