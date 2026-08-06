@@ -62,8 +62,14 @@ _HANDLE_BYTES = 24
 MAX_HANDLE_LENGTH = 256
 
 # How long a same-handle caller waits for another request's worker to finish
-# spawning. Worker startup is sub-second normally and has its own internal
-# timeout; this is the backstop for a factory that wedges.
+# spawning before giving up with SessionUnavailable.
+#
+# This bounds WAITERS only — it cannot bound the creator, which is a plain
+# blocking call in its own request's thread and not cancellable. The factory
+# must therefore be self-bounding, and WorkerSession is: _start_worker() polls
+# for the ready signal with _WORKER_READY_TIMEOUT and raises rather than hanging.
+# A factory that could block forever would strand its reservation, holding a cap
+# slot for the life of the process.
 _CREATE_WAIT_S = 120.0
 
 
@@ -246,9 +252,25 @@ class SessionRegistry:
             session = entry.session if expired else None
             if expired:
                 entry.session = None
-                self._closing.discard(entry)
         if session is not None:
-            _close(session)
+            self._finish_close(entry, session)
+
+    def _finish_close(self, entry: _Entry, session: object) -> None:
+        """Close ``session``, freeing its cap slot only once it is really gone.
+
+        The slot is released *after* ``close()`` returns, not before: a slot
+        freed at detach time lets a replacement worker spawn while the
+        predecessor's subprocess is still being killed, so live workers briefly
+        exceed the cap the whole mechanism exists to enforce.
+
+        If the close fails outright the slot is deliberately kept. A worker we
+        could not kill is still holding memory, and this cap is a memory bound —
+        under-admitting is the safe direction to err.
+        """
+        ok = _close(session)
+        if ok:
+            with self._lock:
+                self._closing.discard(entry)
 
     def new_handle(self) -> str:
         """Generate an unguessable handle (for operators provisioning clients)."""
@@ -301,7 +323,10 @@ class SessionRegistry:
                 self._closing.add(entry)
                 return True
             session, entry.session = entry.session, None
-        _close(session)
+            # Hold the slot across the close, so a replacement cannot spawn
+            # while this worker is still being killed.
+            self._closing.add(entry)
+        self._finish_close(entry, session)
         return True
 
     def close_all(self) -> None:
@@ -313,18 +338,17 @@ class SessionRegistry:
         """
         with self._lock:
             self._shutdown = True
-            sessions = []
+            closing = []
             for entry in self._entries.values():
                 entry.detached = True
+                self._closing.add(entry)  # slot held until the close completes
                 if entry.session is not None and entry.leases <= 0:
-                    sessions.append(entry.session)
+                    closing.append((entry, entry.session))
                     entry.session = None
-                else:
-                    # Leased or still spawning: its holder closes it on release.
-                    self._closing.add(entry)
+                # Leased or still spawning: its holder closes it on release.
             self._entries.clear()
-        for session in sessions:
-            _close(session)
+        for entry, session in closing:
+            self._finish_close(entry, session)
 
     # --- introspection ------------------------------------------------------ #
 
@@ -353,12 +377,19 @@ class SessionRegistry:
             return sum(1 for e in self._entries.values() if e.session is not None)
 
 
-def _close(session: object) -> None:
-    """Best-effort teardown; a failure to reap must not break the request."""
+def _close(session: object) -> bool:
+    """Tear ``session`` down. Returns whether it is really gone.
+
+    Failures are swallowed rather than raised — reaping someone else's session
+    must not break the request that happened to trigger it — but they are
+    reported, because the caller keeps the cap slot for a worker it could not
+    kill.
+    """
     close = getattr(session, "close", None)
     if close is None:
-        return
+        return True
     try:
         close()
     except Exception:
-        pass
+        return False
+    return True

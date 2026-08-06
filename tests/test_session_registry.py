@@ -482,3 +482,49 @@ def test_cap_counts_detached_sessions_whose_workers_are_still_alive():
     assert lease.session.closed is True
     bob = reg.acquire("bob")  # ...and only now does the slot free up
     bob.release()
+
+
+def test_cap_slot_is_held_until_the_close_actually_completes():
+    """Freeing the slot at detach time lets a replacement spawn while the
+    predecessor's subprocess is still being killed, so live workers briefly
+    exceed the cap the mechanism exists to enforce."""
+    observed = []
+
+    class SlowClosingSession:
+        closed = False
+
+        def close(self):
+            # Try to take the slot from inside the close, i.e. exactly the
+            # window where a concurrent request would.
+            try:
+                reg.acquire("replacement")
+                observed.append("admitted-during-close")
+            except SessionLimitExceeded:
+                observed.append("refused-during-close")
+            self.closed = True
+
+    reg = _registry(max_sessions=1, factory=SlowClosingSession)
+    lease = reg.acquire("alice")
+    lease.release()
+    reg.destroy("alice")
+
+    assert observed == ["refused-during-close"]
+    later = reg.acquire("replacement")  # freed once the close returned
+    later.release()
+
+
+def test_a_worker_that_cannot_be_killed_keeps_its_slot():
+    """The cap is a memory bound, so a session whose close() failed still counts:
+    that subprocess is presumed alive and holding memory."""
+
+    class UnkillableSession:
+        def close(self):
+            raise OSError("worker will not die")
+
+    reg = _registry(max_sessions=1, factory=UnkillableSession)
+    lease = reg.acquire("stuck")
+    lease.release()
+    reg.destroy("stuck")
+
+    with pytest.raises(SessionLimitExceeded):
+        reg.acquire("someone-else")
