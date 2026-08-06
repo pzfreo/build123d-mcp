@@ -195,6 +195,22 @@ class CadSessionMiddleware:
     def __init__(self, app, registry) -> None:
         self.app = app
         self.registry = registry
+        # Registry work runs in threads, but NOT on anyio's default limiter:
+        # a same-handle caller parks on the creation barrier for up to
+        # _CREATE_WAIT_S, and a burst of those would occupy the whole shared
+        # pool — the same one the MCP server dispatches sync tool calls on. That
+        # would stall unrelated requests, including ones for sessions already
+        # warm, which is the opposite of what offloading was for. A private
+        # limiter bounds the damage to this feature.
+        self._limit = max(4, getattr(registry, "max_sessions", 8) + 4)
+        self._limiter = None
+
+    def _thread_limiter(self):
+        # Built lazily: a CapacityLimiter binds to the running async backend, so
+        # it cannot be constructed when the app object is (outside any loop).
+        if self._limiter is None:
+            self._limiter = anyio.CapacityLimiter(self._limit)
+        return self._limiter
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] == "lifespan":
@@ -244,7 +260,9 @@ class CadSessionMiddleware:
         # request on this process — including ones for sessions that are already
         # warm. Releasing can close a worker (kill + join), so it goes too.
         try:
-            lease = await anyio.to_thread.run_sync(self.registry.acquire, handle)
+            lease = await anyio.to_thread.run_sync(
+                self.registry.acquire, handle, limiter=self._thread_limiter()
+            )
         except SessionLimitExceeded as exc:
             await _send_json(send, 503, {"error": str(exc)})
             return
@@ -277,7 +295,7 @@ class CadSessionMiddleware:
                 # Shielded: if the client disconnected, an unshielded await here
                 # would be cancelled and the lease never returned, so the session
                 # could never be evicted.
-                await anyio.to_thread.run_sync(lease.release)
+                await anyio.to_thread.run_sync(lease.release, limiter=self._thread_limiter())
 
     async def _lifespan(self, scope, receive, send) -> None:
         """Pass lifespan through to the wrapped app, reaping sessions on the way
@@ -287,7 +305,10 @@ class CadSessionMiddleware:
         try:
             await self.app(scope, receive, send)
         finally:
-            self.registry.close_all()
+            # Off the loop: closing N workers is N kill+join round trips, which
+            # would otherwise block the event loop through graceful shutdown.
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(self.registry.close_all)
 
 
 async def _send_json(send, status: int, payload: dict) -> None:

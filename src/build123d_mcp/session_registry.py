@@ -266,12 +266,40 @@ class SessionRegistry:
 
         If the close fails outright the slot is deliberately kept. A worker we
         could not kill is still holding memory, and this cap is a memory bound —
-        under-admitting is the safe direction to err.
+        under-admitting is the safe direction to err. The session is kept on the
+        entry so the next sweep can try again: without it, a process that
+        survived one kill (or exited a moment later on its own) would consume a
+        slot permanently, with nothing able to reclaim it.
         """
-        ok = _close(session)
-        if ok:
+        if _close(session):
             with self._lock:
                 self._closing.discard(entry)
+        else:
+            with self._lock:
+                entry.session = session
+
+    def _retry_failed_closes(self) -> None:
+        """Re-attempt closes that previously failed, freeing their slots.
+
+        Each session is taken off its entry under the lock before the retry, so
+        two concurrent sweeps cannot both close the same one.
+        """
+        with self._lock:
+            pending = []
+            for entry in list(self._closing):
+                # A detached entry still carrying a session is either awaiting a
+                # lease holder (leases > 0) or awaiting its spawn (session None).
+                # Only the third case — no leases, session still present — is a
+                # close that already failed and is ours to retry.
+                if entry.session is not None and entry.leases <= 0:
+                    pending.append((entry, entry.session))
+                    entry.session = None
+        for entry, session in pending:
+            self._finish_close(entry, session)
+
+    @property
+    def max_sessions(self) -> int:
+        return self._max_sessions
 
     def new_handle(self) -> str:
         """Generate an unguessable handle (for operators provisioning clients)."""
@@ -299,6 +327,10 @@ class SessionRegistry:
         taken at request start, so a CAD call longer than the TTL would
         otherwise be evicted mid-flight.
         """
+        # Reclaiming a worker whose close failed frees a slot just as reaping an
+        # idle one does, and this runs on every acquire, so it is the natural
+        # place to retry.
+        self._retry_failed_closes()
         if self._idle_timeout_s <= 0:
             return []
         cutoff = self._clock() - self._idle_timeout_s
@@ -350,6 +382,7 @@ class SessionRegistry:
             self._entries.clear()
         for entry, session in closing:
             self._finish_close(entry, session)
+        self._retry_failed_closes()
 
     # --- introspection ------------------------------------------------------ #
 

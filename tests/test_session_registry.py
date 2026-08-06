@@ -606,3 +606,50 @@ def test_close_reports_a_worker_that_refuses_to_die():
     ws._proc = real_proc  # let the genuine worker be reaped
     ws._closed = False
     ws.close()
+
+
+def test_a_close_that_fails_is_retried_and_eventually_frees_its_slot():
+    """Keeping the slot for an unkillable worker is right, but the registry must
+    also keep the reference: otherwise a process that survived one kill — or
+    exited on its own a moment later — consumes a slot with nothing able to
+    reclaim it."""
+    attempts = []
+
+    class FlakyClose:
+        closed = False
+
+        def close(self):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise OSError("worker will not die yet")
+            self.closed = True
+
+    reg = _registry(max_sessions=1, factory=FlakyClose)
+    lease = reg.acquire("alice")
+    lease.release()
+    reg.destroy("alice")
+
+    # The first kill failed, so the slot is retained and the session kept for
+    # another go — an always-failing close keeps blocking the cap, which
+    # test_a_worker_that_cannot_be_killed_keeps_its_slot covers.
+    assert reg.stats()["closing"] == 1
+
+    bob = reg.acquire("bob")  # the sweep at the top of acquire retries the close
+
+    assert len(attempts) == 2
+    assert reg.stats()["closing"] == 0
+    bob.release()
+
+
+def test_in_process_session_closes_cleanly():
+    """InProcessSession has no subprocess, so close() must not trip over the
+    process-liveness check — otherwise --in-process with per-handle sessions
+    would fail every close and leak capacity."""
+    from build123d_mcp.worker import InProcessSession
+
+    session = InProcessSession(exec_timeout=30)
+    session.close()  # must not raise
+
+    assert session._closed is True
+    with pytest.raises(RuntimeError, match="closed"):
+        session.measure()
