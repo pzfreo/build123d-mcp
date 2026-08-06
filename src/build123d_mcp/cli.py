@@ -249,6 +249,13 @@ Part library file format (Python, any .py file under --library path):
         parser.error(f"--memory-limit-mb must be a positive integer, got {args.memory_limit_mb}")
     if args.cpu_limit_s is not None and args.cpu_limit_s <= 0:
         parser.error(f"--cpu-limit-s must be a positive integer, got {args.cpu_limit_s}")
+    if args.max_sessions < 1:
+        parser.error(f"--max-sessions must be at least 1, got {args.max_sessions}")
+    if args.session_idle_timeout < 0:
+        parser.error(
+            "--session-idle-timeout must be 0 (never reap) or a positive number of seconds, "
+            f"got {args.session_idle_timeout}"
+        )
 
     if args.viewer_socket:
         if sys.platform == "win32":

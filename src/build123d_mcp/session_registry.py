@@ -141,6 +141,8 @@ class SessionRegistry:
         idle_timeout_s: float = 3600.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        if max_sessions < 1:
+            raise ValueError(f"max_sessions must be at least 1, got {max_sessions}")
         self._factory = factory
         self._max_sessions = max_sessions
         self._idle_timeout_s = idle_timeout_s

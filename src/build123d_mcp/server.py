@@ -7,6 +7,7 @@ import anyio.to_thread
 from mcp.server.mcpserver import MCPServer
 from mcp.types import PromptMessage, TextContent, ToolAnnotations
 
+from build123d_mcp.session_registry import MAX_HANDLE_LENGTH
 from build123d_mcp.tools._marshal import marshal_render_drawing, marshal_render_view
 from build123d_mcp.worker import WorkerSession
 
@@ -100,10 +101,6 @@ _handle_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 # learn or adopt a custom header (nothing in the protocol lets a server ask for
 # one). See docs/adr/0003-http-cad-session-handles.md.
 CAD_SESSION_HEADER = "mcp-cad-session"
-
-# Re-exported so the middleware can bound handle length without importing the
-# registry at module scope (it is only needed in HTTP deployments).
-MAX_HANDLE_LENGTH = 256
 
 
 def configure_registry(registry) -> None:
