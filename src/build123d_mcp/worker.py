@@ -395,6 +395,11 @@ class WorkerSession:
     Exposes the same interface as Session so server.py can use either.
     """
 
+    # Class-level default so the _call guard holds even for instances built
+    # without running __init__ (tests stub sessions via __new__, and any future
+    # alternative constructor would hit the same trap).
+    _closed: bool = False
+
     def __init__(
         self,
         exec_timeout: int = 120,
@@ -435,6 +440,11 @@ class WorkerSession:
         # crash skips the append), so replay can't re-hit it. Only execute()-driven
         # state is covered — not snapshots or import_cad_file/load_part geometry. (#359)
         self._execute_history: list[str] = []
+        # Set by close(). Checked in _call so a call on a closed session raises
+        # instead of silently resurrecting the worker: _do_call restarts a dead
+        # process by design (crash recovery), which for a deliberately evicted
+        # session would undo the eviction and leak the subprocess back.
+        self._closed = False
         self._start_worker()
 
     @property
@@ -586,6 +596,12 @@ class WorkerSession:
         (restored, total). History is truncated to the steps actually re-applied so
         it stays consistent with the live worker. Lock held. If the worker can't be
         started at all, the history is cleared and (0, 0) returned."""
+        if self._closed:
+            # Crash recovery must not undo a deliberate close: a replacement
+            # worker here would be unreachable (every later call fails the
+            # _closed guard) and would leak until the process exits.
+            self._execute_history.clear()
+            return 0, 0
         try:
             self._start_worker()
         except Exception:  # noqa: BLE001 - host can't spawn a worker (e.g. #143)
@@ -616,11 +632,56 @@ class WorkerSession:
             )
         return "the session could not be rebuilt and has been reset"
 
+    def close(self) -> None:
+        """Tear down the worker process and its pipe. Idempotent.
+
+        Only the registry-backed HTTP path needs this: a session evicted for
+        idleness has to actually release its OCC subprocess (hundreds of MB of
+        RSS), not merely be dropped from a dict. The session is unusable
+        afterwards — further calls raise rather than restart the worker.
+
+        Sets ``_closed`` before taking the lock so a call that has not started
+        yet fails fast, then takes it so teardown cannot interleave with a call
+        already inside ``_do_call`` — otherwise killing the worker and dropping
+        the pipe under it produces a ``None`` dereference on ``self._conn``, or
+        an ``EOFError`` that sends the caller into crash recovery and starts a
+        replacement subprocess nothing will ever reach.
+
+        The registry only closes lease-free sessions, so in practice this lock
+        is uncontended; it is correctness insurance for direct callers.
+
+        Raises if the worker is still alive afterwards. ``_kill_worker`` swallows
+        everything — right for crash recovery, where a restart follows anyway —
+        but the session registry frees a capacity slot on the strength of this
+        call, so a worker that survived must not be reported as gone.
+        """
+        self._closed = True
+        with self._lock:
+            self._kill_worker()
+            conn, self._conn = self._conn, None
+            survived = self._proc is not None and self._proc.is_alive()
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        if survived:
+            raise RuntimeError(
+                f"Worker process {getattr(self._proc, 'pid', '?')} is still alive after "
+                "kill and join; its memory is not reclaimed."
+            )
+
     def _call(self, op: str, args: dict, timeout: int) -> Any:
         # Serialise the IPC critical section so concurrent callers (HTTP shared
         # session, pipelined clients) can't interleave on the pipe. Subclasses
         # override _do_call, not _call, so they inherit this guard. (#322)
         with self._lock:
+            # Guard here rather than in _do_call so subclasses inherit it.
+            if self._closed:
+                raise RuntimeError(
+                    "This CAD session has been closed (evicted for idleness or explicitly "
+                    "destroyed). Start a new session instead of reusing this handle."
+                )
             return self._do_call(op, args, timeout)
 
     def _do_call(self, op: str, args: dict, timeout: int) -> Any:
@@ -701,6 +762,14 @@ class WorkerSession:
             return f"Error: {e}"
 
     def reset(self) -> str:
+        # Checked before the dead-worker shortcut below, which bypasses _call and
+        # would otherwise start a replacement subprocess for a closed session —
+        # unreachable (later calls fail the _closed guard) and leaked.
+        if self._closed:
+            raise RuntimeError(
+                "This CAD session has been closed (evicted for idleness or explicitly "
+                "destroyed). Start a new session instead of reusing this handle."
+            )
         self._execute_history.clear()
         if not self._proc.is_alive():
             self._start_worker()

@@ -169,6 +169,28 @@ Part library file format (Python, any .py file under --library path):
         "Overrides BUILD123D_PORT env var.",
     )
     parser.add_argument(
+        "--max-sessions",
+        metavar="N",
+        type=int,
+        default=int(os.environ.get("BUILD123D_MAX_SESSIONS") or "1"),
+        help="Number of isolated CAD sessions to allow when --transport http (default: 1, "
+        "meaning every request shares one session, as before). Above 1, a request carrying "
+        "an Mcp-Cad-Session header gets that handle's own session and worker subprocess; "
+        "requests without the header still share the default one. Each session costs a "
+        "subprocess with the OCC kernel loaded (hundreds of MB), so size this against "
+        "available memory. Overrides BUILD123D_MAX_SESSIONS env var.",
+    )
+    parser.add_argument(
+        "--session-idle-timeout",
+        metavar="SECONDS",
+        type=int,
+        default=int(os.environ.get("BUILD123D_SESSION_IDLE_TIMEOUT") or "3600"),
+        help="Close a per-handle CAD session after this many seconds without a request, "
+        "reclaiming its subprocess (default: 3600; 0 disables reaping). A client returning "
+        "after eviction transparently gets a fresh, empty session under the same handle. "
+        "Overrides BUILD123D_SESSION_IDLE_TIMEOUT env var.",
+    )
+    parser.add_argument(
         "--memory-limit-mb",
         metavar="MB",
         type=int,
@@ -227,6 +249,13 @@ Part library file format (Python, any .py file under --library path):
         parser.error(f"--memory-limit-mb must be a positive integer, got {args.memory_limit_mb}")
     if args.cpu_limit_s is not None and args.cpu_limit_s <= 0:
         parser.error(f"--cpu-limit-s must be a positive integer, got {args.cpu_limit_s}")
+    if args.max_sessions < 1:
+        parser.error(f"--max-sessions must be at least 1, got {args.max_sessions}")
+    if args.session_idle_timeout < 0:
+        parser.error(
+            "--session-idle-timeout must be 0 (never reap) or a positive number of seconds, "
+            f"got {args.session_idle_timeout}"
+        )
 
     if args.viewer_socket:
         if sys.platform == "win32":
@@ -280,12 +309,31 @@ Part library file format (Python, any .py file under --library path):
     if args.transport == "http":
         import uvicorn
 
-        print(
-            "WARNING: HTTP transport runs a single shared CAD session. "
-            "Concurrent clients will share the same build123d namespace — "
-            "suitable for single-user deployments only.",
-            file=sys.stderr,
-        )
+        if args.max_sessions > 1:
+            from build123d_mcp.session_registry import SessionRegistry
+
+            server.configure_registry(
+                SessionRegistry(
+                    factory=lambda: session_cls(**session_kwargs),
+                    max_sessions=args.max_sessions,
+                    idle_timeout_s=args.session_idle_timeout,
+                )
+            )
+            print(
+                f"HTTP transport: up to {args.max_sessions} isolated CAD sessions, keyed on the "
+                "Mcp-Cad-Session header. Requests without that header share one default session. "
+                "This server does NOT authenticate handles — put an auth gateway in front of it, "
+                "and a session-aware load balancer if you run more than one process.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "WARNING: HTTP transport runs a single shared CAD session. "
+                "Concurrent clients will share the same build123d namespace — "
+                "suitable for single-user deployments only. Pass --max-sessions "
+                "to isolate clients by Mcp-Cad-Session header.",
+                file=sys.stderr,
+            )
         uvicorn.run(server.http_app(), host=args.host, port=args.port)
     else:
         server.mcp.run()

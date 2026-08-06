@@ -2,9 +2,12 @@ import contextvars
 import json
 import sys
 
+import anyio
+import anyio.to_thread
 from mcp.server.mcpserver import MCPServer
 from mcp.types import PromptMessage, TextContent, ToolAnnotations
 
+from build123d_mcp.session_registry import MAX_HANDLE_LENGTH
 from build123d_mcp.tools._marshal import marshal_render_drawing, marshal_render_view
 from build123d_mcp.worker import WorkerSession
 
@@ -85,6 +88,27 @@ def configure(session: WorkerSession) -> None:
     _session = session
 
 
+# Per-handle CAD sessions for HTTP (#428). None until configure_registry() runs,
+# which cli.main() does only for --transport http with --max-sessions > 1; stdio
+# never touches any of this.
+_registry = None
+_handle_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "b123d_session_handle", default=None
+)
+
+# The header carrying the CAD session handle. Supplied by an auth gateway or a
+# client's static config — never by the MCP client itself, which has no way to
+# learn or adopt a custom header (nothing in the protocol lets a server ask for
+# one). See docs/adr/0003-http-cad-session-handles.md.
+CAD_SESSION_HEADER = "mcp-cad-session"
+
+
+def configure_registry(registry) -> None:
+    """Enable per-handle HTTP session isolation."""
+    global _registry
+    _registry = registry
+
+
 # Live-session viewer publisher (build123d_mcp.viewer.ViewerPublisher), or None
 # when --viewer-socket was not given. Set by start_viewer().
 _viewer = None
@@ -152,6 +176,155 @@ def _publish_reset() -> None:
     viewer.reset()
 
 
+class CadSessionMiddleware:
+    """Resolve the ``Mcp-Cad-Session`` header to a per-handle CAD session.
+
+    Plain ASGI rather than Starlette's ``BaseHTTPMiddleware``: the latter
+    reads the request through a task group, which both buffers streamed
+    Streamable-HTTP bodies and breaks contextvar propagation into the endpoint —
+    the exact mechanism this middleware depends on.
+
+    No header (or no registry configured) leaves ``_session_var`` unset, so
+    ``_resolve_session()`` falls back to the shared singleton and every existing
+    HTTP deployment behaves exactly as before. This is opt-in.
+    """
+
+    def __init__(self, app, registry) -> None:
+        self.app = app
+        self.registry = registry
+        # Registry work runs in threads, but NOT on anyio's default limiter:
+        # a same-handle caller parks on the creation barrier for up to
+        # _CREATE_WAIT_S, and a burst of those would occupy the whole shared
+        # pool — the same one the MCP server dispatches sync tool calls on. That
+        # would stall unrelated requests, including ones for sessions already
+        # warm, which is the opposite of what offloading was for. A private
+        # limiter bounds the damage to this feature.
+        self._limit = max(4, getattr(registry, "max_sessions", 8) + 4)
+        self._limiter = None
+
+    def _thread_limiter(self):
+        # Built lazily: a CapacityLimiter binds to the running async backend, so
+        # it cannot be constructed when the app object is (outside any loop).
+        if self._limiter is None:
+            self._limiter = anyio.CapacityLimiter(self._limit)
+        return self._limiter
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "lifespan":
+            await self._lifespan(scope, receive, send)
+            return
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        values = [
+            value.decode("latin-1").strip()
+            for key, value in scope.get("headers", ())
+            if key.decode("latin-1").lower() == CAD_SESSION_HEADER
+        ]
+
+        # Duplicates are an identity-confusion hazard, not a curiosity: this
+        # header is the gateway-to-session boundary, and a gateway appending its
+        # canonical value (last-wins) while an attacker-supplied one survives
+        # first would authorise one tenant and serve another. Refuse to guess.
+        if len(values) > 1:
+            await _send_json(send, 400, {"error": f"Duplicate {CAD_SESSION_HEADER} header."})
+            return
+
+        if not values:
+            await self.app(scope, receive, send)
+            return
+
+        handle = values[0]
+        if not handle:
+            # Present but blank is a misconfigured gateway, not a request to use
+            # the shared session — say so rather than silently downgrading.
+            await _send_json(send, 400, {"error": f"Empty {CAD_SESSION_HEADER} header."})
+            return
+        if len(handle) > MAX_HANDLE_LENGTH:
+            await _send_json(
+                send,
+                400,
+                {"error": f"{CAD_SESSION_HEADER} header exceeds {MAX_HANDLE_LENGTH} characters."},
+            )
+            return
+
+        from build123d_mcp.session_registry import SessionLimitExceeded, SessionUnavailable
+
+        # Off the event loop: acquiring can spawn a worker subprocess (seconds),
+        # and a same-handle caller can block on the creation barrier for far
+        # longer. Called inline, either would stall every other in-flight HTTP
+        # request on this process — including ones for sessions that are already
+        # warm. Releasing can close a worker (kill + join), so it goes too.
+        try:
+            lease = await anyio.to_thread.run_sync(
+                self.registry.acquire, handle, limiter=self._thread_limiter()
+            )
+        except SessionLimitExceeded as exc:
+            await _send_json(send, 503, {"error": str(exc)})
+            return
+        except SessionUnavailable as exc:
+            await _send_json(send, 503, {"error": str(exc)})
+            return
+        except Exception as exc:  # worker failed to spawn
+            await _send_json(send, 500, {"error": f"Could not start a CAD session: {exc}"})
+            return
+
+        # Released only after the response completes: while a lease is held the
+        # registry will not close this session, so eviction or a concurrent
+        # destroy_session() cannot kill the worker mid-CAD-call.
+        #
+        # The contextvars are restored via tokens rather than just set. Under
+        # Uvicorn each request runs in its own task, so a set would not leak —
+        # but that is the server's behaviour, not a contract this middleware
+        # should depend on. An embedder calling the app sequentially in one
+        # context would otherwise leave the previous tenant's session visible to
+        # a following request that sent no header, which is a cross-tenant leak
+        # and, worse, one where destroy_session() would target the wrong handle.
+        session_token = _session_var.set(lease.session)
+        handle_token = _handle_var.set(handle)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            _session_var.reset(session_token)
+            _handle_var.reset(handle_token)
+            with anyio.CancelScope(shield=True):
+                # Shielded: if the client disconnected, an unshielded await here
+                # would be cancelled and the lease never returned, so the session
+                # could never be evicted.
+                await anyio.to_thread.run_sync(lease.release, limiter=self._thread_limiter())
+
+    async def _lifespan(self, scope, receive, send) -> None:
+        """Pass lifespan through to the wrapped app, reaping sessions on the way
+        out. Without this, every worker subprocess outlives a graceful shutdown —
+        which matters most to embedders that stop the ASGI app but keep the
+        process alive."""
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            # Off the loop: closing N workers is N kill+join round trips, which
+            # would otherwise block the event loop through graceful shutdown.
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(
+                    self.registry.close_all, limiter=self._thread_limiter()
+                )
+
+
+async def _send_json(send, status: int, payload: dict) -> None:
+    body = json.dumps(payload).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
 def http_app():
     """Return the MCPServer ASGI app for use with an ASGI server (e.g. uvicorn).
 
@@ -160,17 +333,23 @@ def http_app():
     deployments (one operator, one CAD namespace).  Concurrent clients will
     interleave operations in the same session.
 
-    **Multi-session mode**: host middleware can isolate tenants by setting
-    ``_session_var`` to a per-request ``WorkerSession`` before the MCP handler
-    runs; ``_resolve_session()`` will then return that session instead of the
-    singleton.  No such middleware is included — this hook exists for embedders.
+    **Per-handle mode**: when ``configure_registry()`` has been called, a request
+    carrying an ``Mcp-Cad-Session`` header gets that handle's own
+    ``WorkerSession``, created on first sight.  The handle comes from an auth
+    gateway or a client's static config, never from the MCP client itself.
+
+    Embedders wanting a different policy can still set ``_session_var`` from
+    their own middleware; ``_resolve_session()` honours whatever is set.
 
     ``stateless_http=True`` is set here rather than on the ``MCPServer``
     constructor: SDK v2 moved the flag off the server object onto the transport
-    factory.  It stays on because CAD session identity is ours (the module-level
-    WorkerSession / ``_session_var``), never the protocol's — see ADR 0001.
+    factory.  It stays on because CAD session identity is ours (the handle
+    registry / ``_session_var``), never the protocol's — see ADR 0001 and 0003.
     """
-    return mcp.streamable_http_app(stateless_http=True)
+    app = mcp.streamable_http_app(stateless_http=True)
+    if _registry is not None:
+        return CadSessionMiddleware(app, _registry)
+    return app
 
 
 @mcp.tool(annotations=_MUTATING)
@@ -587,6 +766,36 @@ def reset() -> str:
     result = _resolve_session().reset()
     _publish_reset()
     return result
+
+
+# --- HTTP session-handle tools (#428) ---------------------------------------- #
+# These act on the registry, not on a WorkerSession, so they have no worker op and
+# no stub in worker.py — they never cross the process boundary. Both are no-ops
+# over stdio, where there is exactly one session and nothing to manage.
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+def destroy_session() -> str:
+    """Close THIS client's CAD session, discarding its namespace, objects and snapshots, and release its worker subprocess. The next tool call transparently starts a fresh session under the same handle. Use when abandoning a model entirely; prefer reset() to clear geometry while keeping the session. Only meaningful over HTTP with a session handle configured."""
+    if _registry is None:
+        return "Per-handle sessions are not enabled; this server has a single CAD session. Use reset() instead."
+    handle = _handle_var.get()
+    if handle is None:
+        return "This request carries no session handle, so it is using the shared session. Use reset() instead."
+    existed = _registry.destroy(handle)
+    return (
+        "Session destroyed; the next call will start a fresh one."
+        if existed
+        else "No session to destroy; the next call will start a fresh one."
+    )
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def list_sessions() -> str:
+    """Report how many CAD sessions this server process is holding, its configured limit, and how long each has been idle. Handles are secrets and are never returned. Operator/diagnostic tool for HTTP deployments — over stdio there is always exactly one session."""
+    if _registry is None:
+        return json.dumps({"sessions": 1, "mode": "single-session"}, indent=2)
+    return json.dumps(_registry.stats(), indent=2)
 
 
 @mcp.tool(annotations=_READ_ONLY)
