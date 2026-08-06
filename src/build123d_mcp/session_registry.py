@@ -72,6 +72,14 @@ MAX_HANDLE_LENGTH = 256
 # slot for the life of the process.
 _CREATE_WAIT_S = 120.0
 
+# Shutdown teardown budget. Each sweep drains in-flight closes then retries any
+# that failed; several passes are needed because a lease released between a
+# drain and its sweep starts a close of its own. WorkerSession._kill_worker can
+# spend join(5) per worker, so the drain has to outlast that.
+_DRAIN_POLLS = 800  # x _DRAIN_POLL_S = 8s, comfortably past one join(5)
+_DRAIN_POLL_S = 0.01
+_SHUTDOWN_SWEEPS = 3
+
 
 class SessionLimitExceeded(RuntimeError):
     """Raised when creating a session would exceed ``max_sessions``."""
@@ -394,18 +402,35 @@ class SessionRegistry:
         for entry, session in closing:
             self._finish_close(entry, session)
 
-        # Wait out closes that were already running when shutdown began. Such a
-        # close has its entry's session temporarily detached, so the sweep below
-        # would otherwise see nothing to do — and if it then fails it restores
-        # the session, with no future acquire left to sweep it up.
-        #
-        # Bounded by iterations rather than the clock: tests inject a frozen one.
-        for _ in range(500):
+        # Drain and sweep repeatedly, not once. A close running when shutdown
+        # began has its entry's session temporarily detached, so a lone sweep
+        # sees nothing to do and a subsequent failure restores the session with
+        # no acquire left to sweep it up. Draining once is not enough either: a
+        # lease released just after the drain read zero starts its own close
+        # afterwards, so each drain needs a sweep behind it and vice versa.
+        for _ in range(_SHUTDOWN_SWEEPS):
+            self._drain_closes_in_flight()
+            self._retry_failed_closes()
+            with self._lock:
+                if not self._closes_in_flight and not any(
+                    e.session is not None for e in self._closing
+                ):
+                    return
+        # Falling out here means workers we could not kill. They are daemonic,
+        # so the OS reclaims them when this process exits; the case that would
+        # genuinely leak is an embedder that stops the ASGI app and keeps
+        # running, and calling close_all() again is its remedy. stats() keeps
+        # reporting them under "closing".
+
+    def _drain_closes_in_flight(self) -> None:
+        """Block until no close is running, bounded so a wedged kill cannot hang
+        shutdown. Iteration-bounded rather than clock-bounded: tests inject a
+        frozen clock, which would spin here forever."""
+        for _ in range(_DRAIN_POLLS):
             with self._lock:
                 if not self._closes_in_flight:
-                    break
-            time.sleep(0.01)
-        self._retry_failed_closes()
+                    return
+            time.sleep(_DRAIN_POLL_S)
 
     # --- introspection ------------------------------------------------------ #
 

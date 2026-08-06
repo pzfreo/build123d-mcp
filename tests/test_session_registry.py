@@ -690,3 +690,51 @@ def test_close_all_waits_out_a_close_already_in_flight():
 
     assert len(attempts) == 2  # close_all waited, then retried
     assert reg.stats()["closing"] == 0  # nothing stranded
+
+
+def test_close_all_sweeps_again_after_a_close_that_started_mid_shutdown():
+    """A lease released just after the drain reads zero starts its own close, so
+    one drain-then-sweep is not enough — the sweeps have to alternate."""
+    releases = []
+    attempts = []
+
+    class FailsOnceThenWorks:
+        closed = False
+
+        def close(self):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise OSError("first kill did not take")
+            self.closed = True
+
+    reg = _registry(max_sessions=2, factory=FailsOnceThenWorks)
+    lease = reg.acquire("alice")
+    reg.destroy("alice")  # deferred: alice's close waits on this lease
+
+    original_drain = reg._drain_closes_in_flight
+
+    def drain_then_release():
+        original_drain()
+        if not releases:
+            releases.append(1)
+            lease.release()  # starts a close AFTER the drain saw zero
+
+    reg._drain_closes_in_flight = drain_then_release
+    reg.close_all()
+
+    assert len(attempts) == 2  # the later failure was still retried
+    assert reg.stats()["closing"] == 0
+
+
+def test_close_all_returns_promptly_when_nothing_is_closing():
+    """The drain must not spin its budget on an idle registry."""
+    reg = _registry(max_sessions=2)
+    acquire(reg, "alice")
+
+    import time as _time
+
+    started = _time.monotonic()
+    reg.close_all()
+
+    assert _time.monotonic() - started < 1.0
+    assert len(reg) == 0
