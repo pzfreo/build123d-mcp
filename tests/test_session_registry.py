@@ -528,3 +528,81 @@ def test_a_worker_that_cannot_be_killed_keeps_its_slot():
 
     with pytest.raises(SessionLimitExceeded):
         reg.acquire("someone-else")
+
+
+def test_orphaned_creation_also_holds_its_slot_until_the_close_completes():
+    """The orphan path freed the slot before closing, reintroducing the very
+    race _finish_close exists to prevent — and permanently freeing a slot whose
+    worker survived, if that close failed."""
+    factory = BlockingFactory()
+    reg = _registry(max_sessions=1, factory=factory)
+    outcome = {}
+
+    def create():
+        try:
+            reg.acquire("doomed")
+        except SessionUnavailable as exc:
+            outcome["error"] = exc
+
+    t = threading.Thread(target=create)
+    t.start()
+    factory.entered.wait(5)
+    reg.destroy("doomed")
+
+    with pytest.raises(SessionLimitExceeded):
+        reg.acquire("opportunist")  # slot still held while the orphan closes
+
+    factory.proceed.set()
+    t.join(5)
+
+    assert "error" in outcome
+    assert factory.built[0].closed is True
+    later = reg.acquire("opportunist")  # freed only now
+    later.release()
+
+
+def test_stats_reports_capacity_not_just_live_sessions():
+    """An operator reading this is usually diagnosing 503s, so the figure the
+    cap actually compares against has to be visible — otherwise it can read
+    sessions: 0 while every request is refused."""
+    reg = _registry(max_sessions=1)
+    lease = reg.acquire("alice")
+    reg.destroy("alice")  # detached, worker alive until release
+
+    stats = reg.stats()
+    assert stats["sessions"] == 0  # nothing in the lookup table...
+    assert stats["closing"] == 1  # ...but a worker is still resident
+    assert stats["capacity_used"] == 1
+    assert stats["capacity_used"] == stats["max_sessions"]  # hence the 503s
+    lease.release()
+
+    assert reg.stats()["capacity_used"] == 0
+
+
+def test_close_reports_a_worker_that_refuses_to_die():
+    """The registry frees a capacity slot on the strength of close() returning,
+    so close() must not report success for a live process."""
+    from build123d_mcp.worker import WorkerSession
+
+    ws = WorkerSession(exec_timeout=30)
+    real_proc = ws._proc
+
+    class Undead:
+        pid = 4242
+
+        def is_alive(self):
+            return True
+
+        def kill(self):
+            pass
+
+        def join(self, timeout=None):
+            pass
+
+    ws._proc = Undead()
+    with pytest.raises(RuntimeError, match="still alive"):
+        ws.close()
+
+    ws._proc = real_proc  # let the genuine worker be reaped
+    ws._closed = False
+    ws.close()

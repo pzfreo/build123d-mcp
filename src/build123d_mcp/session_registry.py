@@ -189,12 +189,13 @@ class SessionRegistry:
                 entry.session = None
                 entry.failed = True
                 entry.leases -= 1
-                self._closing.discard(entry)  # about to be closed; frees the slot
                 orphaned = True
         entry.ready.set()
 
         if orphaned:
-            _close(session)
+            # Via _finish_close, not a bare _close: the slot must stay held
+            # until this worker is really gone, exactly as on the other paths.
+            self._finish_close(entry, session)
             raise SessionUnavailable(
                 "This session was destroyed while its worker was starting. Retry."
             )
@@ -355,18 +356,29 @@ class SessionRegistry:
     def stats(self) -> dict:
         """Counts and idle ages for the list_sessions operator tool.
 
-        Handles are secrets and are never returned — only how many sessions
-        exist and how long each has been idle. Sessions still spawning are
-        excluded from every figure, so the counts agree with each other.
+        Handles are secrets and are never returned — only counts and idle ages.
+
+        ``capacity_used`` is what the cap actually compares against, and it can
+        exceed ``sessions``: a session still spawning, or one detached and
+        waiting on its last lease, or one whose close failed, all still hold a
+        slot. Reporting only ``sessions`` could show 0 while every request is
+        being refused with "at session limit", which is exactly the situation an
+        operator would be reading this to diagnose.
         """
         now = self._clock()
         with self._lock:
             live = [e for e in self._entries.values() if e.session is not None]
             ages = sorted(round(now - e.last_used, 1) for e in live)
             in_use = sum(1 for e in live if e.leases > 0)
+            starting = sum(1 for e in self._entries.values() if e.session is None)
+            closing = len(self._closing)
+            capacity_used = len(self._entries) + closing
         return {
             "sessions": len(ages),
             "in_use": in_use,
+            "starting": starting,
+            "closing": closing,
+            "capacity_used": capacity_used,
             "max_sessions": self._max_sessions,
             "idle_timeout_s": self._idle_timeout_s,
             "idle_seconds": ages,

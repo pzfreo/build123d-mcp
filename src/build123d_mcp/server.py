@@ -2,6 +2,8 @@ import contextvars
 import json
 import sys
 
+import anyio
+import anyio.to_thread
 from mcp.server.mcpserver import MCPServer
 from mcp.types import PromptMessage, TextContent, ToolAnnotations
 
@@ -236,8 +238,13 @@ class CadSessionMiddleware:
 
         from build123d_mcp.session_registry import SessionLimitExceeded, SessionUnavailable
 
+        # Off the event loop: acquiring can spawn a worker subprocess (seconds),
+        # and a same-handle caller can block on the creation barrier for far
+        # longer. Called inline, either would stall every other in-flight HTTP
+        # request on this process — including ones for sessions that are already
+        # warm. Releasing can close a worker (kill + join), so it goes too.
         try:
-            lease = self.registry.acquire(handle)
+            lease = await anyio.to_thread.run_sync(self.registry.acquire, handle)
         except SessionLimitExceeded as exc:
             await _send_json(send, 503, {"error": str(exc)})
             return
@@ -266,7 +273,11 @@ class CadSessionMiddleware:
         finally:
             _session_var.reset(session_token)
             _handle_var.reset(handle_token)
-            lease.release()
+            with anyio.CancelScope(shield=True):
+                # Shielded: if the client disconnected, an unshielded await here
+                # would be cancelled and the lease never returned, so the session
+                # could never be evicted.
+                await anyio.to_thread.run_sync(lease.release)
 
     async def _lifespan(self, scope, receive, send) -> None:
         """Pass lifespan through to the wrapped app, reaping sessions on the way

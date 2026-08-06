@@ -649,16 +649,27 @@ class WorkerSession:
 
         The registry only closes lease-free sessions, so in practice this lock
         is uncontended; it is correctness insurance for direct callers.
+
+        Raises if the worker is still alive afterwards. ``_kill_worker`` swallows
+        everything — right for crash recovery, where a restart follows anyway —
+        but the session registry frees a capacity slot on the strength of this
+        call, so a worker that survived must not be reported as gone.
         """
         self._closed = True
         with self._lock:
             self._kill_worker()
             conn, self._conn = self._conn, None
+            survived = self._proc is not None and self._proc.is_alive()
         if conn is not None:
             try:
                 conn.close()
             except Exception:
                 pass
+        if survived:
+            raise RuntimeError(
+                f"Worker process {getattr(self._proc, 'pid', '?')} is still alive after "
+                "kill and join; its memory is not reclaimed."
+            )
 
     def _call(self, op: str, args: dict, timeout: int) -> Any:
         # Serialise the IPC critical section so concurrent callers (HTTP shared
