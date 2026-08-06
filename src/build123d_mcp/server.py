@@ -99,6 +99,10 @@ _handle_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 # one). See docs/adr/0003-http-cad-session-handles.md.
 CAD_SESSION_HEADER = "mcp-cad-session"
 
+# Re-exported so the middleware can bound handle length without importing the
+# registry at module scope (it is only needed in HTTP deployments).
+MAX_HANDLE_LENGTH = 256
+
 
 def configure_registry(registry) -> None:
     """Enable per-handle HTTP session isolation."""
@@ -191,34 +195,78 @@ class CadSessionMiddleware:
         self.registry = registry
 
     async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "lifespan":
+            await self._lifespan(scope, receive, send)
+            return
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
-        handle = None
-        for key, value in scope.get("headers", ()):
-            if key.decode("latin-1").lower() == CAD_SESSION_HEADER:
-                handle = value.decode("latin-1").strip()
-                break
+        values = [
+            value.decode("latin-1").strip()
+            for key, value in scope.get("headers", ())
+            if key.decode("latin-1").lower() == CAD_SESSION_HEADER
+        ]
 
-        if not handle:
+        # Duplicates are an identity-confusion hazard, not a curiosity: this
+        # header is the gateway-to-session boundary, and a gateway appending its
+        # canonical value (last-wins) while an attacker-supplied one survives
+        # first would authorise one tenant and serve another. Refuse to guess.
+        if len(values) > 1:
+            await _send_json(send, 400, {"error": f"Duplicate {CAD_SESSION_HEADER} header."})
+            return
+
+        if not values:
             await self.app(scope, receive, send)
             return
 
-        from build123d_mcp.session_registry import SessionLimitExceeded
+        handle = values[0]
+        if not handle:
+            # Present but blank is a misconfigured gateway, not a request to use
+            # the shared session — say so rather than silently downgrading.
+            await _send_json(send, 400, {"error": f"Empty {CAD_SESSION_HEADER} header."})
+            return
+        if len(handle) > MAX_HANDLE_LENGTH:
+            await _send_json(
+                send,
+                400,
+                {"error": f"{CAD_SESSION_HEADER} header exceeds {MAX_HANDLE_LENGTH} characters."},
+            )
+            return
+
+        from build123d_mcp.session_registry import SessionLimitExceeded, SessionUnavailable
 
         try:
-            session = self.registry.get_or_create(handle)
+            lease = self.registry.acquire(handle)
         except SessionLimitExceeded as exc:
+            await _send_json(send, 503, {"error": str(exc)})
+            return
+        except SessionUnavailable as exc:
             await _send_json(send, 503, {"error": str(exc)})
             return
         except Exception as exc:  # worker failed to spawn
             await _send_json(send, 500, {"error": f"Could not start a CAD session: {exc}"})
             return
 
-        _session_var.set(session)
-        _handle_var.set(handle)
-        await self.app(scope, receive, send)
+        # Released only after the response completes: while a lease is held the
+        # registry will not close this session, so eviction or a concurrent
+        # destroy_session() cannot kill the worker mid-CAD-call.
+        try:
+            _session_var.set(lease.session)
+            _handle_var.set(handle)
+            await self.app(scope, receive, send)
+        finally:
+            lease.release()
+
+    async def _lifespan(self, scope, receive, send) -> None:
+        """Pass lifespan through to the wrapped app, reaping sessions on the way
+        out. Without this, every worker subprocess outlives a graceful shutdown —
+        which matters most to embedders that stop the ASGI app but keep the
+        process alive."""
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            self.registry.close_all()
 
 
 async def _send_json(send, status: int, payload: dict) -> None:

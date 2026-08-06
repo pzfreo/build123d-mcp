@@ -242,8 +242,10 @@ def _fake_registry(max_sessions=4):
     from build123d_mcp.session_registry import SessionRegistry
 
     class FakeSession:
+        closed = False
+
         def close(self):
-            pass
+            self.closed = True
 
     return SessionRegistry(factory=FakeSession, max_sessions=max_sessions)
 
@@ -256,8 +258,10 @@ def test_header_routes_to_that_handles_session():
     _drive(mw, _scope([("mcp-cad-session", "alice")]))
 
     assert downstream.called
-    assert downstream.resolved is registry.get_or_create("alice")
+    lease = registry.acquire("alice")
+    assert downstream.resolved is lease.session
     assert downstream.handle == "alice"
+    lease.release()
 
 
 def test_distinct_handles_reach_distinct_sessions_through_the_middleware():
@@ -296,7 +300,8 @@ def test_header_is_matched_case_insensitively():
 
 def test_session_limit_returns_503_without_reaching_the_app():
     registry = _fake_registry(max_sessions=1)
-    registry.get_or_create("incumbent")
+    incumbent = registry.acquire("incumbent")
+    incumbent.release()
     downstream = _RecordingApp()
     mw = server.CadSessionMiddleware(downstream, registry)
 
@@ -344,3 +349,90 @@ def test_http_app_is_unwrapped_when_no_registry_configured():
 
     assert server._registry is None
     assert isinstance(server.http_app(), Starlette)
+
+
+def test_duplicate_session_headers_are_rejected():
+    """This header is the gateway-to-session identity boundary. A gateway
+    appending its canonical value (last-wins) while an attacker-supplied one
+    survives first would authorise one tenant and serve another, so ambiguity
+    must be refused rather than resolved by an undocumented first-wins rule."""
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, _fake_registry())
+
+    sent = _drive(mw, _scope([("mcp-cad-session", "alice"), ("mcp-cad-session", "bob")]))
+
+    assert sent[0]["status"] == 400
+    assert not downstream.called
+
+
+def test_blank_session_header_is_rejected_not_silently_shared():
+    """Present-but-empty is a misconfigured gateway; silently downgrading to the
+    shared session would put a tenant's work in the common namespace."""
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, _fake_registry())
+
+    sent = _drive(mw, _scope([("mcp-cad-session", "   ")]))
+
+    assert sent[0]["status"] == 400
+    assert not downstream.called
+
+
+def test_overlong_handle_is_rejected():
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, _fake_registry())
+
+    sent = _drive(mw, _scope([("mcp-cad-session", "x" * 5000)]))
+
+    assert sent[0]["status"] == 400
+    assert not downstream.called
+
+
+def test_lease_is_released_after_the_response():
+    """While a lease is held the registry refuses to close the session; if the
+    middleware leaked leases, eviction would stop working entirely."""
+    registry = _fake_registry()
+    mw = server.CadSessionMiddleware(_RecordingApp(), registry)
+
+    _drive(mw, _scope([("mcp-cad-session", "alice")]))
+
+    assert registry.destroy("alice") is True
+    assert len(registry) == 0
+
+
+def test_lease_is_released_even_when_the_app_raises():
+    registry = _fake_registry()
+
+    class Boom:
+        async def __call__(self, scope, receive, send):
+            raise RuntimeError("handler exploded")
+
+    mw = server.CadSessionMiddleware(Boom(), registry)
+    import asyncio
+
+    with pytest.raises(RuntimeError, match="exploded"):
+        asyncio.run(mw(_scope([("mcp-cad-session", "alice")]), _noop_receive, lambda m: None))
+
+    assert registry.destroy("alice") is True  # not stuck holding a lease
+
+
+def test_lifespan_shutdown_closes_every_session():
+    """Without this, every worker subprocess outlives a graceful shutdown —
+    which matters most to embedders that stop the app but keep the process."""
+    registry = _fake_registry()
+    lease = registry.acquire("alice")
+    session = lease.session
+    lease.release()
+
+    class App:
+        async def __call__(self, scope, receive, send):
+            return
+
+    import asyncio
+
+    asyncio.run(
+        server.CadSessionMiddleware(App(), registry)(
+            {"type": "lifespan"}, _noop_receive, lambda m: None
+        )
+    )
+
+    assert session.closed is True

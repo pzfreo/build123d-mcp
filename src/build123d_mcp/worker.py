@@ -596,6 +596,12 @@ class WorkerSession:
         (restored, total). History is truncated to the steps actually re-applied so
         it stays consistent with the live worker. Lock held. If the worker can't be
         started at all, the history is cleared and (0, 0) returned."""
+        if self._closed:
+            # Crash recovery must not undo a deliberate close: a replacement
+            # worker here would be unreachable (every later call fails the
+            # _closed guard) and would leak until the process exits.
+            self._execute_history.clear()
+            return 0, 0
         try:
             self._start_worker()
         except Exception:  # noqa: BLE001 - host can't spawn a worker (e.g. #143)
@@ -633,10 +639,21 @@ class WorkerSession:
         idleness has to actually release its OCC subprocess (hundreds of MB of
         RSS), not merely be dropped from a dict. The session is unusable
         afterwards — further calls raise rather than restart the worker.
+
+        Sets ``_closed`` before taking the lock so a call that has not started
+        yet fails fast, then takes it so teardown cannot interleave with a call
+        already inside ``_do_call`` — otherwise killing the worker and dropping
+        the pipe under it produces a ``None`` dereference on ``self._conn``, or
+        an ``EOFError`` that sends the caller into crash recovery and starts a
+        replacement subprocess nothing will ever reach.
+
+        The registry only closes lease-free sessions, so in practice this lock
+        is uncontended; it is correctness insurance for direct callers.
         """
         self._closed = True
-        self._kill_worker()
-        conn, self._conn = self._conn, None
+        with self._lock:
+            self._kill_worker()
+            conn, self._conn = self._conn, None
         if conn is not None:
             try:
                 conn.close()
@@ -734,6 +751,14 @@ class WorkerSession:
             return f"Error: {e}"
 
     def reset(self) -> str:
+        # Checked before the dead-worker shortcut below, which bypasses _call and
+        # would otherwise start a replacement subprocess for a closed session —
+        # unreachable (later calls fail the _closed guard) and leaked.
+        if self._closed:
+            raise RuntimeError(
+                "This CAD session has been closed (evicted for idleness or explicitly "
+                "destroyed). Start a new session instead of reusing this handle."
+            )
         self._execute_history.clear()
         if not self._proc.is_alive():
             self._start_worker()

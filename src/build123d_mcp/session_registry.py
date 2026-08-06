@@ -22,10 +22,27 @@ kernel (seconds of startup, hundreds of MB resident) — so the registry enforce
 a hard cap and evicts on idleness. Without both, an unauthenticated peer sending
 random handles would exhaust memory.
 
-Concurrency: a session-aware load balancer routes a given handle to one process,
-but nothing stops two concurrent requests carrying the SAME handle from landing
-here at once. ``_lock`` therefore covers registry mutation only — never the CAD
-call itself, which is serialised separately by ``WorkerSession._call``.
+Concurrency
+-----------
+A session-aware load balancer routes a handle to one process, but nothing stops
+two concurrent requests carrying the SAME handle from landing here together, nor
+an unrelated request triggering eviction while another is mid-CAD-call. Two
+mechanisms handle that.
+
+**Leases.** ``acquire()`` returns a ``Lease``; the holder must ``release()`` it.
+A session with a live lease is never closed. Eviction and explicit destruction
+*detach* it from the lookup table at once — so no new request can find it — and
+defer the actual ``close()`` to the last holder. Without this, reaping could kill
+a worker mid-call, and a CAD call longer than the TTL would be evicted out from
+under itself, since the idle stamp is taken at request *start*.
+
+**Creation barrier.** The first caller for a handle installs an entry and spawns
+the worker outside the lock (spawning takes real time; holding the lock would
+stall every other handle). Concurrent callers for the same handle wait on that
+entry's event instead of racing — and are never handed the half-built entry.
+
+``_lock`` covers registry bookkeeping only, never the CAD call itself, which is
+serialised separately by ``WorkerSession._call``.
 """
 
 from __future__ import annotations
@@ -40,13 +57,63 @@ from collections.abc import Callable
 # attacker a trivially enumerable namespace.
 _HANDLE_BYTES = 24
 
+# Longest handle accepted. The ones we mint are ~32 chars; this bounds what a
+# peer can turn into a retained dictionary key.
+MAX_HANDLE_LENGTH = 256
+
+# How long a same-handle caller waits for another request's worker to finish
+# spawning. Worker startup is sub-second normally and has its own internal
+# timeout; this is the backstop for a factory that wedges.
+_CREATE_WAIT_S = 120.0
+
 
 class SessionLimitExceeded(RuntimeError):
     """Raised when creating a session would exceed ``max_sessions``."""
 
 
+class SessionUnavailable(RuntimeError):
+    """A session could not be produced for a transient reason — retry.
+
+    Distinct from ``SessionLimitExceeded``, which means the server is full.
+    Raised when a creation is abandoned (registry shut down, handle destroyed
+    mid-spawn), fails, or wedges past the wait.
+    """
+
+
+class _Entry:
+    """One handle's session plus the bookkeeping that keeps it alive safely."""
+
+    __slots__ = ("session", "leases", "last_used", "detached", "ready", "failed")
+
+    def __init__(self, now: float) -> None:
+        self.session: object | None = None  # None until the worker finishes spawning
+        self.leases = 0
+        self.last_used = now
+        self.detached = False  # off the lookup table; close when leases hit zero
+        self.failed = False  # creation raised; waiters must fail rather than hang
+        self.ready = threading.Event()
+
+
+class Lease:
+    """A borrowed session. Release exactly once, in a ``finally``."""
+
+    __slots__ = ("session", "_registry", "_entry", "_released")
+
+    def __init__(self, registry: SessionRegistry, entry: _Entry, session: object) -> None:
+        self.session = session
+        self._registry = registry
+        self._entry = entry
+        self._released = False
+
+    def release(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        self._registry._release(self._entry)
+
+
 class SessionRegistry:
-    """Handle -> WorkerSession, with an idle TTL and a hard cap.
+    """Handle -> WorkerSession, with leases, an idle TTL and a hard cap.
 
     ``factory`` builds a fresh ``WorkerSession``; it is injected so tests can
     substitute a cheap stub instead of spawning real OCC subprocesses.
@@ -64,75 +131,133 @@ class SessionRegistry:
         self._idle_timeout_s = idle_timeout_s
         self._clock = clock
         self._lock = threading.Lock()
-        self._sessions: dict[str, object] = {}
-        self._last_used: dict[str, float] = {}
+        self._entries: dict[str, _Entry] = {}
+        self._shutdown = False
 
-    # --- lookup ------------------------------------------------------------ #
+    # --- lease-based access ------------------------------------------------- #
 
-    def get_or_create(self, handle: str) -> object:
-        """Return the session for ``handle``, creating it on first sight.
+    def acquire(self, handle: str) -> Lease:
+        """Return a lease on ``handle``'s session, creating it on first sight.
 
         Create-on-first-use is required, not a convenience: a handle injected by
-        the gateway or configured statically in a client is always unknown to
-        the server on that client's first request. There is no round trip in
-        which the server could hand a handle to an MCP client — nothing in the
-        protocol lets a server ask a client to adopt a custom header.
+        a gateway or configured statically in a client is always unknown to the
+        server on that client's first request, and no MCP round trip exists in
+        which a server could hand a handle to a client.
         """
         self.reap_idle()
-        with self._lock:
-            existing = self._sessions.get(handle)
-            if existing is not None:
-                self._last_used[handle] = self._clock()
-                return existing
-            if len(self._sessions) >= self._max_sessions:
-                raise SessionLimitExceeded(
-                    f"Server is at its CAD session limit ({self._max_sessions}). "
-                    "Retry once an idle session is reclaimed, or raise --max-sessions."
-                )
-            # Reserve the slot before the expensive spawn so two concurrent
-            # first-requests for different handles cannot both pass the cap
-            # check and overshoot it.
-            self._sessions[handle] = _PENDING
-            self._last_used[handle] = self._clock()
+        entry, is_creator = self._reserve(handle)
+
+        if not is_creator:
+            return self._await_creation(entry)
 
         try:
             session = self._factory()
         except Exception:
             with self._lock:
-                # Only clear our own reservation; a racing destroy may have
-                # already removed it.
-                if self._sessions.get(handle) is _PENDING:
-                    del self._sessions[handle]
-                    self._last_used.pop(handle, None)
+                entry.failed = True
+                entry.leases -= 1
+                if self._entries.get(handle) is entry:
+                    del self._entries[handle]
+            entry.ready.set()  # wake waiters so they fail fast rather than hang
             raise
 
+        orphaned = False
         with self._lock:
-            self._sessions[handle] = session
-            self._last_used[handle] = self._clock()
-        return session
+            entry.session = session
+            entry.last_used = self._clock()
+            # destroy() or close_all() may have detached this entry while the
+            # worker was spawning. Publishing it now would resurrect a session
+            # nothing tracks and leak its subprocess past shutdown.
+            if entry.detached or self._entries.get(handle) is not entry:
+                entry.session = None
+                entry.failed = True
+                entry.leases -= 1
+                orphaned = True
+        entry.ready.set()
+
+        if orphaned:
+            _close(session)
+            raise SessionUnavailable(
+                "This session was destroyed while its worker was starting. Retry."
+            )
+        return Lease(self, entry, session)
+
+    def _await_creation(self, entry: _Entry) -> Lease:
+        """Wait for the request that is spawning this handle's worker."""
+        if not entry.ready.wait(_CREATE_WAIT_S):
+            self._release(entry)
+            raise SessionUnavailable(
+                "Timed out waiting for this session's worker to start. Retry shortly."
+            )
+        if entry.failed or entry.session is None:
+            self._release(entry)
+            raise SessionUnavailable(
+                "This session's worker failed to start. Retry to attempt a fresh one."
+            )
+        return Lease(self, entry, entry.session)
+
+    def _reserve(self, handle: str) -> tuple[_Entry, bool]:
+        """Take a lease, creating the entry if absent.
+
+        Returns ``(entry, is_creator)``; the creator runs the factory and sets
+        ``ready``.
+        """
+        with self._lock:
+            if self._shutdown:
+                raise SessionUnavailable("Server is shutting down.")
+            entry = self._entries.get(handle)
+            if entry is not None:
+                entry.leases += 1
+                entry.last_used = self._clock()
+                return entry, False
+            if len(self._entries) >= self._max_sessions:
+                raise SessionLimitExceeded(
+                    f"Server is at its CAD session limit ({self._max_sessions}). "
+                    "Retry once an idle session is reclaimed, or raise --max-sessions."
+                )
+            entry = _Entry(self._clock())
+            entry.leases = 1
+            self._entries[handle] = entry
+            return entry, True
+
+    def _release(self, entry: _Entry) -> None:
+        """Give back a lease; close the session if it was the last one on an
+        already-detached entry."""
+        with self._lock:
+            entry.leases -= 1
+            entry.last_used = self._clock()
+            expired = entry.detached and entry.leases <= 0 and entry.session is not None
+            session = entry.session if expired else None
+            if expired:
+                entry.session = None
+        if session is not None:
+            _close(session)
 
     def new_handle(self) -> str:
         """Generate an unguessable handle (for operators provisioning clients)."""
         return secrets.token_urlsafe(_HANDLE_BYTES)
 
-    # --- lifecycle --------------------------------------------------------- #
+    # --- lifecycle ---------------------------------------------------------- #
 
     def destroy(self, handle: str) -> bool:
-        """Close and forget ``handle``. Returns whether it existed."""
-        with self._lock:
-            session = self._sessions.pop(handle, None)
-            self._last_used.pop(handle, None)
-        if session is None or session is _PENDING:
-            return False
-        _close(session)
-        return True
+        """Detach ``handle``, closing it once no request is still using it.
+
+        Returns whether a session existed. Deferring matters because the usual
+        caller is the ``destroy_session`` tool, running inside a request that
+        holds a lease on that very session.
+        """
+        return self._detach(handle)
 
     def reap_idle(self) -> list[str]:
-        """Close sessions idle for longer than the TTL. Returns handles reaped.
+        """Close sessions idle beyond the TTL. Returns the handles reaped.
 
-        Called on the request path rather than from a background thread: a
-        server with no traffic has nothing to reclaim for, and this keeps the
-        registry free of a thread that would outlive the ASGI app.
+        Runs on the request path rather than in a background thread: a server
+        with no traffic has nothing to reclaim for, and this keeps the registry
+        free of a thread that would outlive the ASGI app.
+
+        A leased session is never reaped, however old its stamp — the stamp is
+        taken at request start, so a CAD call longer than the TTL would
+        otherwise be evicted mid-flight.
         """
         if self._idle_timeout_s <= 0:
             return []
@@ -140,39 +265,60 @@ class SessionRegistry:
         with self._lock:
             stale = [
                 h
-                for h, seen in self._last_used.items()
-                if seen < cutoff and self._sessions.get(h) is not _PENDING
+                for h, e in self._entries.items()
+                if e.last_used < cutoff and e.leases <= 0 and e.session is not None
             ]
-            reaped = [(h, self._sessions.pop(h)) for h in stale]
-            for h in stale:
-                self._last_used.pop(h, None)
-        for _, session in reaped:
-            _close(session)
-        return [h for h, _ in reaped]
+        return [h for h in stale if self._detach(h)]
+
+    def _detach(self, handle: str) -> bool:
+        """Remove ``handle`` from lookup; close now if unleased, else on release."""
+        with self._lock:
+            entry = self._entries.pop(handle, None)
+            if entry is None:
+                return False
+            entry.detached = True
+            if entry.leases > 0 or entry.session is None:
+                return True  # release() (or the orphan check) will close it
+            session, entry.session = entry.session, None
+        _close(session)
+        return True
 
     def close_all(self) -> None:
-        """Tear down every session (server shutdown)."""
+        """Tear down every session (ASGI lifespan shutdown).
+
+        Sets the shutdown flag first, so a creation still in flight discovers it
+        has been orphaned and closes its own worker instead of installing it
+        after teardown.
+        """
         with self._lock:
-            sessions = [s for s in self._sessions.values() if s is not _PENDING]
-            self._sessions.clear()
-            self._last_used.clear()
+            self._shutdown = True
+            sessions = []
+            for entry in self._entries.values():
+                entry.detached = True
+                if entry.session is not None and entry.leases <= 0:
+                    sessions.append(entry.session)
+                    entry.session = None
+            self._entries.clear()
         for session in sessions:
             _close(session)
 
-    # --- introspection ----------------------------------------------------- #
+    # --- introspection ------------------------------------------------------ #
 
     def stats(self) -> dict:
-        """Counts and idle ages, for the list_sessions operator tool.
+        """Counts and idle ages for the list_sessions operator tool.
 
-        Handles are secrets, so they are never returned — only how many exist
-        and how long each has been idle.
+        Handles are secrets and are never returned — only how many sessions
+        exist and how long each has been idle. Sessions still spawning are
+        excluded from every figure, so the counts agree with each other.
         """
         now = self._clock()
         with self._lock:
-            ages = sorted(round(now - seen, 1) for seen in self._last_used.values())
-            live = sum(1 for s in self._sessions.values() if s is not _PENDING)
+            live = [e for e in self._entries.values() if e.session is not None]
+            ages = sorted(round(now - e.last_used, 1) for e in live)
+            in_use = sum(1 for e in live if e.leases > 0)
         return {
-            "sessions": live,
+            "sessions": len(ages),
+            "in_use": in_use,
             "max_sessions": self._max_sessions,
             "idle_timeout_s": self._idle_timeout_s,
             "idle_seconds": ages,
@@ -180,16 +326,7 @@ class SessionRegistry:
 
     def __len__(self) -> int:
         with self._lock:
-            return sum(1 for s in self._sessions.values() if s is not _PENDING)
-
-
-class _Pending:
-    """Placeholder occupying a cap slot while its worker is still spawning."""
-
-    __slots__ = ()
-
-
-_PENDING = _Pending()
+            return sum(1 for e in self._entries.values() if e.session is not None)
 
 
 def _close(session: object) -> None:
