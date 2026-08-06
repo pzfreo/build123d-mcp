@@ -251,11 +251,21 @@ class CadSessionMiddleware:
         # Released only after the response completes: while a lease is held the
         # registry will not close this session, so eviction or a concurrent
         # destroy_session() cannot kill the worker mid-CAD-call.
+        #
+        # The contextvars are restored via tokens rather than just set. Under
+        # Uvicorn each request runs in its own task, so a set would not leak —
+        # but that is the server's behaviour, not a contract this middleware
+        # should depend on. An embedder calling the app sequentially in one
+        # context would otherwise leave the previous tenant's session visible to
+        # a following request that sent no header, which is a cross-tenant leak
+        # and, worse, one where destroy_session() would target the wrong handle.
+        session_token = _session_var.set(lease.session)
+        handle_token = _handle_var.set(handle)
         try:
-            _session_var.set(lease.session)
-            _handle_var.set(handle)
             await self.app(scope, receive, send)
         finally:
+            _session_var.reset(session_token)
+            _handle_var.reset(handle_token)
             lease.release()
 
     async def _lifespan(self, scope, receive, send) -> None:

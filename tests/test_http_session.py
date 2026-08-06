@@ -436,3 +436,28 @@ def test_lifespan_shutdown_closes_every_session():
     )
 
     assert session.closed is True
+
+
+def test_session_contextvars_do_not_leak_into_a_later_headerless_request():
+    """Uvicorn gives each request its own task, so a bare set() would not leak
+    there — but that is the server's behaviour, not a contract. An embedder
+    driving the app sequentially in one context must not see the previous
+    tenant's session on a request that sent no header."""
+    registry = _fake_registry()
+    tenant, anonymous = _RecordingApp(), _RecordingApp()
+
+    import asyncio
+
+    async def two_requests_in_one_context():
+        await server.CadSessionMiddleware(tenant, registry)(
+            _scope([("mcp-cad-session", "alice")]), _noop_receive, lambda m: None
+        )
+        await server.CadSessionMiddleware(anonymous, registry)(
+            _scope(), _noop_receive, lambda m: None
+        )
+
+    asyncio.run(two_requests_in_one_context())
+
+    assert tenant.resolved is not None
+    assert anonymous.resolved is None  # falls back to the shared singleton
+    assert anonymous.handle is None  # so destroy_session() cannot target alice

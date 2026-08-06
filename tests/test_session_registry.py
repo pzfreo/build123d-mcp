@@ -439,3 +439,46 @@ def test_reset_on_a_closed_session_does_not_start_a_new_worker():
 
     assert ws._proc is dead  # no replacement was spawned
     assert not ws._proc.is_alive()
+
+
+def test_concurrent_release_of_one_lease_cannot_close_another_holders_session():
+    """Two threads releasing the SAME lease must decrement once. Otherwise the
+    count reaches zero while a second holder is still using the session, which
+    closes a worker mid-request and leaves the count negative."""
+    reg = _registry(max_sessions=2)
+    first = reg.acquire("alice")
+    second = reg.acquire("alice")
+    reg.destroy("alice")  # detached; must survive until BOTH leases are back
+
+    start = threading.Barrier(2)
+
+    def release_first():
+        start.wait(5)
+        first.release()
+
+    threads = [threading.Thread(target=release_first) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(5)
+
+    assert first.session.closed is False  # second still holds it
+    second.release()
+    assert first.session.closed is True
+
+
+def test_cap_counts_detached_sessions_whose_workers_are_still_alive():
+    """destroy() defers the close while a lease is held, so that worker is still
+    resident. Admitting a replacement alongside it would let live subprocesses
+    exceed --max-sessions, which is the memory bound the cap exists to enforce."""
+    reg = _registry(max_sessions=1)
+    lease = reg.acquire("alice")
+    reg.destroy("alice")  # alice's worker is alive until lease.release()
+
+    with pytest.raises(SessionLimitExceeded):
+        reg.acquire("bob")
+
+    lease.release()  # alice really goes away...
+    assert lease.session.closed is True
+    bob = reg.acquire("bob")  # ...and only now does the slot free up
+    bob.release()

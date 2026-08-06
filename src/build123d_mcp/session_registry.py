@@ -106,10 +106,11 @@ class Lease:
         self._released = False
 
     def release(self) -> None:
-        if self._released:
-            return
-        self._released = True
-        self._registry._release(self._entry)
+        # The released flag is checked and set inside the registry lock, not
+        # here: two threads releasing the SAME lease could otherwise both pass a
+        # plain check, double-decrement the count, and close a session another
+        # holder is still using.
+        self._registry._release(self._entry, self)
 
 
 class SessionRegistry:
@@ -132,6 +133,12 @@ class SessionRegistry:
         self._clock = clock
         self._lock = threading.Lock()
         self._entries: dict[str, _Entry] = {}
+        # Detached entries whose worker is still alive (a lease outlives the
+        # destroy/eviction) or still spawning. They hold real subprocesses, so
+        # they count against the cap until actually closed — otherwise
+        # destroying a leased session would let a replacement in alongside it
+        # and the "hard cap" would not bound live workers at all.
+        self._closing: set[_Entry] = set()
         self._shutdown = False
 
     # --- lease-based access ------------------------------------------------- #
@@ -150,14 +157,18 @@ class SessionRegistry:
         if not is_creator:
             return self._await_creation(entry)
 
+        # BaseException, not Exception: a factory killed by SystemExit or
+        # KeyboardInterrupt would otherwise never set `ready`, leaving waiters to
+        # burn the full timeout and the reservation to hold a slot forever.
         try:
             session = self._factory()
-        except Exception:
+        except BaseException:
             with self._lock:
                 entry.failed = True
                 entry.leases -= 1
                 if self._entries.get(handle) is entry:
                     del self._entries[handle]
+                self._closing.discard(entry)
             entry.ready.set()  # wake waiters so they fail fast rather than hang
             raise
 
@@ -172,6 +183,7 @@ class SessionRegistry:
                 entry.session = None
                 entry.failed = True
                 entry.leases -= 1
+                self._closing.discard(entry)  # about to be closed; frees the slot
                 orphaned = True
         entry.ready.set()
 
@@ -210,7 +222,7 @@ class SessionRegistry:
                 entry.leases += 1
                 entry.last_used = self._clock()
                 return entry, False
-            if len(self._entries) >= self._max_sessions:
+            if len(self._entries) + len(self._closing) >= self._max_sessions:
                 raise SessionLimitExceeded(
                     f"Server is at its CAD session limit ({self._max_sessions}). "
                     "Retry once an idle session is reclaimed, or raise --max-sessions."
@@ -220,16 +232,21 @@ class SessionRegistry:
             self._entries[handle] = entry
             return entry, True
 
-    def _release(self, entry: _Entry) -> None:
+    def _release(self, entry: _Entry, lease: Lease | None = None) -> None:
         """Give back a lease; close the session if it was the last one on an
         already-detached entry."""
         with self._lock:
+            if lease is not None:
+                if lease._released:
+                    return
+                lease._released = True
             entry.leases -= 1
             entry.last_used = self._clock()
             expired = entry.detached and entry.leases <= 0 and entry.session is not None
             session = entry.session if expired else None
             if expired:
                 entry.session = None
+                self._closing.discard(entry)
         if session is not None:
             _close(session)
 
@@ -278,7 +295,11 @@ class SessionRegistry:
                 return False
             entry.detached = True
             if entry.leases > 0 or entry.session is None:
-                return True  # release() (or the orphan check) will close it
+                # Still in use, or still spawning — release() (or the orphan
+                # check) closes it. Its worker is alive either way, so keep it
+                # counted against the cap until then.
+                self._closing.add(entry)
+                return True
             session, entry.session = entry.session, None
         _close(session)
         return True
@@ -298,6 +319,9 @@ class SessionRegistry:
                 if entry.session is not None and entry.leases <= 0:
                     sessions.append(entry.session)
                     entry.session = None
+                else:
+                    # Leased or still spawning: its holder closes it on release.
+                    self._closing.add(entry)
             self._entries.clear()
         for session in sessions:
             _close(session)
