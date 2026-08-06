@@ -195,3 +195,152 @@ def test_compare_missing_support_error_does_not_mask_internal_attribute_errors()
             server.compare(a="part")
     finally:
         _restore_singleton(state)
+
+
+# --- Mcp-Cad-Session header routing (#428) ----------------------------------- #
+
+
+class _RecordingApp:
+    """Downstream ASGI app that records which session the request resolved to."""
+
+    def __init__(self):
+        self.resolved = None
+        self.handle = None
+        self.called = False
+
+    async def __call__(self, scope, receive, send):
+        self.called = True
+        self.resolved = server._session_var.get()
+        self.handle = server._handle_var.get()
+
+
+def _scope(headers=()):
+    return {
+        "type": "http",
+        "headers": [(k.encode(), v.encode()) for k, v in headers],
+    }
+
+
+async def _noop_receive():  # pragma: no cover - never awaited by these paths
+    return {"type": "http.request", "body": b"", "more_body": False}
+
+
+def _drive(middleware, scope):
+    """Run one request through the middleware, capturing anything it sends."""
+    import asyncio
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    asyncio.run(middleware(scope, _noop_receive, send))
+    return sent
+
+
+def _fake_registry(max_sessions=4):
+    from build123d_mcp.session_registry import SessionRegistry
+
+    class FakeSession:
+        def close(self):
+            pass
+
+    return SessionRegistry(factory=FakeSession, max_sessions=max_sessions)
+
+
+def test_header_routes_to_that_handles_session():
+    registry = _fake_registry()
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, registry)
+
+    _drive(mw, _scope([("mcp-cad-session", "alice")]))
+
+    assert downstream.called
+    assert downstream.resolved is registry.get_or_create("alice")
+    assert downstream.handle == "alice"
+
+
+def test_distinct_handles_reach_distinct_sessions_through_the_middleware():
+    registry = _fake_registry()
+    mw_a, mw_b = _RecordingApp(), _RecordingApp()
+
+    _drive(server.CadSessionMiddleware(mw_a, registry), _scope([("mcp-cad-session", "alice")]))
+    _drive(server.CadSessionMiddleware(mw_b, registry), _scope([("mcp-cad-session", "bob")]))
+
+    assert mw_a.resolved is not mw_b.resolved
+
+
+def test_absent_header_falls_back_to_the_shared_singleton():
+    """Existing HTTP deployments send no such header and must be unaffected —
+    this feature is strictly opt-in."""
+    registry = _fake_registry()
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, registry)
+
+    _drive(mw, _scope())
+
+    assert downstream.called
+    assert downstream.resolved is None  # _resolve_session() will use _session
+    assert len(registry) == 0  # and no session was spawned
+
+
+def test_header_is_matched_case_insensitively():
+    registry = _fake_registry()
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, registry)
+
+    _drive(mw, _scope([("MCP-Cad-Session", "alice")]))
+
+    assert downstream.resolved is not None
+
+
+def test_session_limit_returns_503_without_reaching_the_app():
+    registry = _fake_registry(max_sessions=1)
+    registry.get_or_create("incumbent")
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, registry)
+
+    sent = _drive(mw, _scope([("mcp-cad-session", "latecomer")]))
+
+    assert sent[0]["status"] == 503
+    assert not downstream.called
+
+
+def test_failed_spawn_returns_500_without_reaching_the_app():
+    from build123d_mcp.session_registry import SessionRegistry
+
+    def boom():
+        raise RuntimeError("no worker for you")
+
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, SessionRegistry(factory=boom, max_sessions=2))
+
+    sent = _drive(mw, _scope([("mcp-cad-session", "alice")]))
+
+    assert sent[0]["status"] == 500
+    assert not downstream.called
+
+
+def test_lifespan_scope_passes_through():
+    """The wrapped Starlette app owns the session manager's lifespan; swallowing
+    the lifespan scope would leave it unstarted."""
+    seen = {}
+
+    class App:
+        async def __call__(self, scope, receive, send):
+            seen["type"] = scope["type"]
+
+    mw = server.CadSessionMiddleware(App(), _fake_registry())
+    import asyncio
+
+    asyncio.run(mw({"type": "lifespan"}, _noop_receive, lambda m: None))
+
+    assert seen["type"] == "lifespan"
+
+
+def test_http_app_is_unwrapped_when_no_registry_configured():
+    """Default deployments get the plain Starlette app, no middleware overhead."""
+    from starlette.applications import Starlette
+
+    assert server._registry is None
+    assert isinstance(server.http_app(), Starlette)

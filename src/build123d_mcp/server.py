@@ -85,6 +85,27 @@ def configure(session: WorkerSession) -> None:
     _session = session
 
 
+# Per-handle CAD sessions for HTTP (#428). None until configure_registry() runs,
+# which cli.main() does only for --transport http with --max-sessions > 1; stdio
+# never touches any of this.
+_registry = None
+_handle_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "b123d_session_handle", default=None
+)
+
+# The header carrying the CAD session handle. Supplied by an auth gateway or a
+# client's static config — never by the MCP client itself, which has no way to
+# learn or adopt a custom header (nothing in the protocol lets a server ask for
+# one). See docs/adr/0003-http-cad-session-handles.md.
+CAD_SESSION_HEADER = "mcp-cad-session"
+
+
+def configure_registry(registry) -> None:
+    """Enable per-handle HTTP session isolation."""
+    global _registry
+    _registry = registry
+
+
 # Live-session viewer publisher (build123d_mcp.viewer.ViewerPublisher), or None
 # when --viewer-socket was not given. Set by start_viewer().
 _viewer = None
@@ -152,6 +173,69 @@ def _publish_reset() -> None:
     viewer.reset()
 
 
+class CadSessionMiddleware:
+    """Resolve the ``Mcp-Cad-Session`` header to a per-handle CAD session.
+
+    Plain ASGI rather than Starlette's ``BaseHTTPMiddleware``: the latter
+    reads the request through a task group, which both buffers streamed
+    Streamable-HTTP bodies and breaks contextvar propagation into the endpoint —
+    the exact mechanism this middleware depends on.
+
+    No header (or no registry configured) leaves ``_session_var`` unset, so
+    ``_resolve_session()`` falls back to the shared singleton and every existing
+    HTTP deployment behaves exactly as before. This is opt-in.
+    """
+
+    def __init__(self, app, registry) -> None:
+        self.app = app
+        self.registry = registry
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        handle = None
+        for key, value in scope.get("headers", ()):
+            if key.decode("latin-1").lower() == CAD_SESSION_HEADER:
+                handle = value.decode("latin-1").strip()
+                break
+
+        if not handle:
+            await self.app(scope, receive, send)
+            return
+
+        from build123d_mcp.session_registry import SessionLimitExceeded
+
+        try:
+            session = self.registry.get_or_create(handle)
+        except SessionLimitExceeded as exc:
+            await _send_json(send, 503, {"error": str(exc)})
+            return
+        except Exception as exc:  # worker failed to spawn
+            await _send_json(send, 500, {"error": f"Could not start a CAD session: {exc}"})
+            return
+
+        _session_var.set(session)
+        _handle_var.set(handle)
+        await self.app(scope, receive, send)
+
+
+async def _send_json(send, status: int, payload: dict) -> None:
+    body = json.dumps(payload).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
 def http_app():
     """Return the MCPServer ASGI app for use with an ASGI server (e.g. uvicorn).
 
@@ -160,17 +244,23 @@ def http_app():
     deployments (one operator, one CAD namespace).  Concurrent clients will
     interleave operations in the same session.
 
-    **Multi-session mode**: host middleware can isolate tenants by setting
-    ``_session_var`` to a per-request ``WorkerSession`` before the MCP handler
-    runs; ``_resolve_session()`` will then return that session instead of the
-    singleton.  No such middleware is included — this hook exists for embedders.
+    **Per-handle mode**: when ``configure_registry()`` has been called, a request
+    carrying an ``Mcp-Cad-Session`` header gets that handle's own
+    ``WorkerSession``, created on first sight.  The handle comes from an auth
+    gateway or a client's static config, never from the MCP client itself.
+
+    Embedders wanting a different policy can still set ``_session_var`` from
+    their own middleware; ``_resolve_session()` honours whatever is set.
 
     ``stateless_http=True`` is set here rather than on the ``MCPServer``
     constructor: SDK v2 moved the flag off the server object onto the transport
-    factory.  It stays on because CAD session identity is ours (the module-level
-    WorkerSession / ``_session_var``), never the protocol's — see ADR 0001.
+    factory.  It stays on because CAD session identity is ours (the handle
+    registry / ``_session_var``), never the protocol's — see ADR 0001 and 0003.
     """
-    return mcp.streamable_http_app(stateless_http=True)
+    app = mcp.streamable_http_app(stateless_http=True)
+    if _registry is not None:
+        return CadSessionMiddleware(app, _registry)
+    return app
 
 
 @mcp.tool(annotations=_MUTATING)
@@ -587,6 +677,36 @@ def reset() -> str:
     result = _resolve_session().reset()
     _publish_reset()
     return result
+
+
+# --- HTTP session-handle tools (#428) ---------------------------------------- #
+# These act on the registry, not on a WorkerSession, so they have no worker op and
+# no stub in worker.py — they never cross the process boundary. Both are no-ops
+# over stdio, where there is exactly one session and nothing to manage.
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+def destroy_session() -> str:
+    """Close THIS client's CAD session, discarding its namespace, objects and snapshots, and release its worker subprocess. The next tool call transparently starts a fresh session under the same handle. Use when abandoning a model entirely; prefer reset() to clear geometry while keeping the session. Only meaningful over HTTP with a session handle configured."""
+    if _registry is None:
+        return "Per-handle sessions are not enabled; this server has a single CAD session. Use reset() instead."
+    handle = _handle_var.get()
+    if handle is None:
+        return "This request carries no session handle, so it is using the shared session. Use reset() instead."
+    existed = _registry.destroy(handle)
+    return (
+        "Session destroyed; the next call will start a fresh one."
+        if existed
+        else "No session to destroy; the next call will start a fresh one."
+    )
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def list_sessions() -> str:
+    """Report how many CAD sessions this server process is holding, its configured limit, and how long each has been idle. Handles are secrets and are never returned. Operator/diagnostic tool for HTTP deployments — over stdio there is always exactly one session."""
+    if _registry is None:
+        return json.dumps({"sessions": 1, "mode": "single-session"}, indent=2)
+    return json.dumps(_registry.stats(), indent=2)
 
 
 @mcp.tool(annotations=_READ_ONLY)

@@ -886,6 +886,10 @@ def test_mcp_lists_all_tools():
         # test_mcp_experimental_flag_enables_verify_tools covers the --experimental path.
         "export",
         "reset",
+        # Present over stdio too, where they report the single-session mode
+        # rather than doing anything (#428).
+        "destroy_session",
+        "list_sessions",
         "save_snapshot",
         "restore_snapshot",
         "compare",

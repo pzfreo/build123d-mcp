@@ -395,6 +395,11 @@ class WorkerSession:
     Exposes the same interface as Session so server.py can use either.
     """
 
+    # Class-level default so the _call guard holds even for instances built
+    # without running __init__ (tests stub sessions via __new__, and any future
+    # alternative constructor would hit the same trap).
+    _closed: bool = False
+
     def __init__(
         self,
         exec_timeout: int = 120,
@@ -435,6 +440,11 @@ class WorkerSession:
         # crash skips the append), so replay can't re-hit it. Only execute()-driven
         # state is covered — not snapshots or import_cad_file/load_part geometry. (#359)
         self._execute_history: list[str] = []
+        # Set by close(). Checked in _call so a call on a closed session raises
+        # instead of silently resurrecting the worker: _do_call restarts a dead
+        # process by design (crash recovery), which for a deliberately evicted
+        # session would undo the eviction and leak the subprocess back.
+        self._closed = False
         self._start_worker()
 
     @property
@@ -616,11 +626,34 @@ class WorkerSession:
             )
         return "the session could not be rebuilt and has been reset"
 
+    def close(self) -> None:
+        """Tear down the worker process and its pipe. Idempotent.
+
+        Only the registry-backed HTTP path needs this: a session evicted for
+        idleness has to actually release its OCC subprocess (hundreds of MB of
+        RSS), not merely be dropped from a dict. The session is unusable
+        afterwards — further calls raise rather than restart the worker.
+        """
+        self._closed = True
+        self._kill_worker()
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
     def _call(self, op: str, args: dict, timeout: int) -> Any:
         # Serialise the IPC critical section so concurrent callers (HTTP shared
         # session, pipelined clients) can't interleave on the pipe. Subclasses
         # override _do_call, not _call, so they inherit this guard. (#322)
         with self._lock:
+            # Guard here rather than in _do_call so subclasses inherit it.
+            if self._closed:
+                raise RuntimeError(
+                    "This CAD session has been closed (evicted for idleness or explicitly "
+                    "destroyed). Start a new session instead of reusing this handle."
+                )
             return self._do_call(op, args, timeout)
 
     def _do_call(self, op: str, args: dict, timeout: int) -> Any:
