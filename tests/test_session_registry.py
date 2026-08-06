@@ -653,3 +653,40 @@ def test_in_process_session_closes_cleanly():
     assert session._closed is True
     with pytest.raises(RuntimeError, match="closed"):
         session.measure()
+
+
+def test_close_all_waits_out_a_close_already_in_flight():
+    """A close running when shutdown starts has taken the session off its entry,
+    so the shutdown sweep sees nothing to do — and if that close then fails it
+    restores the session, with no future acquire left to sweep it up."""
+    in_close = threading.Event()
+    finish = threading.Event()
+    attempts = []
+
+    class SlowFailingClose:
+        closed = False
+
+        def close(self):
+            attempts.append(1)
+            if len(attempts) == 1:
+                in_close.set()
+                finish.wait(5)
+                raise OSError("kill did not take")
+            self.closed = True
+
+    reg = _registry(max_sessions=2, factory=SlowFailingClose)
+    lease = reg.acquire("alice")
+    lease.release()
+
+    destroyer = threading.Thread(target=lambda: reg.destroy("alice"))
+    destroyer.start()
+    in_close.wait(5)  # first close is running; entry.session is temporarily None
+
+    shutdown = threading.Thread(target=reg.close_all)
+    shutdown.start()
+    finish.set()  # let the first close fail and restore the session
+    destroyer.join(5)
+    shutdown.join(10)
+
+    assert len(attempts) == 2  # close_all waited, then retried
+    assert reg.stats()["closing"] == 0  # nothing stranded

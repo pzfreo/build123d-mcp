@@ -145,6 +145,11 @@ class SessionRegistry:
         # destroying a leased session would let a replacement in alongside it
         # and the "hard cap" would not bound live workers at all.
         self._closing: set[_Entry] = set()
+        # Closes currently running outside the lock. close_all() waits these out:
+        # such a close has temporarily taken the session off its entry, so a
+        # shutdown sweep would see nothing to do, and if the close then fails it
+        # restores the session with no later acquire to sweep it up.
+        self._closes_in_flight = 0
         self._shutdown = False
 
     # --- lease-based access ------------------------------------------------- #
@@ -271,12 +276,18 @@ class SessionRegistry:
         survived one kill (or exited a moment later on its own) would consume a
         slot permanently, with nothing able to reclaim it.
         """
-        if _close(session):
+        ok = False  # if _close dies on a BaseException, keep the slot and retry
+        with self._lock:
+            self._closes_in_flight += 1
+        try:
+            ok = _close(session)
+        finally:
             with self._lock:
-                self._closing.discard(entry)
-        else:
-            with self._lock:
-                entry.session = session
+                self._closes_in_flight -= 1
+                if ok:
+                    self._closing.discard(entry)
+                else:
+                    entry.session = session
 
     def _retry_failed_closes(self) -> None:
         """Re-attempt closes that previously failed, freeing their slots.
@@ -382,6 +393,18 @@ class SessionRegistry:
             self._entries.clear()
         for entry, session in closing:
             self._finish_close(entry, session)
+
+        # Wait out closes that were already running when shutdown began. Such a
+        # close has its entry's session temporarily detached, so the sweep below
+        # would otherwise see nothing to do — and if it then fails it restores
+        # the session, with no future acquire left to sweep it up.
+        #
+        # Bounded by iterations rather than the clock: tests inject a frozen one.
+        for _ in range(500):
+            with self._lock:
+                if not self._closes_in_flight:
+                    break
+            time.sleep(0.01)
         self._retry_failed_closes()
 
     # --- introspection ------------------------------------------------------ #
@@ -426,9 +449,9 @@ def _close(session: object) -> bool:
     """Tear ``session`` down. Returns whether it is really gone.
 
     Failures are swallowed rather than raised — reaping someone else's session
-    must not break the request that happened to trigger it — but they are
-    reported, because the caller keeps the cap slot for a worker it could not
-    kill.
+    must not break the request that happened to trigger it — and signalled by
+    the return value, because the caller keeps the cap slot for a worker it
+    could not kill and schedules a retry.
     """
     close = getattr(session, "close", None)
     if close is None:

@@ -308,7 +308,9 @@ class CadSessionMiddleware:
             # Off the loop: closing N workers is N kill+join round trips, which
             # would otherwise block the event loop through graceful shutdown.
             with anyio.CancelScope(shield=True):
-                await anyio.to_thread.run_sync(self.registry.close_all)
+                await anyio.to_thread.run_sync(
+                    self.registry.close_all, limiter=self._thread_limiter()
+                )
 
 
 async def _send_json(send, status: int, payload: dict) -> None:
