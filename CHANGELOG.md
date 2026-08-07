@@ -1,38 +1,5 @@
 # Changelog
 
-## v0.3.83
-
-### Added
-
-- **HTTP deployments can isolate clients into separate CAD sessions.** Until now
-  every HTTP request shared one build123d namespace — safe, since the worker
-  pipe is lock-guarded, but not isolated: one client's `reset()` destroyed
-  another's model. With `--max-sessions N` (N > 1), a request carrying an
-  `Mcp-Cad-Session` header gets that handle's own worker subprocess, created on
-  first sight of the handle. Requests without the header keep sharing the default
-  session, so **existing deployments are unchanged** — this is opt-in.
-
-  The handle is supplied from *outside* the MCP client, by an auth gateway
-  mapping authenticated identity to a stable handle or by a handle in a client's
-  static config. It is deliberately not the MCP protocol session id, which dies
-  on every reconnect and would silently discard a half-built model. There is also
-  no `create_session` call, because nothing in MCP lets a server ask a client to
-  adopt a custom header — so create-on-first-use is the only workable contract.
-
-  Each session costs a subprocess with the OCC kernel loaded, so the registry
-  enforces a hard cap and evicts sessions idle beyond `--session-idle-timeout`
-  (default 1 hour), closing their workers. **The server does not authenticate
-  handles** — put an auth gateway in front of it, and a session-aware load
-  balancer if you run more than one process, since handles are process-local by
-  design. Rationale in `docs/adr/0003-http-cad-session-handles.md`; supersedes
-  ADR 0001's position that isolation was the embedder's job (#428).
-
-- **`destroy_session()` and `list_sessions()` tools.** `destroy_session()`
-  discards the calling client's own session and releases its worker; the next
-  call transparently starts a fresh one. `list_sessions()` reports how many
-  sessions the process holds, the configured limit, and idle ages — never the
-  handles, which are secrets.
-
 ## v0.3.82
 
 ### Changed
@@ -77,6 +44,35 @@
   `resources-list`, `prompts-list` and `dns-rebinding-protection` are now
   enforced. The 2026-07-28 era is not yet gateable — the suite has no server
   scenarios for it (#428).
+
+- **HTTP deployments can isolate clients into separate CAD sessions.** Until now
+  every HTTP request shared one build123d namespace — safe, since the worker
+  pipe is lock-guarded, but not isolated: one client's `reset()` destroyed
+  another's model. With `--max-sessions N` (N > 1), a request carrying an
+  `Mcp-Cad-Session` header gets that handle's own worker subprocess, created on
+  first sight of the handle. Requests without the header keep sharing the default
+  session, so **existing deployments are unchanged** — this is opt-in.
+
+  The handle is supplied from *outside* the MCP client, by an auth gateway
+  mapping authenticated identity to a stable handle or by a handle in a client's
+  static config. It is deliberately not the MCP protocol session id, which dies
+  on every reconnect and would silently discard a half-built model. There is also
+  no `create_session` call, because nothing in MCP lets a server ask a client to
+  adopt a custom header — so create-on-first-use is the only workable contract.
+
+  Each session costs a subprocess with the OCC kernel loaded, so the registry
+  enforces a hard cap and evicts sessions idle beyond `--session-idle-timeout`
+  (default 1 hour), closing their workers. **The server does not authenticate
+  handles** — put an auth gateway in front of it, and a session-aware load
+  balancer if you run more than one process, since handles are process-local by
+  design. Rationale in `docs/adr/0003-http-cad-session-handles.md`; supersedes
+  ADR 0001's position that isolation was the embedder's job (#428).
+
+- **`destroy_session()` and `list_sessions()` tools.** `destroy_session()`
+  discards the calling client's own session and releases its worker; the next
+  call transparently starts a fresh one. `list_sessions()` reports how many
+  sessions the process holds, the configured limit, and idle ages — never the
+  handles, which are secrets.
 
 ## v0.3.81
 
