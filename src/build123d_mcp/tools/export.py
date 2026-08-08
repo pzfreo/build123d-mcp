@@ -104,8 +104,12 @@ def _write_3mf(shape, abs_path: str) -> None:
 
     content_types = ET.Element("Types", xmlns=ct_ns)
     ET.SubElement(
-        content_types, "Override", PartName="/3D/3dmodel.model", ContentType=model_ct
+        content_types,
+        "Default",
+        Extension="rels",
+        ContentType="application/vnd.openxmlformats-package.relationships+xml",
     )
+    ET.SubElement(content_types, "Override", PartName="/3D/3dmodel.model", ContentType=model_ct)
     content_types_xml = ET.tostring(content_types, xml_declaration=True, encoding="utf-8")
 
     rels = ET.Element("Relationships", xmlns=rel_ns)
@@ -311,9 +315,7 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
         raise ValueError("No format specified.")
     unknown = [f for f in formats if f not in _VALID_FORMATS]
     if unknown:
-        raise ValueError(
-            f"Unknown format(s) '{', '.join(unknown)}'. Use: step, stl, 3mf, dxf, svg"
-        )
+        raise ValueError(f"Unknown format(s) '{', '.join(unknown)}'. Use: step, stl, 3mf, dxf, svg")
 
     # Sanity: 2D shapes can only export 2D formats; 3D shapes can only export 3D.
     is_2d = _is_2d(shape)
@@ -327,7 +329,7 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
         bad_3d = [f for f in formats if f in ("dxf", "svg")]
         if bad_3d:
             raise ValueError(
-                f"Cannot export 3D shape as {bad_3d}. Use 'step' or 'stl' for 3D solids; "
+                f"Cannot export 3D shape as {bad_3d}. Use 'step', 'stl', or '3mf' for 3D solids; "
                 f'use render_view(format="dxf") for the projected 2D outline.'
             )
 

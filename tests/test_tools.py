@@ -1230,6 +1230,24 @@ def test_export_3mf(session, tmp_path, monkeypatch):
         assert b"<triangle" in model_xml
 
 
+def test_export_3mf_round_trip(session, tmp_path, monkeypatch):
+    """Zip/XML structure alone can stay green on a file no real reader
+    accepts (e.g. a package missing the OPC rels content-type default) --
+    round-trip through this repo's own 3MF reader to catch that class of bug."""
+    monkeypatch.chdir(tmp_path)
+    from build123d_mcp.tools.import_step import import_cad_file
+
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "ref", "3mf")
+    mf_path = str(tmp_path / "ref.3mf")
+    data = json.loads(import_cad_file(session, mf_path, "ref_3mf"))
+    assert data["imported"] == "ref_3mf"
+    assert data["format"] == "3mf"
+    assert abs(data["volume"] - 1000) < 1
+    assert data["solids"] == 1
+    assert "ref_3mf" in session.objects
+
+
 def test_export_3mf_rejects_2d_shape(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     execute_code(session, "result = Rectangle(10, 10)")
