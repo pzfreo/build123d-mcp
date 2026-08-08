@@ -1211,6 +1211,32 @@ def test_export_stl(session, tmp_path, monkeypatch):
     assert os.path.getsize("out.stl") > 0
 
 
+def test_export_3mf(session, tmp_path, monkeypatch):
+    import zipfile
+
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "out", "3mf")
+    assert os.path.exists("out.3mf")
+    assert os.path.getsize("out.3mf") > 0
+    assert zipfile.is_zipfile("out.3mf")
+    with zipfile.ZipFile("out.3mf") as zf:
+        names = zf.namelist()
+        assert "3D/3dmodel.model" in names
+        assert "_rels/.rels" in names
+        assert "[Content_Types].xml" in names
+        model_xml = zf.read("3D/3dmodel.model")
+        assert b"<vertex" in model_xml
+        assert b"<triangle" in model_xml
+
+
+def test_export_3mf_rejects_2d_shape(session, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Rectangle(10, 10)")
+    with pytest.raises(ValueError, match="2D shape"):
+        export_file(session, "out", "3mf")
+
+
 def test_export_multi_format(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     execute_code(session, "result = Box(10, 10, 10)")
