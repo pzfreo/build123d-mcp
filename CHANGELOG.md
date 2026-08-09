@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.3.83
+## v0.3.82
 
 ### Added
 
@@ -10,7 +10,34 @@
   color/material extensions) with the stdlib only (`zipfile` +
   `xml.etree.ElementTree`, no new dependency), reusing the same
   `shape.tessellate()` call the STL writer already uses so 3MF and STL
-  vertex positions match exactly for the same shape.
+  vertex positions match exactly for the same shape. The mesh is streamed
+  straight into the zip rather than built as an element tree, which makes
+  serialisation ~3x faster and cuts its transient allocation, though
+  `tessellate()` still dominates both time and memory on large models (#441).
+
+- **`export()` no longer destroys the file it is replacing when a write
+  fails.** Every format — `step`, `stl`, `3mf`, `dxf`, `svg` — now writes to a
+  temp file in the target directory, fsyncs it, and renames it into place. A
+  write interrupted partway through (the op timeout SIGKILLs the worker, and
+  the mesh formats stream) used to leave a truncated file where the last good
+  export had been: the caller learned the export failed, and the file it took
+  with it was the one they still had. The fsync means this survives power loss
+  and not just SIGKILL.
+
+  Four consequences worth knowing. The *directory* now has to be writable,
+  rather than the target file — so a read-only target (a `chmod 444`, a
+  read-only VCS checkout) is now replaced where the export used to fail, and
+  keeps its mode. A temp file stranded by a SIGKILL is swept on the next export
+  to the same directory, once it is an hour old; that is comfortably past a
+  default op budget, though not necessarily past an `--exec-timeout` set above
+  an hour. The permission bits are carried over from the export being replaced
+  instead of being reset by the rename — the nine mode bits only, and only if
+  the target was readable by its owner, otherwise the umask default applies.
+
+  And the export is now a *new file*, not the same file rewritten. Anything
+  tied to the old inode is left behind: a hard link to the export stops
+  tracking it, a process holding it open goes on reading the previous version,
+  and owner, ACLs, xattrs and the setgid/sticky bits are not carried over.
 
 - **HTTP deployments can isolate clients into separate CAD sessions.** Until now
   every HTTP request shared one build123d namespace — safe, since the worker
@@ -41,7 +68,20 @@
   sessions the process holds, the configured limit, and idle ages — never the
   handles, which are secrets.
 
-## v0.3.82
+- **The official MCP conformance suite runs in CI.** A new `conformance` job
+  starts a real Streamable HTTP server and runs
+  `@modelcontextprotocol/conformance` against it at both currently testable
+  protocol eras (`2025-06-18` and `2025-11-25`). The suite's server mode targets
+  the spec's reference "everything server", so scenarios needing its fixture
+  primitives — and those probing capabilities this server does not declare
+  (sampling, elicitation, logging, completion, progress, subscriptions) — are
+  recorded in `tests/conformance-baseline.yml` with the reason for each. The
+  gate fails in both directions: a newly failing scenario is a regression, and a
+  baselined scenario that starts passing is a stale entry. `server-initialize`,
+  `ping`, `tools-list`, `tools-call-simple-text`, `tools-call-error`,
+  `resources-list`, `prompts-list` and `dns-rebinding-protection` are now
+  enforced. The 2026-07-28 era is not yet gateable — the suite has no server
+  scenarios for it (#428).
 
 ### Changed
 
@@ -68,23 +108,6 @@
   to the empty string. Neither identifies the server, so the version is now
   passed explicitly and clients see e.g. `0.3.82` — the number worth quoting in
   a bug report.
-
-### Added
-
-- **The official MCP conformance suite runs in CI.** A new `conformance` job
-  starts a real Streamable HTTP server and runs
-  `@modelcontextprotocol/conformance` against it at both currently testable
-  protocol eras (`2025-06-18` and `2025-11-25`). The suite's server mode targets
-  the spec's reference "everything server", so scenarios needing its fixture
-  primitives — and those probing capabilities this server does not declare
-  (sampling, elicitation, logging, completion, progress, subscriptions) — are
-  recorded in `tests/conformance-baseline.yml` with the reason for each. The
-  gate fails in both directions: a newly failing scenario is a regression, and a
-  baselined scenario that starts passing is a stale entry. `server-initialize`,
-  `ping`, `tools-list`, `tools-call-simple-text`, `tools-call-error`,
-  `resources-list`, `prompts-list` and `dns-rebinding-protection` are now
-  enforced. The 2026-07-28 era is not yet gateable — the suite has no server
-  scenarios for it (#428).
 
 ## v0.3.81
 
