@@ -1,4 +1,5 @@
 import copy
+import os
 import struct
 import time
 
@@ -112,7 +113,7 @@ def _write_3mf(shape, abs_path: str) -> None:
     (zipfile + ElementTree) — same tessellate() call as _stl_write, so vertex
     positions match the STL export exactly."""
     import xml.etree.ElementTree as ET
-    from zipfile import ZIP_DEFLATED, ZipFile
+    from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
     verts, tris = shape.tessellate(0.001, 0.1)
 
@@ -142,11 +143,32 @@ def _write_3mf(shape, abs_path: str) -> None:
     )
     rels_xml = ET.tostring(rels, xml_declaration=True, encoding="utf-8")
 
-    with ZipFile(abs_path, "w", ZIP_DEFLATED) as zf:
-        zf.writestr("[Content_Types].xml", content_types_xml)
-        zf.writestr("_rels/.rels", rels_xml)
-        with zf.open("3D/3dmodel.model", "w") as fh:
-            _stream_model_part(fh, verts, tris, core_ns)
+    # writestr() stamps entries with the current time, but zf.open(name, "w")
+    # builds a bare ZipInfo that defaults to the 1980 zip epoch — so the model
+    # part needs its own ZipInfo to stay consistent with the other two. Passing
+    # a ZipInfo also skips the branch that applies the archive's compression,
+    # hence compress_type here; without it the mesh would be stored uncompressed.
+    model_info = ZipInfo("3D/3dmodel.model", date_time=time.localtime(time.time())[:6])
+    model_info.compress_type = ZIP_DEFLATED
+
+    # Stream into a sibling temp file and rename on success. The mesh write is
+    # the slow part of the export, and it is exactly where the op timeout
+    # SIGKILLs the worker — writing in place would leave a truncated, unreadable
+    # .3mf where a previously good export used to be.
+    tmp_path = abs_path + ".tmp"
+    try:
+        with ZipFile(tmp_path, "w", ZIP_DEFLATED) as zf:
+            zf.writestr("[Content_Types].xml", content_types_xml)
+            zf.writestr("_rels/.rels", rels_xml)
+            with zf.open(model_info, "w") as fh:
+                _stream_model_part(fh, verts, tris, core_ns)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+    os.replace(tmp_path, abs_path)
 
 
 def _is_2d(shape) -> bool:

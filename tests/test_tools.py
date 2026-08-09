@@ -1272,6 +1272,44 @@ def test_export_3mf_large_mesh_round_trip(session, tmp_path, monkeypatch):
     assert abs(data["volume"] - 4188.79) / 4188.79 < 0.05
 
 
+def test_export_3mf_entries_are_consistent(session, tmp_path, monkeypatch):
+    """The model part is written via zf.open() rather than writestr(), which
+    defaults to a bare ZipInfo: 1980 epoch timestamp and no compression unless
+    both are set explicitly. All three parts should look alike."""
+    import zipfile
+
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "stamp", "3mf")
+
+    with zipfile.ZipFile("stamp.3mf") as zf:
+        infos = {i.filename: i for i in zf.infolist()}
+    model = infos["3D/3dmodel.model"]
+    assert model.date_time[0] > 1980, f"model part stamped with the zip epoch: {model.date_time}"
+    assert {i.date_time for i in infos.values()} == {model.date_time}
+    assert all(i.compress_type == zipfile.ZIP_DEFLATED for i in infos.values())
+
+
+def test_export_3mf_failure_keeps_previous_file(session, tmp_path, monkeypatch):
+    """The mesh write is where the op timeout kills the worker. Streaming
+    straight into the target would leave a truncated, unreadable .3mf in place
+    of the last good export, so the write goes via a temp file and a rename."""
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "keep", "3mf")
+    good = (tmp_path / "keep.3mf").read_bytes()
+
+    def boom(*args, **kwargs):
+        raise MemoryError("mesh too large")
+
+    monkeypatch.setattr("build123d_mcp.tools.export._stream_model_part", boom)
+    with pytest.raises(MemoryError):
+        export_file(session, "keep", "3mf")
+
+    assert (tmp_path / "keep.3mf").read_bytes() == good
+    assert not (tmp_path / "keep.3mf.tmp").exists()
+
+
 def test_export_3mf_rejects_2d_shape(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     execute_code(session, "result = Rectangle(10, 10)")
