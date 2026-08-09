@@ -20,6 +20,10 @@ _VALID_FORMATS = ("step", "stl", "3mf", "dxf", "svg")
 # memory stays flat regardless of mesh size.
 _MESH_XML_FLUSH_EVERY = 4096
 
+# Prefix for the 3MF atomic-write temp file. Deliberately not dot-hidden, and
+# distinctive enough that the stale-temp sweep only ever matches our own files.
+_TMP_PREFIX = "3mf-export-"
+
 
 def _labelled_copy(shape, label: str):
     """Return a shallow copy of `shape` with `.label` set, preserving any
@@ -108,6 +112,52 @@ def _stream_model_part(fh, verts, tris, core_ns: str) -> None:
     flush()
 
 
+def _set_export_mode(fd: int, abs_path: str) -> None:
+    """Give the temp file the mode the finished export should have.
+
+    mkstemp creates 0600, but `os.replace` swaps in a new inode, so without this
+    a re-export would silently change the file's permissions. Prefer the mode of
+    the file being replaced — a user who ran `chmod 600 part.3mf` should not have
+    it widened by the next export — and fall back to the umask default the other
+    formats get from plain open(). Best-effort: FAT/exFAT (the canonical 3MF
+    destination) refuses chmod, and that must not fail an export whose bytes are
+    already written."""
+    try:
+        mode = os.stat(abs_path).st_mode & 0o777
+    except OSError:
+        umask = os.umask(0)
+        os.umask(umask)
+        mode = 0o666 & ~umask
+    try:
+        os.fchmod(fd, mode)
+    except (OSError, AttributeError):  # no fchmod on Windows; chmod refused on FAT
+        pass
+
+
+def _sweep_stale_temps(out_dir: str) -> None:
+    """Delete export temp files left behind by a killed worker.
+
+    The op timeout SIGKILLs the process mid-write, so no cleanup handler runs and
+    the temp file survives. Each attempt gets a fresh random name, so without a
+    sweep they accumulate without bound in the user's output directory. An export
+    cannot outlive the op budget by more than a couple of minutes, so anything an
+    hour old is certainly dead — and this only ever touches our own prefix."""
+    cutoff = time.time() - 3600
+    try:
+        names = os.listdir(out_dir)
+    except OSError:
+        return
+    for name in names:
+        if not (name.startswith(_TMP_PREFIX) and name.endswith(".tmp")):
+            continue
+        path = os.path.join(out_dir, name)
+        try:
+            if os.stat(path).st_mtime < cutoff:
+                os.remove(path)
+        except OSError:
+            pass
+
+
 def _write_3mf(shape, abs_path: str) -> None:
     """Write a minimal core-spec 3MF: single mesh, no color/material extensions.
     Slicers (Bambu Studio, PrusaSlicer, Orca) accept this fine. stdlib-only
@@ -162,18 +212,23 @@ def _write_3mf(shape, abs_path: str) -> None:
     # would follow a symlink planted at that name straight out of the allowed
     # write roots, and clobber any real file already sitting there. mkstemp
     # opens O_CREAT|O_EXCL, which refuses both, and its random name keeps
-    # concurrent exports to the same target off each other's temp file.
-    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(abs_path), prefix=".3mf-", suffix=".tmp")
+    # concurrent exports to the same target off each other's temp file. The
+    # prefix is not dot-hidden: a SIGKILL strands the temp file, and invisible
+    # litter in the user's output directory is worse than visible litter.
+    out_dir = os.path.dirname(abs_path)
+    _sweep_stale_temps(out_dir)
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=out_dir, prefix=_TMP_PREFIX, suffix=".tmp")
+    except OSError as e:
+        # Report the path the caller asked for, not the temp name they've never seen.
+        raise OSError(e.errno, e.strerror, abs_path) from None
     try:
         with os.fdopen(fd, "wb") as raw, ZipFile(raw, "w", ZIP_DEFLATED) as zf:
+            _set_export_mode(raw.fileno(), abs_path)
             zf.writestr("[Content_Types].xml", content_types_xml)
             zf.writestr("_rels/.rels", rels_xml)
             with zf.open(model_info, "w") as fh:
                 _stream_model_part(fh, verts, tris, core_ns)
-        # mkstemp creates 0600; the other export formats go through plain open()
-        # and land at the umask default, so match them rather than shipping a
-        # .3mf the user's own group can't read.
-        os.chmod(tmp_path, 0o644)
         os.replace(tmp_path, abs_path)
     except BaseException:
         try:

@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 
 import pytest
 
@@ -1315,25 +1316,69 @@ def test_export_3mf_failure_keeps_previous_file(session, tmp_path, monkeypatch):
     assert not list(tmp_path.glob("*.tmp")), "temp file stranded next to the export"
 
 
-def test_export_3mf_temp_file_cannot_escape_via_symlink(session, tmp_path, monkeypatch):
+@pytest.mark.skipif(sys.platform == "win32", reason="symlink creation needs privilege")
+def test_export_3mf_does_not_write_through_a_planted_temp_symlink(session, tmp_path, monkeypatch):
     """The export goes via a temp file, and only the target path is checked by
-    safe_output_path(). A predictable temp name would follow a symlink planted
-    at it straight out of the allowed write roots -- mkstemp's O_EXCL must not
-    reuse any pre-existing name."""
+    safe_output_path(). A predictable temp name is therefore an unvalidated
+    write: a symlink planted at it redirects the whole package, and os.replace
+    renames the link rather than its target. (Whether the link points inside or
+    outside the allowed roots only changes how bad that is -- here it stays
+    inside so the test needs no writable path outside the sandbox.)"""
     monkeypatch.chdir(tmp_path)
-    outside = tmp_path.parent / "outside_victim.txt"
-    outside.write_bytes(b"ORIGINAL")
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"ORIGINAL")
 
     execute_code(session, "result = Box(10, 10, 10)")
-    # The old fixed name, plus the temp prefix, both aimed at the victim.
-    for name in ("part.3mf.tmp", ".3mf-aaaa.tmp"):
-        os.symlink(outside, tmp_path / name)
+    os.symlink(victim, tmp_path / "part.3mf.tmp")  # the name the old code used
 
     export_file(session, "part", "3mf")
 
-    assert outside.read_bytes() == b"ORIGINAL", "export wrote through the planted symlink"
+    assert victim.read_bytes() == b"ORIGINAL", "export wrote through the planted symlink"
     assert not (tmp_path / "part.3mf").is_symlink()
     assert (tmp_path / "part.3mf").read_bytes()[:2] == b"PK"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_export_3mf_preserves_target_mode(session, tmp_path, monkeypatch):
+    """os.replace swaps in a new inode, so the mode has to be set deliberately:
+    mkstemp's own 0600 would be wrong, and a hardcoded 0644 would silently widen
+    a file the user had restricted."""
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Box(10, 10, 10)")
+
+    export_file(session, "fresh", "3mf")
+    export_file(session, "stl_ref", "stl")
+    fresh = (tmp_path / "fresh.3mf").stat().st_mode & 0o777
+    assert fresh == (tmp_path / "stl_ref.stl").stat().st_mode & 0o777, (
+        "3mf should land on the same umask default as the other export formats"
+    )
+
+    (tmp_path / "fresh.3mf").chmod(0o600)
+    export_file(session, "fresh", "3mf")
+    assert (tmp_path / "fresh.3mf").stat().st_mode & 0o777 == 0o600, "re-export widened the file"
+
+
+def test_export_3mf_sweeps_stale_temp_files(session, tmp_path, monkeypatch):
+    """A SIGKILL mid-write strands the temp file with no cleanup handler, and
+    every attempt gets a fresh random name, so they'd otherwise accumulate."""
+    monkeypatch.chdir(tmp_path)
+    from build123d_mcp.tools.export import _TMP_PREFIX
+
+    stale = tmp_path / f"{_TMP_PREFIX}dead0001.tmp"
+    stale.write_bytes(b"leftover from a killed export")
+    os.utime(stale, (time.time() - 7200, time.time() - 7200))
+    recent = tmp_path / f"{_TMP_PREFIX}live0001.tmp"
+    recent.write_bytes(b"another export in flight right now")
+    unrelated = tmp_path / "notes.tmp"
+    unrelated.write_bytes(b"not ours")
+    os.utime(unrelated, (time.time() - 7200, time.time() - 7200))
+
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "part", "3mf")
+
+    assert not stale.exists(), "stale temp file not swept"
+    assert recent.exists(), "swept a temp file that could still be in flight"
+    assert unrelated.exists(), "swept a file that isn't ours"
 
 
 def test_export_3mf_rejects_2d_shape(session, tmp_path, monkeypatch):
