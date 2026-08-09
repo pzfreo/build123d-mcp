@@ -13,6 +13,11 @@ _EXPORT_MESH_MIN_S = 10
 
 _VALID_FORMATS = ("step", "stl", "3mf", "dxf", "svg")
 
+# How many mesh elements to buffer before pushing them into the 3MF zip stream.
+# Large enough that the per-write overhead is negligible, small enough that peak
+# memory stays flat regardless of mesh size.
+_MESH_XML_FLUSH_EVERY = 4096
+
 
 def _labelled_copy(shape, label: str):
     """Return a shallow copy of `shape` with `.label` set, preserving any
@@ -65,13 +70,48 @@ def _stl_write(shape, abs_path: str) -> None:
             f.write(b"\x00\x00")  # attribute byte count
 
 
+def _stream_model_part(fh, verts, tris, core_ns: str) -> None:
+    """Serialise the 3MF model part straight into the open zip entry `fh`.
+
+    The mesh is the only part of the package that scales with the model, and one
+    ElementTree element per vertex/triangle costs ~8x the streaming STL writer
+    while holding the whole tree *and* its serialised bytes in memory — enough
+    to overrun the export op budget on large meshes (#441). Every attribute
+    written here is a number, so no XML escaping is needed. Output matches what
+    ElementTree produced, so exported files are unchanged."""
+    from datetime import datetime, timezone
+
+    buf: list[str] = []
+
+    def flush() -> None:
+        fh.write("".join(buf).encode("utf-8"))
+        buf.clear()
+
+    buf.append("<?xml version='1.0' encoding='utf-8'?>\n")
+    buf.append(f'<model xml:lang="en-US" xmlns="{core_ns}" unit="millimeter">')
+    buf.append('<metadata name="Application">build123d-mcp</metadata>')
+    buf.append(f'<metadata name="CreationDate">{datetime.now(timezone.utc).isoformat()}</metadata>')
+    buf.append('<resources><object id="1" type="model"><mesh><vertices>')
+    for v in verts:
+        buf.append(f'<vertex x="{v.X}" y="{v.Y}" z="{v.Z}" />')
+        if len(buf) >= _MESH_XML_FLUSH_EVERY:
+            flush()
+    buf.append("</vertices><triangles>")
+    for t in tris:
+        buf.append(f'<triangle v1="{t[0]}" v2="{t[1]}" v3="{t[2]}" />')
+        if len(buf) >= _MESH_XML_FLUSH_EVERY:
+            flush()
+    buf.append("</triangles></mesh></object></resources>")
+    buf.append('<build><item objectid="1" /></build></model>')
+    flush()
+
+
 def _write_3mf(shape, abs_path: str) -> None:
     """Write a minimal core-spec 3MF: single mesh, no color/material extensions.
     Slicers (Bambu Studio, PrusaSlicer, Orca) accept this fine. stdlib-only
     (zipfile + ElementTree) — same tessellate() call as _stl_write, so vertex
     positions match the STL export exactly."""
     import xml.etree.ElementTree as ET
-    from datetime import datetime, timezone
     from zipfile import ZIP_DEFLATED, ZipFile
 
     verts, tris = shape.tessellate(0.001, 0.1)
@@ -81,26 +121,6 @@ def _write_3mf(shape, abs_path: str) -> None:
     rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
     model_ct = "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"
     model_rel_type = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"
-
-    model = ET.Element("model", {"xml:lang": "en-US", "xmlns": core_ns, "unit": "millimeter"})
-    ET.SubElement(model, "metadata", name="Application").text = "build123d-mcp"
-    ET.SubElement(model, "metadata", name="CreationDate").text = datetime.now(
-        timezone.utc
-    ).isoformat()
-
-    resources = ET.SubElement(model, "resources")
-    obj = ET.SubElement(resources, "object", id="1", type="model")
-    mesh = ET.SubElement(obj, "mesh")
-    vertices_el = ET.SubElement(mesh, "vertices")
-    for v in verts:
-        ET.SubElement(vertices_el, "vertex", x=str(v.X), y=str(v.Y), z=str(v.Z))
-    triangles_el = ET.SubElement(mesh, "triangles")
-    for t in tris:
-        ET.SubElement(triangles_el, "triangle", v1=str(t[0]), v2=str(t[1]), v3=str(t[2]))
-
-    build = ET.SubElement(model, "build")
-    ET.SubElement(build, "item", objectid="1")
-    model_xml = ET.tostring(model, xml_declaration=True, encoding="utf-8")
 
     content_types = ET.Element("Types", xmlns=ct_ns)
     ET.SubElement(
@@ -125,7 +145,8 @@ def _write_3mf(shape, abs_path: str) -> None:
     with ZipFile(abs_path, "w", ZIP_DEFLATED) as zf:
         zf.writestr("[Content_Types].xml", content_types_xml)
         zf.writestr("_rels/.rels", rels_xml)
-        zf.writestr("3D/3dmodel.model", model_xml)
+        with zf.open("3D/3dmodel.model", "w") as fh:
+            _stream_model_part(fh, verts, tris, core_ns)
 
 
 def _is_2d(shape) -> bool:

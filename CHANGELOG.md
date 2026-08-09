@@ -10,7 +10,9 @@
   color/material extensions) with the stdlib only (`zipfile` +
   `xml.etree.ElementTree`, no new dependency), reusing the same
   `shape.tessellate()` call the STL writer already uses so 3MF and STL
-  vertex positions match exactly for the same shape.
+  vertex positions match exactly for the same shape. The mesh is streamed
+  straight into the zip rather than built as an element tree, so peak memory
+  stays flat and large models don't overrun the export timeout (#441).
 
 - **HTTP deployments can isolate clients into separate CAD sessions.** Until now
   every HTTP request shared one build123d namespace — safe, since the worker

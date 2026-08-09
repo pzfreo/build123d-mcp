@@ -1248,6 +1248,30 @@ def test_export_3mf_round_trip(session, tmp_path, monkeypatch):
     assert "ref_3mf" in session.objects
 
 
+def test_export_3mf_large_mesh_round_trip(session, tmp_path, monkeypatch):
+    """The model part is streamed into the zip in fixed-size chunks, so a mesh
+    spanning several flushes exercises the chunk boundaries -- a dropped or
+    mis-joined chunk yields malformed XML the reader rejects."""
+    import zipfile
+
+    from build123d_mcp.tools.export import _MESH_XML_FLUSH_EVERY
+    from build123d_mcp.tools.import_step import import_cad_file
+
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Sphere(10)")
+    export_file(session, "big", "3mf")
+
+    with zipfile.ZipFile("big.3mf") as zf:
+        model_xml = zf.read("3D/3dmodel.model")
+    elements = model_xml.count(b"<vertex") + model_xml.count(b"<triangle")
+    assert elements > 2 * _MESH_XML_FLUSH_EVERY, f"mesh too small to span chunks ({elements})"
+
+    data = json.loads(import_cad_file(session, str(tmp_path / "big.3mf"), "big_3mf"))
+    assert data["solids"] == 1
+    # Faceted sphere, so under the analytic 4188.79 mm^3 -- within a few percent.
+    assert abs(data["volume"] - 4188.79) / 4188.79 < 0.05
+
+
 def test_export_3mf_rejects_2d_shape(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     execute_code(session, "result = Rectangle(10, 10)")
