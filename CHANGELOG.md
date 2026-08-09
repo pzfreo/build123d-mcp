@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Native 3MF export.** `export(format="3mf")` joins the existing
+  `step`/`stl`/`dxf`/`svg` formats, complementing the 3MF *import* support
+  added in #423. Writes a minimal core-spec package (single mesh, no
+  color/material extensions) with the stdlib only (`zipfile` +
+  `xml.etree.ElementTree`, no new dependency), reusing the same
+  `shape.tessellate()` call the STL writer already uses so 3MF and STL
+  vertex positions match exactly for the same shape.
+
 - **HTTP deployments can isolate clients into separate CAD sessions.** Until now
   every HTTP request shared one build123d namespace — safe, since the worker
   pipe is lock-guarded, but not isolated: one client's `reset()` destroyed

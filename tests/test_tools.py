@@ -1211,6 +1211,50 @@ def test_export_stl(session, tmp_path, monkeypatch):
     assert os.path.getsize("out.stl") > 0
 
 
+def test_export_3mf(session, tmp_path, monkeypatch):
+    import zipfile
+
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "out", "3mf")
+    assert os.path.exists("out.3mf")
+    assert os.path.getsize("out.3mf") > 0
+    assert zipfile.is_zipfile("out.3mf")
+    with zipfile.ZipFile("out.3mf") as zf:
+        names = zf.namelist()
+        assert "3D/3dmodel.model" in names
+        assert "_rels/.rels" in names
+        assert "[Content_Types].xml" in names
+        model_xml = zf.read("3D/3dmodel.model")
+        assert b"<vertex" in model_xml
+        assert b"<triangle" in model_xml
+
+
+def test_export_3mf_round_trip(session, tmp_path, monkeypatch):
+    """Zip/XML structure alone can stay green on a file no real reader
+    accepts (e.g. a package missing the OPC rels content-type default) --
+    round-trip through this repo's own 3MF reader to catch that class of bug."""
+    monkeypatch.chdir(tmp_path)
+    from build123d_mcp.tools.import_step import import_cad_file
+
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "ref", "3mf")
+    mf_path = str(tmp_path / "ref.3mf")
+    data = json.loads(import_cad_file(session, mf_path, "ref_3mf"))
+    assert data["imported"] == "ref_3mf"
+    assert data["format"] == "3mf"
+    assert abs(data["volume"] - 1000) < 1
+    assert data["solids"] == 1
+    assert "ref_3mf" in session.objects
+
+
+def test_export_3mf_rejects_2d_shape(session, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Rectangle(10, 10)")
+    with pytest.raises(ValueError, match="2D shape"):
+        export_file(session, "out", "3mf")
+
+
 def test_export_multi_format(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     execute_code(session, "result = Box(10, 10, 10)")

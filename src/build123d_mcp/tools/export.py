@@ -11,7 +11,7 @@ from build123d_mcp.tools._paths import safe_output_path
 _EXPORT_MESH_MARGIN_S = 15
 _EXPORT_MESH_MIN_S = 10
 
-_VALID_FORMATS = ("step", "stl", "dxf", "svg")
+_VALID_FORMATS = ("step", "stl", "3mf", "dxf", "svg")
 
 
 def _labelled_copy(shape, label: str):
@@ -63,6 +63,69 @@ def _stl_write(shape, abs_path: str) -> None:
             for v in (v0, v1, v2):
                 f.write(struct.pack("<3f", v.X, v.Y, v.Z))
             f.write(b"\x00\x00")  # attribute byte count
+
+
+def _write_3mf(shape, abs_path: str) -> None:
+    """Write a minimal core-spec 3MF: single mesh, no color/material extensions.
+    Slicers (Bambu Studio, PrusaSlicer, Orca) accept this fine. stdlib-only
+    (zipfile + ElementTree) — same tessellate() call as _stl_write, so vertex
+    positions match the STL export exactly."""
+    import xml.etree.ElementTree as ET
+    from datetime import datetime, timezone
+    from zipfile import ZIP_DEFLATED, ZipFile
+
+    verts, tris = shape.tessellate(0.001, 0.1)
+
+    core_ns = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+    ct_ns = "http://schemas.openxmlformats.org/package/2006/content-types"
+    rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+    model_ct = "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"
+    model_rel_type = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"
+
+    model = ET.Element("model", {"xml:lang": "en-US", "xmlns": core_ns, "unit": "millimeter"})
+    ET.SubElement(model, "metadata", name="Application").text = "build123d-mcp"
+    ET.SubElement(model, "metadata", name="CreationDate").text = datetime.now(
+        timezone.utc
+    ).isoformat()
+
+    resources = ET.SubElement(model, "resources")
+    obj = ET.SubElement(resources, "object", id="1", type="model")
+    mesh = ET.SubElement(obj, "mesh")
+    vertices_el = ET.SubElement(mesh, "vertices")
+    for v in verts:
+        ET.SubElement(vertices_el, "vertex", x=str(v.X), y=str(v.Y), z=str(v.Z))
+    triangles_el = ET.SubElement(mesh, "triangles")
+    for t in tris:
+        ET.SubElement(triangles_el, "triangle", v1=str(t[0]), v2=str(t[1]), v3=str(t[2]))
+
+    build = ET.SubElement(model, "build")
+    ET.SubElement(build, "item", objectid="1")
+    model_xml = ET.tostring(model, xml_declaration=True, encoding="utf-8")
+
+    content_types = ET.Element("Types", xmlns=ct_ns)
+    ET.SubElement(
+        content_types,
+        "Default",
+        Extension="rels",
+        ContentType="application/vnd.openxmlformats-package.relationships+xml",
+    )
+    ET.SubElement(content_types, "Override", PartName="/3D/3dmodel.model", ContentType=model_ct)
+    content_types_xml = ET.tostring(content_types, xml_declaration=True, encoding="utf-8")
+
+    rels = ET.Element("Relationships", xmlns=rel_ns)
+    ET.SubElement(
+        rels,
+        "Relationship",
+        Target="/3D/3dmodel.model",
+        Id="rel-1",
+        Type=model_rel_type,
+    )
+    rels_xml = ET.tostring(rels, xml_declaration=True, encoding="utf-8")
+
+    with ZipFile(abs_path, "w", ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types_xml)
+        zf.writestr("_rels/.rels", rels_xml)
+        zf.writestr("3D/3dmodel.model", model_xml)
 
 
 def _is_2d(shape) -> bool:
@@ -223,6 +286,8 @@ def _write_one(shape, abs_path: str, fmt: str) -> None:
         _write_step(shape, abs_path)
     elif fmt == "stl":
         _stl_write(shape, abs_path)
+    elif fmt == "3mf":
+        _write_3mf(shape, abs_path)
     elif fmt == "dxf":
         _write_dxf(shape, abs_path)
     elif fmt == "svg":
@@ -250,12 +315,12 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
         raise ValueError("No format specified.")
     unknown = [f for f in formats if f not in _VALID_FORMATS]
     if unknown:
-        raise ValueError(f"Unknown format(s) '{', '.join(unknown)}'. Use: step, stl, dxf, svg")
+        raise ValueError(f"Unknown format(s) '{', '.join(unknown)}'. Use: step, stl, 3mf, dxf, svg")
 
     # Sanity: 2D shapes can only export 2D formats; 3D shapes can only export 3D.
     is_2d = _is_2d(shape)
     if is_2d:
-        bad_2d = [f for f in formats if f in ("step", "stl")]
+        bad_2d = [f for f in formats if f in ("step", "stl", "3mf")]
         if bad_2d:
             raise ValueError(
                 f"Cannot export 2D shape as {bad_2d}. Use 'dxf' or 'svg' for 2D drawings."
@@ -264,14 +329,20 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
         bad_3d = [f for f in formats if f in ("dxf", "svg")]
         if bad_3d:
             raise ValueError(
-                f"Cannot export 3D shape as {bad_3d}. Use 'step' or 'stl' for 3D solids; "
+                f"Cannot export 3D shape as {bad_3d}. Use 'step', 'stl', or '3mf' for 3D solids; "
                 f'use render_view(format="dxf") for the projected 2D outline.'
             )
 
     exported = []
     for fmt in formats:
         path = filename
-        ext_for_fmt = {"step": ".step", "stl": ".stl", "dxf": ".dxf", "svg": ".svg"}[fmt]
+        ext_for_fmt = {
+            "step": ".step",
+            "stl": ".stl",
+            "3mf": ".3mf",
+            "dxf": ".dxf",
+            "svg": ".svg",
+        }[fmt]
         existing_exts = (".step", ".stp") if fmt == "step" else (ext_for_fmt,)
         if not path.lower().endswith(existing_exts):
             path += ext_for_fmt
