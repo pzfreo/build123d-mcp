@@ -1286,7 +1286,12 @@ def test_export_3mf_entries_are_consistent(session, tmp_path, monkeypatch):
         infos = {i.filename: i for i in zf.infolist()}
     model = infos["3D/3dmodel.model"]
     assert model.date_time[0] > 1980, f"model part stamped with the zip epoch: {model.date_time}"
-    assert {i.date_time for i in infos.values()} == {model.date_time}
+    # Same second in practice, but the parts are stamped by separate calls, so
+    # allow for the DOS 2-second bucket ticking between them.
+    import datetime as _dt
+
+    stamps = [_dt.datetime(*i.date_time) for i in infos.values()]
+    assert (max(stamps) - min(stamps)).total_seconds() <= 2
     assert all(i.compress_type == zipfile.ZIP_DEFLATED for i in infos.values())
 
 
@@ -1307,7 +1312,28 @@ def test_export_3mf_failure_keeps_previous_file(session, tmp_path, monkeypatch):
         export_file(session, "keep", "3mf")
 
     assert (tmp_path / "keep.3mf").read_bytes() == good
-    assert not (tmp_path / "keep.3mf.tmp").exists()
+    assert not list(tmp_path.glob("*.tmp")), "temp file stranded next to the export"
+
+
+def test_export_3mf_temp_file_cannot_escape_via_symlink(session, tmp_path, monkeypatch):
+    """The export goes via a temp file, and only the target path is checked by
+    safe_output_path(). A predictable temp name would follow a symlink planted
+    at it straight out of the allowed write roots -- mkstemp's O_EXCL must not
+    reuse any pre-existing name."""
+    monkeypatch.chdir(tmp_path)
+    outside = tmp_path.parent / "outside_victim.txt"
+    outside.write_bytes(b"ORIGINAL")
+
+    execute_code(session, "result = Box(10, 10, 10)")
+    # The old fixed name, plus the temp prefix, both aimed at the victim.
+    for name in ("part.3mf.tmp", ".3mf-aaaa.tmp"):
+        os.symlink(outside, tmp_path / name)
+
+    export_file(session, "part", "3mf")
+
+    assert outside.read_bytes() == b"ORIGINAL", "export wrote through the planted symlink"
+    assert not (tmp_path / "part.3mf").is_symlink()
+    assert (tmp_path / "part.3mf").read_bytes()[:2] == b"PK"
 
 
 def test_export_3mf_rejects_2d_shape(session, tmp_path, monkeypatch):

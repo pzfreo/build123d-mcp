@@ -1,6 +1,7 @@
 import copy
 import os
 import struct
+import tempfile
 import time
 
 from build123d_mcp.tools._budget import op_budget
@@ -151,24 +152,35 @@ def _write_3mf(shape, abs_path: str) -> None:
     model_info = ZipInfo("3D/3dmodel.model", date_time=time.localtime(time.time())[:6])
     model_info.compress_type = ZIP_DEFLATED
 
-    # Stream into a sibling temp file and rename on success. The mesh write is
-    # the slow part of the export, and it is exactly where the op timeout
-    # SIGKILLs the worker — writing in place would leave a truncated, unreadable
-    # .3mf where a previously good export used to be.
-    tmp_path = abs_path + ".tmp"
+    # Stream into a temp file in the same directory and rename on success. The
+    # mesh write is the slow part of the export, and it is exactly where the op
+    # timeout SIGKILLs the worker — writing in place would leave a truncated,
+    # unreadable .3mf where a previously good export used to be.
+    #
+    # mkstemp() rather than abs_path + ".tmp": only abs_path went through
+    # safe_output_path(), so a concatenated sibling is an unvalidated path. It
+    # would follow a symlink planted at that name straight out of the allowed
+    # write roots, and clobber any real file already sitting there. mkstemp
+    # opens O_CREAT|O_EXCL, which refuses both, and its random name keeps
+    # concurrent exports to the same target off each other's temp file.
+    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(abs_path), prefix=".3mf-", suffix=".tmp")
     try:
-        with ZipFile(tmp_path, "w", ZIP_DEFLATED) as zf:
+        with os.fdopen(fd, "wb") as raw, ZipFile(raw, "w", ZIP_DEFLATED) as zf:
             zf.writestr("[Content_Types].xml", content_types_xml)
             zf.writestr("_rels/.rels", rels_xml)
             with zf.open(model_info, "w") as fh:
                 _stream_model_part(fh, verts, tris, core_ns)
+        # mkstemp creates 0600; the other export formats go through plain open()
+        # and land at the umask default, so match them rather than shipping a
+        # .3mf the user's own group can't read.
+        os.chmod(tmp_path, 0o644)
+        os.replace(tmp_path, abs_path)
     except BaseException:
         try:
             os.remove(tmp_path)
         except OSError:
             pass
         raise
-    os.replace(tmp_path, abs_path)
 
 
 def _is_2d(shape) -> bool:

@@ -14,6 +14,10 @@
   straight into the zip rather than built as an element tree, which makes
   serialisation ~3x faster and cuts its transient allocation, though
   `tessellate()` still dominates both time and memory on large models (#441).
+  The package is written to a temp file in the target directory and renamed
+  into place, so an export killed by the op timeout can't leave a corrupt
+  `.3mf` where a previously good one was — note this needs the *directory*
+  writable, not just the target file.
 
 - **HTTP deployments can isolate clients into separate CAD sessions.** Until now
   every HTTP request shared one build123d namespace — safe, since the worker
