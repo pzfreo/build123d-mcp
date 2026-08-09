@@ -1296,28 +1296,85 @@ def test_export_3mf_entries_are_consistent(session, tmp_path, monkeypatch):
     assert all(i.compress_type == zipfile.ZIP_DEFLATED for i in infos.values())
 
 
-def test_export_3mf_failure_keeps_previous_file(session, tmp_path, monkeypatch):
-    """The mesh write is where the op timeout kills the worker. Streaming
-    straight into the target would leave a truncated, unreadable .3mf in place
-    of the last good export, so the write goes via a temp file and a rename."""
+def _write_partial_then_fail(shape, path, *args, **kwargs):
+    """Stand-in for a writer killed mid-file: leaves bytes behind, then dies."""
+    with open(path, "wb") as f:
+        f.write(b"partial output that must never reach the target")
+    raise MemoryError("out of memory partway through")
+
+
+def _stream_partial_then_fail(fh, *args, **kwargs):
+    """Same, for the 3MF streamer, which is handed an open zip entry."""
+    fh.write(b"<partial")
+    raise MemoryError("out of memory partway through")
+
+
+@pytest.mark.parametrize(
+    ("fmt", "code", "writer", "saboteur"),
+    [
+        ("3mf", "result = Box(10, 10, 10)", "_stream_model_part", _stream_partial_then_fail),
+        ("stl", "result = Box(10, 10, 10)", "_stl_write", _write_partial_then_fail),
+        ("step", "result = Box(10, 10, 10)", "_write_step", _write_partial_then_fail),
+        ("dxf", "result = Rectangle(10, 10)", "_write_dxf", _write_partial_then_fail),
+        ("svg", "result = Rectangle(10, 10)", "_write_svg", _write_partial_then_fail),
+    ],
+)
+def test_export_failure_keeps_previous_file(
+    session, tmp_path, monkeypatch, fmt, code, writer, saboteur
+):
+    """A write killed partway through must not destroy the export it was
+    replacing -- the caller learns their export failed, and the file it took
+    with it was the one they still had. Every format goes through the same
+    temp-and-rename, so every format is checked here.
+
+    The stand-in writes bytes *before* raising, deliberately: a writer that dies
+    before opening anything leaves the target intact even without the temp file,
+    so a fail-immediately stub would pass on an in-place implementation."""
     monkeypatch.chdir(tmp_path)
-    execute_code(session, "result = Box(10, 10, 10)")
-    export_file(session, "keep", "3mf")
-    good = (tmp_path / "keep.3mf").read_bytes()
+    execute_code(session, code)
+    export_file(session, "keep", fmt)
+    good = (tmp_path / f"keep.{fmt}").read_bytes()
+    assert good, "nothing written on the first pass"
 
-    def boom(*args, **kwargs):
-        raise MemoryError("mesh too large")
-
-    monkeypatch.setattr("build123d_mcp.tools.export._stream_model_part", boom)
+    monkeypatch.setattr(f"build123d_mcp.tools.export.{writer}", saboteur)
     with pytest.raises(MemoryError):
-        export_file(session, "keep", "3mf")
+        export_file(session, "keep", fmt)
 
-    assert (tmp_path / "keep.3mf").read_bytes() == good
+    assert (tmp_path / f"keep.{fmt}").read_bytes() == good
     assert not list(tmp_path.glob("*.tmp")), "temp file stranded next to the export"
 
 
+def test_export_fsyncs_the_data_before_renaming_it_into_place(session, tmp_path, monkeypatch):
+    """Without the fsync the rename can reach the disk before the data does, so
+    a power loss leaves exactly the truncated file the temp-and-rename exists to
+    prevent -- it would only ever have protected against SIGKILL."""
+    monkeypatch.chdir(tmp_path)
+    from build123d_mcp.tools import export as export_mod
+
+    order = []
+    real_fsync, real_replace = export_mod._fsync_file, os.replace
+
+    def spy_fsync(path):
+        order.append(("fsync", os.path.getsize(path)))
+        return real_fsync(path)
+
+    def spy_replace(src, dst):
+        order.append(("replace", os.path.getsize(src)))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(export_mod, "_fsync_file", spy_fsync)
+    monkeypatch.setattr(os, "replace", spy_replace)
+
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "durable", "3mf")
+
+    assert [step for step, _ in order] == ["fsync", "replace"], f"wrong order: {order}"
+    # The fsync has to cover the finished file, not a partially written one.
+    assert order[0][1] == order[1][1] == (tmp_path / "durable.3mf").stat().st_size
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="symlink creation needs privilege")
-def test_export_3mf_does_not_write_through_a_planted_temp_symlink(session, tmp_path, monkeypatch):
+def test_export_does_not_write_through_a_planted_temp_symlink(session, tmp_path, monkeypatch):
     """The export goes via a temp file, and only the target path is checked by
     safe_output_path(). A predictable temp name is therefore an unvalidated
     write: a symlink planted at it redirects the whole package, and os.replace
@@ -1338,8 +1395,43 @@ def test_export_3mf_does_not_write_through_a_planted_temp_symlink(session, tmp_p
     assert (tmp_path / "part.3mf").read_bytes()[:2] == b"PK"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_export_refuses_a_temp_file_swapped_for_a_symlink(session, tmp_path, monkeypatch):
+    """mkstemp's O_EXCL only protects the *create*. Three of the five writers are
+    third-party and take a path, so the fd is closed and the name is resolved
+    again -- and another local user with write access to the output directory can
+    unlink the temp in that window and drop a symlink in its place.
+
+    Those bytes are gone whatever we do here; the stand-in below writes them to
+    make that explicit. What must not follow is os.replace renaming the *link*
+    onto the target, which would point every later export at the victim too, and
+    _set_export_mode chmod'ing a file that was never ours."""
+    from build123d_mcp.tools import export as export_mod
+
+    monkeypatch.chdir(tmp_path)
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"ORIGINAL")
+    victim.chmod(0o600)
+
+    def swap_for_symlink_then_write(shape, path):
+        os.remove(path)
+        os.symlink(victim, path)
+        with open(path, "wb") as fh:
+            fh.write(b"PK\x03\x04the-export")
+
+    monkeypatch.setattr(export_mod, "_write_3mf", swap_for_symlink_then_write)
+    execute_code(session, "result = Box(10, 10, 10)")
+
+    with pytest.raises(OSError):
+        export_file(session, "part", "3mf")
+
+    assert not (tmp_path / "part.3mf").exists(), "the planted link was renamed into place"
+    assert victim.stat().st_mode & 0o777 == 0o600, "victim took the export's mode"
+    assert not list(tmp_path.glob("*.tmp")), "planted link left in the output directory"
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
-def test_export_3mf_preserves_target_mode(session, tmp_path, monkeypatch):
+def test_export_preserves_target_mode(session, tmp_path, monkeypatch):
     """os.replace swaps in a new inode, so the mode has to be set deliberately:
     mkstemp's own 0600 would be wrong, and a hardcoded 0644 would silently widen
     a file the user had restricted."""
@@ -1367,7 +1459,28 @@ def test_export_3mf_preserves_target_mode(session, tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
-def test_export_3mf_temp_file_is_private_while_being_written(session, tmp_path, monkeypatch):
+def test_export_replaces_a_read_only_target(session, tmp_path, monkeypatch):
+    """Temp-and-rename needs a writable *directory*, not a writable file, so a
+    read-only target (a VCS checkout, a deliberate `chmod 444`) is replaced.
+
+    The trap is ordering: apply that mode to the temp file before the fsync
+    reopens it and the export dies on its own temp path -- after every byte has
+    already been written, and naming a file the caller has never seen."""
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "locked", "3mf")
+    (tmp_path / "locked.3mf").chmod(0o444)
+
+    export_file(session, "locked", "3mf")
+
+    mode = (tmp_path / "locked.3mf").stat().st_mode & 0o777
+    assert mode == 0o444, f"re-export changed the mode to {oct(mode)}"
+    assert (tmp_path / "locked.3mf").read_bytes()[:2] == b"PK"
+    assert not list(tmp_path.glob("*.tmp")), "temp file stranded next to the export"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_export_temp_file_is_private_while_being_written(session, tmp_path, monkeypatch):
     """The mesh write is the slow part of the export. mkstemp creates the temp
     file 0600, and it has to stay that way until the bytes are all there --
     otherwise another local user can write into an in-flight export whose final
@@ -1396,7 +1509,7 @@ def test_export_3mf_temp_file_is_private_while_being_written(session, tmp_path, 
     assert target.stat().st_mode & 0o777 == 0o666, "final mode should still match the target's"
 
 
-def test_export_3mf_sweeps_stale_temp_files(session, tmp_path, monkeypatch):
+def test_export_sweeps_stale_temp_files(session, tmp_path, monkeypatch):
     """A SIGKILL mid-write strands the temp file with no cleanup handler, and
     every attempt gets a fresh random name, so they'd otherwise accumulate."""
     monkeypatch.chdir(tmp_path)

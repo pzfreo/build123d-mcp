@@ -1,8 +1,12 @@
+import contextlib
 import copy
+import errno
 import os
+import stat
 import struct
 import tempfile
 import time
+from collections.abc import Iterator
 
 from build123d_mcp.tools._budget import op_budget
 from build123d_mcp.tools._paths import safe_output_path
@@ -20,11 +24,11 @@ _VALID_FORMATS = ("step", "stl", "3mf", "dxf", "svg")
 # memory stays flat regardless of mesh size.
 _MESH_XML_FLUSH_EVERY = 4096
 
-# Prefix for the 3MF atomic-write temp file. Deliberately not dot-hidden, so a
-# temp file stranded by a killed export is visible rather than accumulating
-# unseen, and distinctive enough that the stale-temp sweep is unlikely to match
-# anything but our own files.
-_TMP_PREFIX = "3mf-export-"
+# Prefix for the atomic-write temp file. Deliberately not dot-hidden, so a temp
+# file stranded by a killed export is visible rather than accumulating unseen,
+# and distinctive enough that the stale-temp sweep is unlikely to match anything
+# but our own files.
+_TMP_PREFIX = "export-tmp-"
 
 
 def _labelled_copy(shape, label: str):
@@ -114,26 +118,129 @@ def _stream_model_part(fh, verts, tris, core_ns: str) -> None:
     flush()
 
 
-def _set_export_mode(fd: int, abs_path: str) -> None:
+def _set_export_mode(tmp_path: str, abs_path: str) -> None:
     """Give the temp file the mode the finished export should have.
 
     mkstemp creates 0600, but `os.replace` swaps in a new inode, so without this
-    a re-export would silently change the file's permissions. Prefer the mode of
-    the file being replaced — a user who ran `chmod 600 part.3mf` should not have
-    it widened by the next export — and fall back to the umask default the other
-    formats get from plain open(). Best-effort: FAT/exFAT (the canonical 3MF
-    destination) refuses chmod, and that must not fail an export whose bytes are
-    already written."""
+    every export would silently change the file's permissions. Prefer the mode of
+    the file being replaced — a user who ran `chmod 600 part.step` should not have
+    it widened by the next export, which is what writing in place used to give
+    them — and fall back to the umask default a plain open() would have produced.
+
+    A target with no owner-read bit is the one case where the previous mode is
+    not worth honouring: copying it produces an export the caller cannot open,
+    and every later export re-copies it, with no way out through the tool.
+
+    Best-effort: FAT/exFAT (the canonical 3MF destination) refuses chmod, and
+    that must not fail an export whose bytes are already written."""
+    mode = None
     try:
         mode = os.stat(abs_path).st_mode & 0o777
     except OSError:
+        pass
+    if not mode or not mode & 0o400:
         umask = os.umask(0)
         os.umask(umask)
         mode = 0o666 & ~umask
     try:
-        os.fchmod(fd, mode)
-    except (OSError, AttributeError):  # no fchmod on Windows; chmod refused on FAT
+        os.chmod(tmp_path, mode)
+    except OSError:  # refused on FAT/exFAT
         pass
+
+
+def _fsync_file(path: str) -> None:
+    """Flush the temp file to disk before it is renamed into place.
+
+    Without this the rename can reach the disk before the data does, so a power
+    loss leaves exactly the truncated file the temp-and-rename dance exists to
+    prevent — the whole scheme would only ever have protected against SIGKILL.
+
+    Reopens for writing, so it has to run before the export mode is applied —
+    see the ordering note in `_atomic_output`."""
+    fd = os.open(path, os.O_RDWR)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _fsync_dir(path: str) -> None:
+    """Persist the rename itself. Best-effort: Windows cannot open a directory,
+    and some filesystems refuse fsync on one. The file's own data is already
+    durable by then, so failing the export over this would be wrong."""
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+@contextlib.contextmanager
+def _atomic_output(abs_path: str) -> Iterator[str]:
+    """Yield a temp path to write to; rename it onto `abs_path` on success.
+
+    Every writer here can be interrupted mid-file — the op timeout SIGKILLs the
+    worker, and the mesh formats stream — so writing in place leaves a truncated
+    export where a previously good one was. The caller only learns the export
+    failed; the file it destroyed was the one they still had.
+
+    mkstemp rather than `abs_path + ".tmp"`: only `abs_path` has been through
+    `safe_output_path()`, so a concatenated sibling is an unvalidated path that
+    would follow a symlink planted at that name out of the allowed write roots,
+    and clobber any real file already there. mkstemp opens O_CREAT|O_EXCL, which
+    refuses both, and its random name keeps concurrent exports to the same target
+    off each other's temp file. The prefix is not dot-hidden: a SIGKILL strands
+    the temp file, and invisible litter is worse than visible litter.
+
+    O_EXCL only covers the *create*, though. Three of the five writers are
+    third-party and take a path, not a descriptor, so the fd is closed and the
+    name is resolved again by someone else — and a name we do not hold open is a
+    name another local user with write access to the output directory can swap
+    for a symlink. That is checked for below, but only partially: see the note
+    there. Exports belong in a directory only you can write.
+
+    The mode is set only after the writer returns, so the file stays at mkstemp's
+    0600 for the whole write and no one else can write into a half-built export.
+    """
+    out_dir = os.path.dirname(abs_path)
+    _sweep_stale_temps(out_dir)
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=out_dir, prefix=_TMP_PREFIX, suffix=".tmp")
+    except OSError as e:
+        # Report the path the caller asked for, not a temp name they never saw.
+        raise OSError(e.errno, e.strerror, abs_path) from None
+    os.close(fd)  # writers open the path themselves; several are third-party
+    try:
+        yield tmp_path
+        # The writer resolved the name itself, so check we still own what it
+        # wrote. If a symlink was swapped in, the bytes have already gone to
+        # whatever it pointed at and nothing here can recall them — but without
+        # this we would go on to chmod that file and rename the *link* onto
+        # abs_path, so every later export writes through it too. Refusing here
+        # keeps someone else's mistake out of the caller's own tree. lstat, not
+        # stat: the question is what the name is, not what it resolves to.
+        if not stat.S_ISREG(os.lstat(tmp_path).st_mode):
+            raise OSError(errno.EPERM, "export temp file was replaced mid-write", abs_path)
+        # fsync before chmod, deliberately. The temp file is still mkstemp's 0600
+        # here, so it can be reopened. Do it the other way round and a target mode
+        # without owner-write — a read-only VCS checkout, a `chmod 444` the user
+        # meant — gets copied onto the temp file first, and the export then dies
+        # reopening it, after every byte had already been written.
+        _fsync_file(tmp_path)
+        _set_export_mode(tmp_path, abs_path)
+        os.replace(tmp_path, abs_path)
+        _fsync_dir(out_dir)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _sweep_stale_temps(out_dir: str) -> None:
@@ -212,44 +319,11 @@ def _write_3mf(shape, abs_path: str) -> None:
     model_info = ZipInfo("3D/3dmodel.model", date_time=time.localtime(time.time())[:6])
     model_info.compress_type = ZIP_DEFLATED
 
-    # Stream into a temp file in the same directory and rename on success. The
-    # mesh write is the slow part of the export, and it is exactly where the op
-    # timeout SIGKILLs the worker — writing in place would leave a truncated,
-    # unreadable .3mf where a previously good export used to be.
-    #
-    # mkstemp() rather than abs_path + ".tmp": only abs_path went through
-    # safe_output_path(), so a concatenated sibling is an unvalidated path. It
-    # would follow a symlink planted at that name straight out of the allowed
-    # write roots, and clobber any real file already sitting there. mkstemp
-    # opens O_CREAT|O_EXCL, which refuses both, and its random name keeps
-    # concurrent exports to the same target off each other's temp file. The
-    # prefix is not dot-hidden: a SIGKILL strands the temp file, and invisible
-    # litter in the user's output directory is worse than visible litter.
-    out_dir = os.path.dirname(abs_path)
-    _sweep_stale_temps(out_dir)
-    try:
-        fd, tmp_path = tempfile.mkstemp(dir=out_dir, prefix=_TMP_PREFIX, suffix=".tmp")
-    except OSError as e:
-        # Report the path the caller asked for, not the temp name they've never seen.
-        raise OSError(e.errno, e.strerror, abs_path) from None
-    try:
-        with os.fdopen(fd, "wb") as raw, ZipFile(raw, "w", ZIP_DEFLATED) as zf:
-            zf.writestr("[Content_Types].xml", content_types_xml)
-            zf.writestr("_rels/.rels", rels_xml)
-            with zf.open(model_info, "w") as fh:
-                _stream_model_part(fh, verts, tris, core_ns)
-            # Last thing before close, deliberately: the mesh write above is the
-            # slow part of the export, and mkstemp's 0600 is what keeps another
-            # local user from writing into the package while it is being filled.
-            # Still on the fd, so there is no window between this and the rename.
-            _set_export_mode(raw.fileno(), abs_path)
-        os.replace(tmp_path, abs_path)
-    except BaseException:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        raise
+    with ZipFile(abs_path, "w", ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types_xml)
+        zf.writestr("_rels/.rels", rels_xml)
+        with zf.open(model_info, "w") as fh:
+            _stream_model_part(fh, verts, tris, core_ns)
 
 
 def _is_2d(shape) -> bool:
@@ -406,18 +480,23 @@ def _write_step(shape, abs_path: str) -> None:
 
 
 def _write_one(shape, abs_path: str, fmt: str) -> None:
-    if fmt == "step":
-        _write_step(shape, abs_path)
-    elif fmt == "stl":
-        _stl_write(shape, abs_path)
-    elif fmt == "3mf":
-        _write_3mf(shape, abs_path)
-    elif fmt == "dxf":
-        _write_dxf(shape, abs_path)
-    elif fmt == "svg":
-        _write_svg(shape, abs_path)
-    else:
+    if fmt not in _VALID_FORMATS:
         raise ValueError(f"Unknown format '{fmt}'")
+    # Every format goes through the temp-and-rename, so an interrupted export
+    # can't destroy the file it was replacing. The writers below are handed the
+    # temp path and never see the real one — including the STEP retries, which
+    # read back what they just wrote.
+    with _atomic_output(abs_path) as tmp_path:
+        if fmt == "step":
+            _write_step(shape, tmp_path)
+        elif fmt == "stl":
+            _stl_write(shape, tmp_path)
+        elif fmt == "3mf":
+            _write_3mf(shape, tmp_path)
+        elif fmt == "dxf":
+            _write_dxf(shape, tmp_path)
+        elif fmt == "svg":
+            _write_svg(shape, tmp_path)
 
 
 def _nauo_count(step_path: str) -> int:
