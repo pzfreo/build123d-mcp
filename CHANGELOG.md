@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.3.83
+## v0.3.82
 
 ### Added
 
@@ -68,7 +68,20 @@
   sessions the process holds, the configured limit, and idle ages — never the
   handles, which are secrets.
 
-## v0.3.82
+- **The official MCP conformance suite runs in CI.** A new `conformance` job
+  starts a real Streamable HTTP server and runs
+  `@modelcontextprotocol/conformance` against it at both currently testable
+  protocol eras (`2025-06-18` and `2025-11-25`). The suite's server mode targets
+  the spec's reference "everything server", so scenarios needing its fixture
+  primitives — and those probing capabilities this server does not declare
+  (sampling, elicitation, logging, completion, progress, subscriptions) — are
+  recorded in `tests/conformance-baseline.yml` with the reason for each. The
+  gate fails in both directions: a newly failing scenario is a regression, and a
+  baselined scenario that starts passing is a stale entry. `server-initialize`,
+  `ping`, `tools-list`, `tools-call-simple-text`, `tools-call-error`,
+  `resources-list`, `prompts-list` and `dns-rebinding-protection` are now
+  enforced. The 2026-07-28 era is not yet gateable — the suite has no server
+  scenarios for it (#428).
 
 ### Changed
 
@@ -95,23 +108,6 @@
   to the empty string. Neither identifies the server, so the version is now
   passed explicitly and clients see e.g. `0.3.82` — the number worth quoting in
   a bug report.
-
-### Added
-
-- **The official MCP conformance suite runs in CI.** A new `conformance` job
-  starts a real Streamable HTTP server and runs
-  `@modelcontextprotocol/conformance` against it at both currently testable
-  protocol eras (`2025-06-18` and `2025-11-25`). The suite's server mode targets
-  the spec's reference "everything server", so scenarios needing its fixture
-  primitives — and those probing capabilities this server does not declare
-  (sampling, elicitation, logging, completion, progress, subscriptions) — are
-  recorded in `tests/conformance-baseline.yml` with the reason for each. The
-  gate fails in both directions: a newly failing scenario is a regression, and a
-  baselined scenario that starts passing is a stale entry. `server-initialize`,
-  `ping`, `tools-list`, `tools-call-simple-text`, `tools-call-error`,
-  `resources-list`, `prompts-list` and `dns-rebinding-protection` are now
-  enforced. The 2026-07-28 era is not yet gateable — the suite has no server
-  scenarios for it (#428).
 
 ## v0.3.81
 
