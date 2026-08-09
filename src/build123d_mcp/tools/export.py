@@ -20,8 +20,10 @@ _VALID_FORMATS = ("step", "stl", "3mf", "dxf", "svg")
 # memory stays flat regardless of mesh size.
 _MESH_XML_FLUSH_EVERY = 4096
 
-# Prefix for the 3MF atomic-write temp file. Deliberately not dot-hidden, and
-# distinctive enough that the stale-temp sweep only ever matches our own files.
+# Prefix for the 3MF atomic-write temp file. Deliberately not dot-hidden, so a
+# temp file stranded by a killed export is visible rather than accumulating
+# unseen, and distinctive enough that the stale-temp sweep is unlikely to match
+# anything but our own files.
 _TMP_PREFIX = "3mf-export-"
 
 
@@ -141,7 +143,15 @@ def _sweep_stale_temps(out_dir: str) -> None:
     the temp file survives. Each attempt gets a fresh random name, so without a
     sweep they accumulate without bound in the user's output directory. An export
     cannot outlive the op budget by more than a couple of minutes, so anything an
-    hour old is certainly dead — and this only ever touches our own prefix."""
+    hour old is certainly dead. Only the prefix is matched, so this can still hit
+    a file someone else named that way — it removes it, which is the same deal
+    any scratch-file convention makes.
+
+    lstat, not stat: the age that matters is the directory entry's own. Through
+    stat, a symlink named like a temp file inherits its target's age, so a link
+    made a second ago gets swept if it points at something old, and a dangling
+    one can never be swept at all. os.remove unlinks the link either way, so this
+    never touches the target."""
     cutoff = time.time() - 3600
     try:
         names = os.listdir(out_dir)
@@ -152,7 +162,7 @@ def _sweep_stale_temps(out_dir: str) -> None:
             continue
         path = os.path.join(out_dir, name)
         try:
-            if os.stat(path).st_mtime < cutoff:
+            if os.lstat(path).st_mtime < cutoff:
                 os.remove(path)
         except OSError:
             pass
@@ -224,11 +234,15 @@ def _write_3mf(shape, abs_path: str) -> None:
         raise OSError(e.errno, e.strerror, abs_path) from None
     try:
         with os.fdopen(fd, "wb") as raw, ZipFile(raw, "w", ZIP_DEFLATED) as zf:
-            _set_export_mode(raw.fileno(), abs_path)
             zf.writestr("[Content_Types].xml", content_types_xml)
             zf.writestr("_rels/.rels", rels_xml)
             with zf.open(model_info, "w") as fh:
                 _stream_model_part(fh, verts, tris, core_ns)
+            # Last thing before close, deliberately: the mesh write above is the
+            # slow part of the export, and mkstemp's 0600 is what keeps another
+            # local user from writing into the package while it is being filled.
+            # Still on the fd, so there is no window between this and the rename.
+            _set_export_mode(raw.fileno(), abs_path)
         os.replace(tmp_path, abs_path)
     except BaseException:
         try:

@@ -1346,16 +1346,54 @@ def test_export_3mf_preserves_target_mode(session, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     execute_code(session, "result = Box(10, 10, 10)")
 
-    export_file(session, "fresh", "3mf")
-    export_file(session, "stl_ref", "stl")
-    fresh = (tmp_path / "fresh.3mf").stat().st_mode & 0o777
-    assert fresh == (tmp_path / "stl_ref.stl").stat().st_mode & 0o777, (
-        "3mf should land on the same umask default as the other export formats"
-    )
+    # Pin the umask: under 077 the fallback would itself produce 0600, and the
+    # preserve-the-target's-mode assertion below would pass without the code
+    # ever looking at the target.
+    old_umask = os.umask(0o022)
+    try:
+        export_file(session, "fresh", "3mf")
+        export_file(session, "stl_ref", "stl")
+        fresh = (tmp_path / "fresh.3mf").stat().st_mode & 0o777
+        assert fresh == (tmp_path / "stl_ref.stl").stat().st_mode & 0o777, (
+            "3mf should land on the same umask default as the other export formats"
+        )
 
-    (tmp_path / "fresh.3mf").chmod(0o600)
-    export_file(session, "fresh", "3mf")
-    assert (tmp_path / "fresh.3mf").stat().st_mode & 0o777 == 0o600, "re-export widened the file"
+        (tmp_path / "fresh.3mf").chmod(0o600)
+        export_file(session, "fresh", "3mf")
+        mode = (tmp_path / "fresh.3mf").stat().st_mode & 0o777
+        assert mode == 0o600, f"re-export widened the file to {oct(mode)}"
+    finally:
+        os.umask(old_umask)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_export_3mf_temp_file_is_private_while_being_written(session, tmp_path, monkeypatch):
+    """The mesh write is the slow part of the export. mkstemp creates the temp
+    file 0600, and it has to stay that way until the bytes are all there --
+    otherwise another local user can write into an in-flight export whose final
+    mode happens to be group- or world-writable."""
+    monkeypatch.chdir(tmp_path)
+    from build123d_mcp.tools import export as export_mod
+
+    target = tmp_path / "part.3mf"
+    target.write_bytes(b"old")
+    target.chmod(0o666)
+
+    seen = []
+    real_stream = export_mod._stream_model_part
+
+    def spy(fh, verts, tris, core_ns):
+        for name in os.listdir(tmp_path):
+            if name.startswith(export_mod._TMP_PREFIX):
+                seen.append(os.stat(tmp_path / name).st_mode & 0o777)
+        return real_stream(fh, verts, tris, core_ns)
+
+    monkeypatch.setattr(export_mod, "_stream_model_part", spy)
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "part", "3mf")
+
+    assert seen == [0o600], f"temp file was {[oct(m) for m in seen]} mid-write, expected 0o600"
+    assert target.stat().st_mode & 0o777 == 0o666, "final mode should still match the target's"
 
 
 def test_export_3mf_sweeps_stale_temp_files(session, tmp_path, monkeypatch):
@@ -1373,12 +1411,24 @@ def test_export_3mf_sweeps_stale_temp_files(session, tmp_path, monkeypatch):
     unrelated.write_bytes(b"not ours")
     os.utime(unrelated, (time.time() - 7200, time.time() - 7200))
 
+    # A symlink is aged by its own entry, not its target: a fresh link pointing
+    # at something ancient must survive, and a dangling old one must still go.
+    if sys.platform != "win32":
+        fresh_link = tmp_path / f"{_TMP_PREFIX}link0001.tmp"
+        os.symlink(stale, fresh_link)
+        dangling = tmp_path / f"{_TMP_PREFIX}gone0001.tmp"
+        os.symlink(tmp_path / "nothing-here", dangling)
+        os.utime(dangling, (time.time() - 7200, time.time() - 7200), follow_symlinks=False)
+
     execute_code(session, "result = Box(10, 10, 10)")
     export_file(session, "part", "3mf")
 
     assert not stale.exists(), "stale temp file not swept"
     assert recent.exists(), "swept a temp file that could still be in flight"
     assert unrelated.exists(), "swept a file that isn't ours"
+    if sys.platform != "win32":
+        assert fresh_link.is_symlink(), "swept a fresh symlink because its target was old"
+        assert not os.path.lexists(dangling), "dangling stale symlink never swept"
 
 
 def test_export_3mf_rejects_2d_shape(session, tmp_path, monkeypatch):
