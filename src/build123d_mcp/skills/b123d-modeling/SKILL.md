@@ -4,12 +4,13 @@ Use this skill when asked to model, build, or modify a 3D part or assembly with
 build123d — from a text description, a technical drawing (image or PDF),
 dimensions in a spec, or an existing STEP/STL file.
 
-**Use the build123d-mcp MCP server tools, not standalone Python scripts run with
-the shell.** The server keeps a persistent build123d session, so you build in
-small verified steps — `execute()` → `measure()` → `render_view()` — instead of
-writing one large script and hoping. A one-shot script gives no numeric feedback
-between features, and a single error throws away everything. (The one exception,
-very heavy builds, is covered in Step 5.)
+**Use the build123d-mcp MCP server as the execution and verification authority.**
+Use `execute()` for small explorations and local changes. For a complete generated
+part or a body-family-level revision, keep one canonical `model.py` and run it with
+`execute_file()`; then use `measure()` → `validate()` → `render_view()` before
+promoting or exporting it. `execute_file()` runs in a clean namespace and preserves
+the previous valid model if the rebuild fails, so source-backed global corrections
+do not sacrifice the verified checkpoint.
 
 ---
 
@@ -30,8 +31,8 @@ Do not model while reading the input. First convert it into a parameter block.
 - Identify the views — front / plan (top) / side — and the projection
   convention; the title block states first- or third-angle, the SCALE
   (e.g. 2:1), and the units/tolerance standard.
-- Printed dimension callouts are real part dimensions. Never measure the image,
-  and never multiply a printed dimension by the drawing scale.
+- Printed dimension callouts are real part dimensions. Never replace one with a
+  pixel-derived value, and never multiply a printed dimension by drawing scale.
 - Hidden (dashed) lines are internal features — holes, pockets, bores.
   Centrelines (long-short chain) mark hole centres and symmetry axes. Section
   hatching shows solid material in a cut view.
@@ -39,6 +40,15 @@ Do not model while reading the input. First convert it into a parameter block.
   ⌴ counterbore, ⌵ countersink, typical hole note `4× Ø6.6 THRU`.
 - Cross-check every feature in at least two views before trusting it — a circle
   in plan with no matching hidden lines in front is probably a boss, not a hole.
+
+After recording all printed dimensions, calibrated image evidence may resolve
+**undimensioned form**: curved silhouettes, taper transitions, blade/scoop profiles,
+and the placement of a feature whose size is printed but whose connecting contour
+is not. Calibrate each view from at least one printed span on the same projection,
+record the pixel-to-mm transform, and keep explicit dimensions authoritative.
+Never trace dimension/leader/hatch lines as part edges. Treat a pixel-derived
+profile as an inference and verify it in another view or section. This is a form
+recovery pass, not permission to override callouts.
 
 Then write the spec as named parameters in your first `execute()`:
 
@@ -77,6 +87,22 @@ change:
   to it. See `build123d://quickref` Pattern 3 for a worked example.
 
 Finish by running `design_audit()` (Step 6) to prove the parameters are robust.
+
+### Step 2B — Keep a canonical source for global revisions
+
+Once the parameter block and dominant body family are understood, write a complete
+`model.py` that assigns the final shape to `result` (or calls `show(result, "part")`).
+Run it with `execute_file(path="model.py", result_name="result",
+snapshot="candidate-1")`. The returned SHA-256 identifies the exact source that
+created the active model and is retained in session/snapshot provenance.
+
+For a local feature adjustment, an incremental `execute()` is still efficient.
+For a body-level correction — a new silhouette, shell strategy, revolve profile,
+sheet-metal bend construction, or blade/loft family — edit `model.py` and run
+`execute_file()` again. Do not layer a replacement body on stale namespace objects.
+If the source fails or does not produce the required result, the prior active model
+remains available. After a successful rebuild, measure, validate and render before
+using the new snapshot as the scored floor.
 
 ## Step 2A — Choose the body family before detailing
 
@@ -205,6 +231,9 @@ export on a model built from a drawing, use the first valid render as a
 diagnostic checkpoint:
 
 1. Render the primary orthographic/isometric views.
+   For an input drawing, render matching projections and compare them against the
+   calibrated view crops. An overlay or edge-difference image is preferred when
+   available; compare silhouette and major internal edges, not annotation ink.
 2. Classify the dominant body family, not just the holes and bosses:
    axisymmetric shell / lathe profile, curved impeller or spoked radial
    pattern, bent sheet-metal body, cast web with blind pockets, thin-walled
@@ -215,8 +244,10 @@ diagnostic checkpoint:
    axis/profile interpretation in a revolved part; holes placed on the wrong
    body surface.
 4. If the mismatch is body-class level, rebuild from the named dimension
-   table. Do not keep patching the wrong representation with cosmetic cuts,
-   fillets, or shallow relief.
+   table by editing the canonical source and calling `execute_file()` again. Do
+   not keep patching the wrong representation with cosmetic cuts, fillets, or
+   shallow relief. Structural validity is not drawing-fidelity evidence, so an
+   unresolved dominant mismatch remains actionable even after `validate()` passes.
 5. After any cosmetic radius pass, re-run `find_holes` / `find_bosses` /
    relevant recognizers. Reject a fillet/chamfer that changes a through-bore
    diameter/depth, feature count, or scored interface.
@@ -251,6 +282,10 @@ Field-proven decision rules:
   shapes and named objects come back (snapshots and geometry imported via other
   tools do not). Just retry the step, smaller. Very long sessions may rebuild only
   partially if replay runs out of budget; `script()` returns the executed history.
+- A successful `execute_file()` replaces stale construction history with the
+  canonical source as the crash-replay root. Its source hash appears in
+  `session_state()`. A failed source rebuild leaves both active geometry and its
+  prior provenance unchanged.
 
 ## Step 5 — Heavy builds (threads, gears, many fillets)
 

@@ -47,6 +47,10 @@ def test_load_raw_modeling_returns_skill_content():
     assert "Open spoked / ribbed / windowed casting" in content
     assert "it does not\n  recognize arbitrary spokes" in content
     assert "Axisymmetric stepped part" in content
+    assert "Keep a canonical source for global revisions" in content
+    assert 'execute_file(path="model.py"' in content
+    assert "calibrated image evidence may resolve" in content
+    assert "Never trace dimension/leader/hatch lines" in content
     assert len(content) > 1000
 
 
@@ -69,6 +73,7 @@ def test_modeling_skill_contains_dominant_form_correction_loop():
     ):
         assert phrase in section
     assert "fixture" not in section.lower()
+    assert "Structural validity is not drawing-fidelity evidence" in section
 
 
 def test_load_raw_edit_returns_skill_content():
