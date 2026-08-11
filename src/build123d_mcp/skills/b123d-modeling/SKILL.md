@@ -88,22 +88,6 @@ change:
 
 Finish by running `design_audit()` (Step 6) to prove the parameters are robust.
 
-### Step 2B — Keep a canonical source for global revisions
-
-Once the parameter block and dominant body family are understood, write a complete
-`model.py` that assigns the final shape to `result` (or calls `show(result, "part")`).
-Run it with `execute_file(path="model.py", result_name="result",
-snapshot="candidate-1")`. The returned SHA-256 identifies the exact source that
-created the active model and is retained in session/snapshot provenance.
-
-For a local feature adjustment, an incremental `execute()` is still efficient.
-For a body-level correction — a new silhouette, shell strategy, revolve profile,
-sheet-metal bend construction, or blade/loft family — edit `model.py` and run
-`execute_file()` again. Do not layer a replacement body on stale namespace objects.
-If the source fails or does not produce the required result, the prior active model
-remains available. After a successful rebuild, measure, validate and render before
-using the new snapshot as the scored floor.
-
 ## Step 2A — Choose the body family before detailing
 
 Before adding holes, ribs, fillets or chamfers, decide the part's dominant body
@@ -173,6 +157,22 @@ STEP edits, topology repair and exact feature removal.
   axis, `measure()` for step diameters/heights, and `find_holes()` for axial or
   radial bores. Keep the revolved base parametric, then apply secondary cuts and
   final edge treatments.
+
+### Step 2B — Keep a canonical source for global revisions
+
+Once the parameter block and dominant body family are understood, write a complete
+`model.py` that assigns the final shape to `result` (or calls `show(result, "part")`).
+Run it with `execute_file(path="model.py", result_name="result",
+snapshot="candidate-1")`. The returned SHA-256 identifies the exact source that
+created the active model and is retained in session/snapshot provenance.
+
+For a local feature adjustment, an incremental `execute()` is still efficient.
+For a body-level correction — a new silhouette, shell strategy, revolve profile,
+sheet-metal bend construction, or blade/loft family — edit `model.py` and run
+`execute_file()` again. Do not layer a replacement body on stale namespace objects.
+If the source fails or does not produce the required result, the prior active model
+remains available. After a successful rebuild, measure, validate and render before
+using the new snapshot as the scored floor.
 
 ## Step 3 — Verify numerically, then visually
 
