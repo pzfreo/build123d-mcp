@@ -328,6 +328,7 @@ SESSION_STATEFUL_TOOLS = {
 # to SESSION_STATEFUL_TOOLS or here (see test_every_dispatch_op_is_classified).
 NON_SMOKED_OPS = {
     "execute": "the seeding mechanism itself; exercised by every WorkerSession test",
+    "execute_file": "requires an external Python source file; covered by test_execute_file",
     "reset": "session-lifecycle op; smoke-testing it would clear the seeded worker state",
     "search_library": "reads the worker library index, not Session geometry",
     "load_part": "requires a named library part, not present in the geometry seed",

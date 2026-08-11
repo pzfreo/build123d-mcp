@@ -233,6 +233,12 @@ def _op_execute(session: Any, args: dict, library_index: Any) -> Any:
     return session.execute(args["code"])
 
 
+def _op_execute_file(session: Any, args: dict, library_index: Any) -> Any:
+    from build123d_mcp.tools.execute_file import execute_file_code
+
+    return execute_file_code(session, **args)
+
+
 def _op_objects_types(session: Any, args: dict, library_index: Any) -> Any:
     return session.objects_types()
 
@@ -676,6 +682,17 @@ class WorkerSession:
                 isinstance(res, str) and res.startswith("Error: ExecutionTimeout:")
             ):
                 self._execute_history.append(args["code"])
+            elif op == "execute_file":
+                try:
+                    import json
+
+                    succeeded = bool(json.loads(res).get("ok"))
+                except (TypeError, ValueError):
+                    succeeded = False
+                if succeeded:
+                    # A clean source execution replaces the active namespace, so
+                    # it also becomes the new root of crash-replay history.
+                    self._execute_history[:] = [args["code"]]
             elif op == "reset":
                 self._execute_history.clear()
             return response["result"]
@@ -699,6 +716,17 @@ class WorkerSession:
             return self._call("execute", {"code": code}, self._exec_timeout)
         except (RuntimeError, ExecutionTimeout) as e:
             return f"Error: {e}"
+
+    @_op(_op_execute_file, _exec_budget)
+    def execute_file(
+        self,
+        code: str,
+        source_path: str,
+        source_sha256: str,
+        result_name: str = "",
+        snapshot: str = "",
+    ) -> str:
+        raise NotImplementedError
 
     def reset(self) -> str:
         self._execute_history.clear()

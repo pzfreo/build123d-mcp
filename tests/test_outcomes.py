@@ -877,6 +877,7 @@ def test_mcp_lists_all_tools():
     names = asyncio.run(_mcp_session(run))
     assert names == {
         "execute",
+        "execute_file",
         "render_view",
         "measure",
         "validate",

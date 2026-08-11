@@ -75,6 +75,7 @@ class Session:
         self.drawing_annotations: dict[str, Any] = {}
         self.drawing_page: dict[str, Any] | None = None
         self.geometry_refs: dict[str, Any] = {}
+        self.source_provenance: dict[str, str] | None = None
         self.execute_history: list[str] = []
         # Live-viewer delta tracking: name -> id(shape) at the last delta pull,
         # used to identity-diff changed shapes (see worker._op_pull_viewer_deltas).
@@ -931,6 +932,7 @@ class Session:
             "current_shape": self._copy_shape(self.current_shape),
             "objects": {k: self._copy_shape(v) for k, v in self.objects.items()},
             "object_groups": dict(self.object_groups),
+            "source_provenance": copy.deepcopy(self.source_provenance),
         }
 
     def restore_snapshot(self, name: str) -> None:
@@ -942,6 +944,7 @@ class Session:
         self.objects.update(snap["objects"])
         self.object_groups.clear()
         self.object_groups.update(snap.get("object_groups", {}))
+        self.source_provenance = copy.deepcopy(snap.get("source_provenance"))
 
     def _summarise_var_changes(self, before: dict) -> str:
         """Return a compact summary of scalar variables added or changed since *before*.
@@ -984,6 +987,7 @@ class Session:
         self.drawing_page = None
         self.last_error_detail = None
         self.geometry_refs.clear()
+        self.source_provenance = None
         self.execute_history = []
         self._viewer_baseline.clear()
         self._inject_builtins()
