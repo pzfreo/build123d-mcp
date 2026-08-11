@@ -807,11 +807,18 @@ class Session:
             # Preserve namespace, objects, and current_shape — partial execution results
             # (variables defined before the error, show() calls that succeeded) are kept
             # so iterative workflows can continue without losing context.
+            # Because partial state is retained, it can no longer be attributed
+            # exactly to the prior source-backed hash.
+            self.source_provenance = None
             self.last_error_detail = self._make_error_detail(exc, code)
             return f"Error: {type(exc).__name__}: {exc}"
 
         self.last_error_detail = None
         self.execute_history.append(code)
+        # A later successful incremental step means the active session no longer
+        # corresponds exactly to the last source-backed hash. execute_file_code()
+        # installs fresh provenance after this call when it promotes a new root.
+        self.source_provenance = None
         new_keys = {k for k in self.namespace if k not in _INJECTED} - values_before.keys()
         self._update_current_shape(new_keys)
 

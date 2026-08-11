@@ -40,6 +40,31 @@ def test_execute_file_promotes_clean_model_with_provenance(tmp_path):
     assert json.loads(session_state(session))["source_provenance"]["sha256"] == digest
 
 
+def test_incremental_execute_invalidates_source_provenance(tmp_path):
+    session = Session()
+    path, code, digest = _source(
+        tmp_path, "from build123d import *\nresult = Box(4, 3, 2)\n"
+    )
+    assert json.loads(execute_file_code(session, code, path, digest))["ok"] is True
+
+    session.execute("result = Box(5, 3, 2)")
+
+    assert session.source_provenance is None
+    assert json.loads(session_state(session))["source_provenance"] is None
+
+
+def test_partially_failed_incremental_execute_invalidates_source_provenance(tmp_path):
+    session = Session()
+    path, code, digest = _source(
+        tmp_path, "from build123d import *\nresult = Box(4, 3, 2)\n"
+    )
+    assert json.loads(execute_file_code(session, code, path, digest))["ok"] is True
+
+    session.execute("result = Box(5, 3, 2)\nraise RuntimeError('partial mutation')")
+
+    assert session.source_provenance is None
+
+
 def test_execute_file_runtime_failure_restores_active_state(tmp_path):
     session = Session()
     session.execute("from build123d import *\nshow(Box(2, 2, 2), 'safe')\nkept = 7")
