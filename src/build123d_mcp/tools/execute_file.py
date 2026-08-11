@@ -18,6 +18,8 @@ def read_source(path: str) -> tuple[str, str, str]:
     if not resolved.lower().endswith(".py"):
         raise ValueError("execute_file() accepts only .py source files.")
     max_bytes = int(os.environ.get("BUILD123D_MAX_SCRIPT_BYTES", _DEFAULT_MAX_SOURCE_BYTES))
+    if max_bytes < 1:
+        raise ValueError("BUILD123D_MAX_SCRIPT_BYTES must be a positive integer.")
     size = os.path.getsize(resolved)
     if size > max_bytes:
         raise ValueError(
@@ -25,7 +27,14 @@ def read_source(path: str) -> tuple[str, str, str]:
             "Raise BUILD123D_MAX_SCRIPT_BYTES to allow a larger file."
         )
     with open(resolved, "rb") as handle:
-        raw = handle.read()
+        # Bound the read as well as checking stat: the file can grow between
+        # getsize() and open(), and that race must not bypass the memory cap.
+        raw = handle.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        raise ValueError(
+            f"Source file '{resolved}' exceeds the {max_bytes}-byte limit. "
+            "Raise BUILD123D_MAX_SCRIPT_BYTES to allow a larger file."
+        )
     try:
         code = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -68,6 +77,19 @@ def execute_file_code(
     snapshot: str = "",
 ) -> str:
     """Execute source in a clean namespace and atomically promote its geometry."""
+    actual_sha256 = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    if actual_sha256 != source_sha256:
+        return json.dumps(
+            {
+                "ok": False,
+                "source_path": source_path,
+                "source_sha256": source_sha256,
+                "error": "Source SHA-256 does not match the supplied source code.",
+                "rolled_back": True,
+            },
+            indent=2,
+        )
+
     previous = _active_state(session)
     history_before = list(session.execute_history)
 

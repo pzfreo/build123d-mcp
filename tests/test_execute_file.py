@@ -15,7 +15,9 @@ def _source(tmp_path, text: str):
     path = tmp_path / "model.py"
     path.write_text(text, encoding="utf-8")
     resolved, code, digest = read_source(str(path))
-    assert digest == hashlib.sha256(text.encode()).hexdigest()
+    # Path.write_text() uses the platform newline convention. Provenance is
+    # deliberately over the exact bytes on disk, not a normalized text value.
+    assert digest == hashlib.sha256(path.read_bytes()).hexdigest()
     return resolved, code, digest
 
 
@@ -90,3 +92,39 @@ def test_read_source_rejects_non_python(tmp_path):
     path.write_text("result = 1", encoding="utf-8")
     with pytest.raises(ValueError, match="only .py"):
         read_source(str(path))
+
+
+def test_read_source_preserves_and_hashes_exact_crlf_bytes(tmp_path):
+    path = tmp_path / "model.py"
+    raw = b"from build123d import *\r\nresult = Box(1, 2, 3)\r\n"
+    path.write_bytes(raw)
+
+    _, code, digest = read_source(str(path))
+
+    assert code.encode("utf-8") == raw
+    assert digest == hashlib.sha256(raw).hexdigest()
+
+
+def test_read_source_enforces_limit_on_bytes_read(tmp_path, monkeypatch):
+    path = tmp_path / "model.py"
+    path.write_bytes(b"result = 12345")
+    monkeypatch.setenv("BUILD123D_MAX_SCRIPT_BYTES", "8")
+    # Simulate a stale/small stat result: the bounded read remains authoritative.
+    monkeypatch.setattr("build123d_mcp.tools.execute_file.os.path.getsize", lambda _: 8)
+
+    with pytest.raises(ValueError, match="exceeds the 8-byte limit"):
+        read_source(str(path))
+
+
+def test_execute_file_rejects_mismatched_provenance_without_mutation():
+    session = Session()
+    session.execute("from build123d import *\nshow(Box(2, 2, 2), 'safe')")
+    before = session.current_shape
+    code = "from build123d import *\nresult = Box(9, 9, 9)\n"
+
+    report = json.loads(execute_file_code(session, code, "model.py", "0" * 64))
+
+    assert report["ok"] is False and report["rolled_back"] is True
+    assert "does not match" in report["error"]
+    assert session.current_shape is before
+    assert set(session.objects) == {"safe"}
