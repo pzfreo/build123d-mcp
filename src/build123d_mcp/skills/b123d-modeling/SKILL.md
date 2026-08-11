@@ -5,12 +5,14 @@ build123d — from a text description, a technical drawing (image or PDF),
 dimensions in a spec, or an existing STEP/STL file.
 
 **Use the build123d-mcp MCP server as the execution and verification authority.**
-Use `execute()` for small explorations and local changes. For a complete generated
-part or a body-family-level revision, keep one canonical `model.py` and run it with
-`execute_file()`; then use `measure()` → `validate()` → `render_view()` before
-promoting or exporting it. `execute_file()` runs in a clean namespace and preserves
-the previous valid model if the rebuild fails, so source-backed global corrections
-do not sacrifice the verified checkpoint.
+Build incrementally with `execute()` by default and checkpoint the first valid
+model. If matching-view evidence then shows a body-family/global-form mismatch,
+keep the replacement in one canonical `model.py` and run it with `execute_file()`;
+then use `measure()` → `validate()` → `render_view()` before exporting it.
+`execute_file()` runs in a clean namespace and preserves the previous valid model
+if the rebuild fails, so a necessary global correction does not sacrifice the
+verified checkpoint. Do not globally rebuild a checkpoint merely because a
+canonical source file is available.
 
 ---
 
@@ -158,21 +160,23 @@ STEP edits, topology repair and exact feature removal.
   radial bores. Keep the revolved base parametric, then apply secondary cuts and
   final edge treatments.
 
-### Step 2B — Keep a canonical source for global revisions
+### Step 2B — Use canonical source only for evidenced global revisions
 
-Once the parameter block and dominant body family are understood, write a complete
-`model.py` that assigns the final shape to `result` (or calls `show(result, "part")`).
-Run it with `execute_file(path="model.py", result_name="result",
-snapshot="candidate-1")`. The returned SHA-256 identifies the exact source that
-created the active model and is retained in session/snapshot provenance.
+First build and checkpoint a valid candidate incrementally. Compare matching views
+and identify the largest mismatch. If that evidence requires a different dominant
+body family, silhouette, shell strategy, revolve profile, sheet-metal construction,
+or blade/loft family, write the complete replacement in `model.py`, assign its final
+shape to `result`, and run `execute_file(path="model.py", result_name="result")`.
+The returned SHA-256 identifies the exact source that created the active model and
+is retained in session/snapshot provenance.
 
-For a local feature adjustment, an incremental `execute()` is still efficient.
-For a body-level correction — a new silhouette, shell strategy, revolve profile,
-sheet-metal bend construction, or blade/loft family — edit `model.py` and run
-`execute_file()` again. Do not layer a replacement body on stale namespace objects.
-If the source fails or does not produce the required result, the prior active model
-remains available. After a successful rebuild, measure, validate and render before
-using the new snapshot as the scored floor.
+Keep local feature, dimension, hole, boss, fillet, and chamfer adjustments in the
+incremental workflow. Do not rewrite the complete part when the existing body family
+and silhouette already match. After a global source rebuild, compare it against the
+saved floor using bbox, feature counts, matching projections, and section evidence.
+Export the rebuild only when that evidence shows improvement; otherwise restore the
+floor. If source execution fails or omits the required result, the prior active model
+remains available automatically.
 
 ## Step 3 — Verify numerically, then visually
 

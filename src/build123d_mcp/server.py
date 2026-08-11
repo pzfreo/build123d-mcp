@@ -1074,9 +1074,9 @@ Design task: {description}
 
 Workflow:
 1. Call reset(), then read build123d://skill/modeling for the full workflow.
-2. Use execute() for small experiments. For the first complete generated part or a
-   body-family-level revision, keep a canonical model.py and call execute_file(); a
-   failed rebuild atomically preserves the prior valid model.
+2. Build incrementally with execute() by default. Use a canonical model.py with
+   execute_file() only when matching-view evidence shows that the valid checkpoint
+   needs a body-family/global-form rebuild; a failed rebuild atomically preserves it.
 3. After every execute(), call measure() to verify geometry (check volume and topology.faces).
 4. After every boolean (-, +, &), confirm topology.faces changed — unchanged counts mean the boolean failed.
 5. Use show(shape, "name") to register important intermediate shapes; it prints vol + face count immediately.

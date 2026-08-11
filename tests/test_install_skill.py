@@ -47,7 +47,8 @@ def test_load_raw_modeling_returns_skill_content():
     assert "Open spoked / ribbed / windowed casting" in content
     assert "it does not\n  recognize arbitrary spokes" in content
     assert "Axisymmetric stepped part" in content
-    assert "Keep a canonical source for global revisions" in content
+    assert "Use canonical source only for evidenced global revisions" in content
+    assert "Do not globally rebuild a checkpoint" in content
     assert 'execute_file(path="model.py"' in content
     assert "calibrated image evidence may resolve" in content
     assert "Never trace dimension/leader/hatch lines" in content
