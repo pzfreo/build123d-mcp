@@ -1,5 +1,7 @@
 # build123d-mcp
 
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.pzfreo%2Fbuild123d-mcp.svg)](https://mcptoplist.com/server/io.github.pzfreo%2Fbuild123d-mcp)
+
 [![PyPI version](https://img.shields.io/pypi/v/build123d-mcp)](https://pypi.org/project/build123d-mcp/)
 [![Python](https://img.shields.io/pypi/pyversions/build123d-mcp)](https://pypi.org/project/build123d-mcp/)
 [![CI](https://github.com/pzfreo/build123d-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/pzfreo/build123d-mcp/actions/workflows/ci.yml)
