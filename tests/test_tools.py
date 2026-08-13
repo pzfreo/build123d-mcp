@@ -583,6 +583,13 @@ def test_render_view_all_directions(session):
         assert out["png"][:8] == PNG_MAGIC, f"direction '{direction}' did not return valid PNG"
 
 
+def test_render_view_baseline_direction_aliases(session):
+    execute_code(session, "result = Box(10, 20, 30)")
+    for direction in ("bottom", "rear", "left", "right"):
+        out = render_view(session, direction)
+        assert out["png"][:8] == PNG_MAGIC, f"alias '{direction}' did not return valid PNG"
+
+
 def test_render_view_invalid_direction(session):
     execute_code(session, "result = Box(10, 10, 10)")
     with pytest.raises(ValueError, match="Unknown direction"):

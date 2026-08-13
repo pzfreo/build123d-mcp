@@ -302,3 +302,25 @@ def test_render_budget_timeout_does_not_trigger_svg_fallback(monkeypatch):
     with pytest.raises(_RenderBudgetExceeded, match="budget"):
         render_view(s)
     assert svg_called == []  # the unbounded SVG fallback must not have run
+
+
+def test_render_budget_timeout_retries_preview_once(monkeypatch):
+    from build123d_mcp.session import Session
+    from build123d_mcp.tools.render import _RenderBudgetExceeded, render_view
+
+    s = Session()
+    s.execute("from build123d import *")
+    s.execute("show(Box(10, 10, 10), 'b')\n")
+    calls = []
+
+    def _render(*args, **kwargs):
+        calls.append((args[1], kwargs.get("tess_budget_s")))
+        if len(calls) == 1:
+            raise _RenderBudgetExceeded("initial budget")
+        return b"PREVIEW_PNG", []
+
+    monkeypatch.setattr(render, "_do_render_png", _render)
+    out = render_view(s, quality="high")
+    assert out["png"] == b"PREVIEW_PNG"
+    assert "coarse preview" in out["fallback"]
+    assert calls[1] == (render._QUALITY["preview"], 40)

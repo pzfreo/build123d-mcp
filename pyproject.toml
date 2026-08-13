@@ -43,6 +43,7 @@ dependencies = [
     "defusedxml>=0.7.1",
     "augura>=0.1.6",
     "scipy",
+    "pillow",
 ]
 
 [project.optional-dependencies]
