@@ -546,6 +546,34 @@ def cross_sections(object_name: str = "", axis: str = "Z", num_slices: int = 10)
 
 
 @mcp.tool(annotations=_READ_ONLY)
+def mesh_section(
+    object_name: str = "",
+    axis: str = "Z",
+    position: float = 0.0,
+    tolerance: float = 0.1,
+    weld: float = 0.001,
+) -> str:
+    """Loops on one cross-section plane of a MESH, largest first. Returns JSON {axis, position, loop_count, enclosed_passages, loops:[{points, center, size, min, max}]}, all in the two axes that are not `axis`. enclosed_passages counts loops after the largest: a passage through the material at this height. Use it to prove an internal duct is enclosed rather than an open groove - an open groove reads 0 however deep it looks in a render, and a render cannot show the difference at all. Works on imported STL shells, where inner_wires() and the hole recognisers return nothing, and on solids as a second opinion. axis: X, Y or Z (the plane normal). position: absolute world coordinate. tolerance: tessellation tolerance. weld: point-merge distance when chaining segments. object_name: named object from show()/import_cad_file (default: current shape)."""
+    return _resolve_session().mesh_section(object_name, axis, position, tolerance, weld)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def mesh_holes(
+    object_name: str = "",
+    min_diameter: float = 2.0,
+    max_diameter: float = 12.0,
+    slices: int = 48,
+    min_depth: float = 1.0,
+    tolerance: float = 0.1,
+    weld: float = 0.001,
+) -> str:
+    """Find fastener holes in a MESH by slicing it on all three axes. Returns JSON {count, holes:[{axis, diameter, location, span, depth, through}]} where axis is the drilling direction and location is the hole centre in world coordinates. This is the mesh counterpart to find_holes(), which needs real topology and returns nothing for an imported STL - the usual case when remixing a downloaded model and you need its existing mounting features before designing a part that bolts on. Read `depth` and `through`: a blind pocket a few mm deep is a heat-set insert seat, not a screw hole, and coaxial pockets bored into opposite faces are reported separately rather than merged into one false through hole. min_diameter/max_diameter default to M2-M8 clearance, counterbores and insert pockets. min_depth drops chamfer rings and tessellation slivers. It reports what the cross-sections show and does not classify countersinks or thread forms. object_name: named object from show()/import_cad_file (default: current shape)."""
+    return _resolve_session().mesh_holes(
+        object_name, min_diameter, max_diameter, slices, min_depth, tolerance, weld
+    )
+
+
+@mcp.tool(annotations=_READ_ONLY)
 def inspect_part(
     object_name: str = "",
     section_axis: str = "Z",
