@@ -4,6 +4,33 @@
 
 ### Fixed
 
+- **`validate()` distinguishes interpenetrating solids from disjoint ones.** The
+  gate branched on the solid *count* alone, so two overlapping bodies and two
+  genuinely separate ones produced byte-identical reports — same `passes_gate`,
+  same `volume`, and an advisory asserting they were `disjoint`. Because
+  `shape.volume` sums the solids, an interpenetrating pair reported *more*
+  material than it had (two 20 mm cubes offset by 10 mm reported 16000 against a
+  true fused 12000, a 33.3% overstatement) and `export()` wrote that to STEP
+  without complaint. The gate now runs a pairwise intersection sweep and says
+  which it found: the advisory names the interpenetrating pairs and their
+  intersection volumes, and states that the reported volume counts overlapping
+  material more than once. New report fields `overlap_check`,
+  `interpenetrating_pairs` and `pairwise_overlap_volume`.
+
+  Two deliberate limits. `passes_gate` is unchanged — an interference fit in an
+  assembly export is legitimate geometry, so this is reported rather than failed.
+  And `pairwise_overlap_volume` is a sum of *pairwise* intersections: a region
+  shared by three or more bodies appears in several pairs, so it over-counts the
+  excess and must not be subtracted from the summed volume. The advisory says so
+  and tells you to fuse and re-measure instead; only with a single overlapping
+  pair does it state the true fused volume outright.
+
+  The sweep is bounded twice — a bounding-box reject skips pairs that cannot
+  touch, and a wall-clock budget plus a 64-body ceiling cap the O(n²) worst case.
+  Over either limit it reports `overlap_check: "undetermined"` and an advisory
+  that the bodies cannot be assumed disjoint, rather than a partial answer. Cost
+  on the ordinary single-solid path is negligible (#453).
+
 - **`cross_sections()` subtracts internal voids instead of adding them.** A
   section area was computed as outer boundary *plus* every hole, bore and
   cavity the plane cut, so any slice with an internal void read too large by

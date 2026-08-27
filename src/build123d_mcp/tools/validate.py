@@ -87,6 +87,19 @@ _MESH_GATE_MIN_S = 10.0
 # small/moderate open part still ladders and is caught; only large parts degrade.
 _LADDER_BASE_MAX_TRIS = 40000
 
+# Pairwise solid intersection is O(n^2) booleans, so the sweep is bounded twice: a
+# bounding-box reject skips pairs that cannot possibly touch, and the whole sweep
+# gets a small wall-clock budget. validate()'s op budget is 60s and the mesh gate
+# already claims 35s of it, so this stays deliberately small. Over budget (or above
+# the body ceiling) the check reports "not determined" rather than a partial answer —
+# it degrades to "unknown", never to a false verdict, matching the mesh gate.
+_OVERLAP_BUDGET_S = 5.0
+_OVERLAP_MAX_SOLIDS = 64
+
+# Below this the bodies are touching (a shared face), not interpenetrating. Matches
+# the threshold clearance() uses to separate "touching" from "interpenetrating".
+_OVERLAP_MIN_VOLUME = 1e-6
+
 _VertexDeflectionKey = tuple[float, float, float]
 _VertexDeflectionEvidence = dict[_VertexDeflectionKey, tuple[float, float]]
 
@@ -257,6 +270,70 @@ def _run_mesh_gate_subprocess(step_path: str, timeout: float) -> MeshGateResult 
     return None
 
 
+def _solid_overlaps(
+    shape, deadline: float | None = None
+) -> tuple[list[tuple[int, int, float]], bool]:
+    """Find interpenetrating pairs among a shape's solids.
+
+    Returns ``(overlaps, checked)``, where each overlap is
+    ``(index_a, index_b, intersection_volume)``. The volumes are PAIRWISE
+    intersections: a region shared by three or more bodies appears in several
+    pairs, so their sum over-counts the excess material and is not something a
+    caller should subtract from the summed volume. ``checked`` is False when the
+    sweep could not be completed — too many bodies, out of budget, or a boolean
+    that failed — and the caller must then NOT claim the bodies are disjoint.
+
+    A solid count alone cannot tell separate bodies from interpenetrating ones:
+    both are watertight, both pass the B-rep and mesh gates, and ``shape.volume``
+    SUMS them, so an overlapping pair reports more material than the part has
+    (#453). Only an actual intersection test distinguishes the two, which is why
+    the gate previously called an interpenetrating pair "disjoint" and exported
+    it without complaint.
+    """
+    try:
+        solids = shape.solids()
+    except Exception:
+        return [], False
+    n = len(solids)
+    if n < 2:
+        return [], True
+    if n > _OVERLAP_MAX_SOLIDS:
+        return [], False
+    try:
+        boxes = [s.bounding_box() for s in solids]
+    except Exception:
+        return [], False
+
+    overlaps: list[tuple[int, int, float]] = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            if deadline is not None and time.monotonic() > deadline:
+                return overlaps, False
+            a, b = boxes[i], boxes[j]
+            # Separated on any axis → cannot intersect. Skips the expensive
+            # boolean for the overwhelming majority of pairs in a real assembly.
+            if (
+                a.max.X < b.min.X - _EPS
+                or b.max.X < a.min.X - _EPS
+                or a.max.Y < b.min.Y - _EPS
+                or b.max.Y < a.min.Y - _EPS
+                or a.max.Z < b.min.Z - _EPS
+                or b.max.Z < a.min.Z - _EPS
+            ):
+                continue
+            try:
+                common = solids[i] & solids[j]
+                volume = float(common.volume) if common is not None else 0.0
+            except Exception:
+                # This pair is undecided, so the sweep as a whole is. Reporting
+                # the pairs found so far as if complete would let an unproven
+                # "disjoint" through, which is the defect being fixed.
+                return overlaps, False
+            if volume > _OVERLAP_MIN_VOLUME:
+                overlaps.append((i, j, round(volume, 4)))
+    return overlaps, True
+
+
 def _gate_report(shape, exact: bool = False, mesh_override: MeshGateResult | None = None) -> dict:
     """Return the validity-gate verdict for a shape as a plain dict.
 
@@ -285,6 +362,13 @@ def _gate_report(shape, exact: bool = False, mesh_override: MeshGateResult | Non
         volume = round(float(shape.volume), 4)
     except Exception:
         volume = 0.0
+    # Run before the mesh gate so a cheap, useful answer exists even when the mesh
+    # analysis later spends its whole budget. `volume` above SUMS the solids, so
+    # whether they overlap decides whether that number double-counts (#453).
+    overlaps, overlap_checked = _solid_overlaps(
+        shape, deadline=time.monotonic() + _OVERLAP_BUDGET_S
+    )
+    pairwise_overlap_volume = round(float(sum(v for _a, _b, v in overlaps)), 4)
     # build123d's `is_manifold` false-negates on closed solids imported from STEP
     # (verified on NIST CAD models — a single closed shell with zero open edges
     # still reports is_manifold=False), so it is NOT a reliable gate. The
@@ -409,7 +493,36 @@ def _gate_report(shape, exact: bool = False, mesh_override: MeshGateResult | Non
     # extra components tank the topology (component-count) score. Almost always an
     # un-fused result. (Intentional assembly exports via '*' will see this too.)
     warnings: list[str] = []
-    if n_solids > 1:
+    if n_solids > 1 and overlaps:
+        shown = ", ".join(f"#{a}+#{b} ({v})" for a, b, v in overlaps[:5])
+        more = "" if len(overlaps) <= 5 else f" +{len(overlaps) - 5} more"
+        if len(overlaps) == 1:
+            excess = f"the true fused volume is {round(volume - pairwise_overlap_volume, 4)}"
+        else:
+            # With three or more bodies sharing a region, that region appears in
+            # several pairwise intersections, so the pairwise total over-counts the
+            # excess. Subtracting it would replace one wrong number with another.
+            excess = (
+                "the true fused volume is lower — but NOT by the pairwise total, since "
+                "material shared by three or more bodies appears in several pairs; fuse "
+                "and re-measure rather than subtracting"
+            )
+        warnings.append(
+            f"{n_solids} solid bodies with {len(overlaps)} INTERPENETRATING pair(s): "
+            f"{shown}{more} — pairwise intersection total {pairwise_overlap_volume}. "
+            f"These are NOT disjoint: the reported volume {volume} SUMS the bodies, so "
+            f"overlapping material is counted more than once and {excess}. Fuse them "
+            "(Part() + ... or a.fuse(b)) before export, or the STEP carries more "
+            "material than the part actually has"
+        )
+    elif n_solids > 1 and not overlap_checked:
+        warnings.append(
+            f"{n_solids} solid bodies — whether any INTERPENETRATE was not determined "
+            "(too many bodies, or the intersection sweep ran out of budget), so they "
+            "cannot be assumed disjoint; the reported volume sums the bodies and would "
+            "double-count any overlap. Check suspect pairs with clearance(a, b)"
+        )
+    elif n_solids > 1:
         warnings.append(
             f"{n_solids} disjoint solid bodies — a single-part task expects one fused "
             "solid; fuse them (Part() + ... or a.fuse(b)) or the topology score suffers"
@@ -458,6 +571,9 @@ def _gate_report(shape, exact: bool = False, mesh_override: MeshGateResult | Non
         "passes_gate": passes,
         "n_solids": n_solids,
         "volume": volume,
+        "overlap_check": "exact" if overlap_checked else "undetermined",
+        "interpenetrating_pairs": len(overlaps),
+        "pairwise_overlap_volume": pairwise_overlap_volume,
         "watertight_manifold": watertight_manifold,
         "open_edges": open_edges,
         "nonmanifold_edges": nonmanifold_edges,
