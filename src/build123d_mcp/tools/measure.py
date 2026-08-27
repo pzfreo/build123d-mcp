@@ -193,16 +193,93 @@ def _inertia(shape) -> dict:
     }
 
 
+def _section_area(plane, wires) -> float:
+    """Area enclosed by one slice's section wires, internal voids subtracted.
+
+    BRepAlgoAPI_Section hands back every closed loop of the cut — the outer
+    boundary AND each internal void (hole, bore, cavity) — as a separate wire,
+    with no record of which one contains which. Making each wire its own face
+    and summing the magnitudes therefore ADDS the voids that should subtract,
+    overstating any holed section by exactly twice the void area (#454). It
+    reads correct along an axis where the holes cut full-height notches (no
+    internal loops) and wrong along the axis where they are enclosed — which
+    is the tool's advertised "detect internal voids" case.
+
+    Classify by nesting depth instead: a loop enclosed by an odd number of
+    other loops is a void and subtracts; an even number (zero included) is
+    solid and adds. That covers the general slice, not just one outer boundary
+    with holes — several disjoint solid regions, and islands standing inside a
+    cavity (a boss in a pocket), both come out right. Depth is derived from
+    containment rather than wire orientation, which Section does not promise.
+    """
+    from OCP.Bnd import Bnd_Box
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepBndLib import BRepBndLib
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+    from OCP.BRepClass import BRepClass_FaceClassifier
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+    from OCP.TopAbs import TopAbs_IN, TopAbs_VERTEX
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    loops = []
+    for j in range(1, wires.Length() + 1):
+        wire = TopoDS.Wire_s(wires.Value(j))
+        try:
+            face_maker = BRepBuilderAPI_MakeFace(plane, wire)
+            if not face_maker.IsDone():
+                continue
+            face = face_maker.Face()
+            props = GProp_GProps()
+            BRepGProp.SurfaceProperties_s(face, props)
+            area = abs(props.Mass())
+            if area <= 0.0:
+                continue
+            # Any point ON this wire decides containment: section loops do not
+            # intersect, so the wire is wholly inside or wholly outside another.
+            vertices = TopExp_Explorer(wire, TopAbs_VERTEX)
+            if not vertices.More():
+                continue
+            point = BRep_Tool.Pnt_s(TopoDS.Vertex_s(vertices.Current()))
+            box = Bnd_Box()
+            BRepBndLib.Add_s(face, box, False)
+            loops.append((area, face, point, box))
+        except Exception:
+            pass
+
+    # Descending area, so a loop's possible containers are all earlier in the
+    # list — only a strictly larger loop can enclose a smaller one.
+    loops.sort(key=lambda loop: loop[0], reverse=True)
+
+    total = 0.0
+    for index, (area, _face, point, box) in enumerate(loops):
+        depth = 0
+        for _outer_area, outer_face, _outer_point, outer_box in loops[:index]:
+            # Bounding-box reject first: on a plate with hundreds of bores each
+            # hole tests against the one enclosing boundary instead of every
+            # larger loop, which keeps this near-linear in practice.
+            if outer_box.IsOut(box):
+                continue
+            try:
+                classifier = BRepClass_FaceClassifier(outer_face, point, 1e-7)
+                if classifier.State() == TopAbs_IN:
+                    depth += 1
+            except Exception:
+                pass
+        total += area if depth % 2 == 0 else -area
+
+    # A slice whose outermost loop failed to build a face could otherwise leave
+    # only subtracting voids behind; report no area rather than negative area.
+    return max(total, 0.0)
+
+
 def _cross_sections(shape, axis: str = "Z", num_slices: int = 10) -> list:
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Section
-    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
-    from OCP.BRepGProp import BRepGProp
     from OCP.gp import gp_Dir, gp_Pln, gp_Pnt
-    from OCP.GProp import GProp_GProps
     from OCP.ShapeAnalysis import ShapeAnalysis_FreeBounds
     from OCP.TopAbs import TopAbs_EDGE
     from OCP.TopExp import TopExp_Explorer
-    from OCP.TopoDS import TopoDS
     from OCP.TopTools import TopTools_HSequenceOfShape
 
     axis = axis.upper()
@@ -244,20 +321,7 @@ def _cross_sections(shape, axis: str = "Z", num_slices: int = 10) -> list:
         wires = TopTools_HSequenceOfShape()
         ShapeAnalysis_FreeBounds.ConnectEdgesToWires_s(edges, 1e-7, False, wires)
 
-        total_area = 0.0
-        for j in range(1, wires.Length() + 1):
-            wire = TopoDS.Wire_s(wires.Value(j))
-            try:
-                face_maker = BRepBuilderAPI_MakeFace(plane, wire)
-                if face_maker.IsDone():
-                    face = face_maker.Face()
-                    props = GProp_GProps()
-                    BRepGProp.SurfaceProperties_s(face, props)
-                    total_area += abs(props.Mass())
-            except Exception:
-                pass
-
-        results.append({"position": round(pos, 4), "area": round(total_area, 4)})
+        results.append({"position": round(pos, 4), "area": round(_section_area(plane, wires), 4)})
 
     return results
 
