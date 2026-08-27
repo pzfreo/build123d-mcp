@@ -272,7 +272,7 @@ def _run_mesh_gate_subprocess(step_path: str, timeout: float) -> MeshGateResult 
 
 def _solid_overlaps(
     shape, deadline: float | None = None
-) -> tuple[list[tuple[int, int, float]], bool]:
+) -> tuple[list[tuple[int, int, float, str]], bool]:
     """Find interpenetrating pairs among a shape's solids.
 
     Returns ``(overlaps, checked)``, where each overlap is
