@@ -132,3 +132,12 @@ def test_inspect_part_sections_share_the_fix(session):
         assert sample["area"] == pytest.approx(_BRACKET_TRUE, abs=1e-3)
     # A prismatic part read through corrected areas is a constant section.
     assert report["sections"]["constant_section"] is True
+
+
+def test_well_formed_slices_carry_no_uncertainty_flag(session):
+    """`area_uncertain` marks a slice whose loop classification did not
+    complete. Ordinary geometry must never set it, or the signal is noise."""
+    session.execute(_BRACKET)
+    for axis in ("X", "Y", "Z"):
+        for record in json.loads(cross_sections(session, object_name="bracket", axis=axis)):
+            assert "area_uncertain" not in record, f"{axis} slice flagged: {record}"

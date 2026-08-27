@@ -193,8 +193,11 @@ def _inertia(shape) -> dict:
     }
 
 
-def _section_area(plane, wires) -> float:
+def _section_area(plane, wires) -> tuple[float, bool]:
     """Area enclosed by one slice's section wires, internal voids subtracted.
+
+    Returns ``(area, resolved)``. ``resolved`` is False when the depth
+    classification did not complete — see the end of this docstring.
 
     BRepAlgoAPI_Section hands back every closed loop of the cut — the outer
     boundary AND each internal void (hole, bore, cavity) — as a separate wire,
@@ -211,6 +214,13 @@ def _section_area(plane, wires) -> float:
     with holes — several disjoint solid regions, and islands standing inside a
     cavity (a boss in a pocket), both come out right. Depth is derived from
     containment rather than wire orientation, which Section does not promise.
+
+    Where the classification cannot be completed the slice is reported as
+    unresolved rather than returned as a plain number. An undecidable
+    containment leaves a loop's sign a guess, and guessing it wrong reproduces
+    exactly the overstatement above — a wrong area that looks like a
+    measurement, which is the failure #454 was about. The caller flags those
+    slices instead of letting them pass silently.
     """
     from OCP.Bnd import Bnd_Box
     from OCP.BRep import BRep_Tool
@@ -253,9 +263,12 @@ def _section_area(plane, wires) -> float:
     loops.sort(key=lambda loop: loop[0], reverse=True)
 
     total = 0.0
-    for index, (area, _face, point, box) in enumerate(loops):
+    resolved = True
+    for index in range(len(loops)):
+        area, _face, point, box = loops[index]
         depth = 0
-        for _outer_area, outer_face, _outer_point, outer_box in loops[:index]:
+        for j in range(index):
+            _outer_area, outer_face, _outer_point, outer_box = loops[j]
             # Bounding-box reject first: on a plate with hundreds of bores each
             # hole tests against the one enclosing boundary instead of every
             # larger loop, which keeps this near-linear in practice.
@@ -266,12 +279,15 @@ def _section_area(plane, wires) -> float:
                 if classifier.State() == TopAbs_IN:
                     depth += 1
             except Exception:
-                pass
+                resolved = False
         total += area if depth % 2 == 0 else -area
 
-    # A slice whose outermost loop failed to build a face could otherwise leave
-    # only subtracting voids behind; report no area rather than negative area.
-    return max(total, 0.0)
+    if total < 0.0:
+        # Only subtracting voids left, so the loop that should enclose them
+        # failed to become a face. Report no area rather than negative area —
+        # and unresolved, because a clamped zero is not a measurement either.
+        return 0.0, False
+    return total, resolved
 
 
 def _cross_sections(shape, axis: str = "Z", num_slices: int = 10) -> list:
@@ -321,7 +337,13 @@ def _cross_sections(shape, axis: str = "Z", num_slices: int = 10) -> list:
         wires = TopTools_HSequenceOfShape()
         ShapeAnalysis_FreeBounds.ConnectEdgesToWires_s(edges, 1e-7, False, wires)
 
-        results.append({"position": round(pos, 4), "area": round(_section_area(plane, wires), 4)})
+        area, resolved = _section_area(plane, wires)
+        record = {"position": round(pos, 4), "area": round(area, 4)}
+        if not resolved:
+            # Only present when the area is not trustworthy, so the ordinary
+            # record keeps its existing two-key shape.
+            record["area_uncertain"] = True
+        results.append(record)
 
     return results
 

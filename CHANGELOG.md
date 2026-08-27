@@ -20,7 +20,10 @@
   a cavity read *larger* in section than solid stock, while the axis where the
   same holes cut open notches read correct, which is what kept it hidden. The
   same code path backs `inspect_part()`'s `sections` block, so its
-  `variation_ratio` and `constant_section` are corrected too (#454).
+  `variation_ratio` and `constant_section` are corrected too. A slice whose
+  loop classification cannot be completed now carries `area_uncertain: true`
+  rather than returning a plausible number, since guessing a loop's sign
+  reproduces the same overstatement (#454).
 
 ## v0.3.82
 
