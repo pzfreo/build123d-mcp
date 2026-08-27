@@ -571,6 +571,7 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
         # (export runs once, so the extra import + exact mesh check is fine).
         step_path = next((p for p in exported if p.lower().endswith((".step", ".stp"))), None)
         gate_shape = shape
+        report: dict | None = None
         if step_path is not None:
             try:
                 from build123d import import_step
@@ -632,6 +633,27 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
                     + ". Fix the solid and re-export (run validate() for detail; the "
                     "build123d://skill/repair resource has the defect-class repair ladder)."
                 )
+
+        # Overlapping bodies do NOT fail the gate (a deliberate interference fit is
+        # legitimate), so the advisory lives in report["warnings"] — which nothing
+        # here reads. Surface it explicitly: this is the path #453 was actually
+        # about, where the written STEP carries more material than the part has and
+        # the sanity line above restates the summed volume as if it were the truth.
+        if report is not None and report.get("overlapping_pairs"):
+            suffix += (
+                f"\n⚠ OVERLAPPING BODIES — {report['overlapping_pairs']} pair(s) of solids "
+                f"share material (pairwise intersection total "
+                f"{report['pairwise_overlap_volume']}). The volume reported above SUMS the "
+                "bodies, so it counts the shared material more than once and this file "
+                "carries more material than the part has. Fuse them and re-export unless "
+                "the interference is deliberate; validate() names the pairs."
+            )
+        elif report is not None and report.get("overlap_check") == "undetermined":
+            suffix += (
+                "\n⚠ NOTE — whether the solid bodies overlap was not determined (too many "
+                "bodies, or the intersection sweep ran out of budget), so the volume "
+                "reported above cannot be assumed free of double-counted material."
+            )
 
         # A single solid must land as a single STEP product. The #1356 ``Compound``
         # workaround (or any stray wrapper) writes it as ``PRODUCT('COMPOUND')`` ->

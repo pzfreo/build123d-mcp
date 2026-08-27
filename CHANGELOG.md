@@ -12,10 +12,17 @@
   material than it had (two 20 mm cubes offset by 10 mm reported 16000 against a
   true fused 12000, a 33.3% overstatement) and `export()` wrote that to STEP
   without complaint. The gate now runs a pairwise intersection sweep and says
-  which it found: the advisory names the interpenetrating pairs and their
+  which it found: the advisory names the overlapping pairs and their
   intersection volumes, and states that the reported volume counts overlapping
-  material more than once. New report fields `overlap_check`,
-  `interpenetrating_pairs` and `pairwise_overlap_volume`.
+  material more than once. A pair where one body wholly contains the other is
+  called `containing`, the same word `clearance()` uses, so the two tools do not
+  name one relationship twice. New report fields `overlap_check`,
+  `overlapping_pairs` and `pairwise_overlap_volume`.
+
+  `export()` surfaces it too. Overlap does not fail the gate, and export only
+  ever read `reasons` (the fail list), so the written STEP previously carried the
+  extra material silently while export's own sanity line restated the summed
+  volume as fact — the case the issue was actually about.
 
   Two deliberate limits. `passes_gate` is unchanged — an interference fit in an
   assembly export is legitimate geometry, so this is reported rather than failed.

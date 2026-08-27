@@ -56,7 +56,7 @@ show(Compound(children=[e, f]), 'touching')
 def test_interpenetrating_pair_is_detected(session):
     session.execute(_OVERLAP)
     report = _report(session, "overlap")
-    assert report["interpenetrating_pairs"] == 1
+    assert report["overlapping_pairs"] == 1
     assert report["pairwise_overlap_volume"] == pytest.approx(4000.0, abs=1e-3)
     assert report["overlap_check"] == "exact"
 
@@ -66,7 +66,7 @@ def test_interpenetrating_pair_is_not_called_disjoint(session):
     interpenetrate."""
     session.execute(_OVERLAP)
     text = _warnings(_report(session, "overlap"))
-    assert "INTERPENETRATING" in text
+    assert "OVERLAPPING" in text
     assert "NOT disjoint" in text
 
 
@@ -95,7 +95,7 @@ c = Box(20, 20, 20).locate(Location((4, 8, 0)))
 show(Compound(children=[a, b, c]), 'triple')
 """)
     report = _report(session, "triple")
-    assert report["interpenetrating_pairs"] == 3
+    assert report["overlapping_pairs"] == 3
     text = _warnings(report)
     assert "NOT by the pairwise total" in text
     # The naive subtraction must not appear as if it were the answer.
@@ -121,26 +121,26 @@ def test_genuinely_disjoint_bodies_still_say_disjoint(session):
     assumed from the body count."""
     session.execute(_DISJOINT)
     report = _report(session, "disjoint")
-    assert report["interpenetrating_pairs"] == 0
+    assert report["overlapping_pairs"] == 0
     assert report["overlap_check"] == "exact"
     assert "disjoint solid bodies" in _warnings(report)
-    assert "INTERPENETRATING" not in _warnings(report)
+    assert "OVERLAPPING" not in _warnings(report)
 
 
 def test_touching_bodies_are_not_interpenetrating(session):
     """A shared face is zero shared material — not an overlap."""
     session.execute(_TOUCHING)
     report = _report(session, "touching")
-    assert report["interpenetrating_pairs"] == 0
+    assert report["overlapping_pairs"] == 0
     assert report["pairwise_overlap_volume"] == 0.0
 
 
 def test_single_solid_reports_no_overlap_and_no_advisory(session):
     session.execute("show(Box(20, 20, 20), 'single')")
     report = _report(session, "single")
-    assert report["interpenetrating_pairs"] == 0
+    assert report["overlapping_pairs"] == 0
     assert report["pairwise_overlap_volume"] == 0.0
-    assert "INTERPENETRATING" not in _warnings(report)
+    assert "OVERLAPPING" not in _warnings(report)
     assert "disjoint" not in _warnings(report)
 
 
@@ -152,7 +152,7 @@ def test_fusing_the_overlap_clears_the_advisory(session):
     report = _report(session, "fused")
     assert report["n_solids"] == 1
     assert report["volume"] == pytest.approx(12000.0, abs=1e-3)
-    assert report["interpenetrating_pairs"] == 0
+    assert report["overlapping_pairs"] == 0
 
 
 def test_gate_verdict_is_unchanged_for_multi_body_shapes(session):
@@ -162,3 +162,66 @@ def test_gate_verdict_is_unchanged_for_multi_body_shapes(session):
     session.execute(_DISJOINT)
     assert _report(session, "overlap")["passes_gate"] is True
     assert _report(session, "disjoint")["passes_gate"] is True
+
+
+def test_containment_uses_the_same_word_as_clearance(session):
+    """One body wholly inside another is "containing" to clearance(); the gate
+    must not call the same relationship something else, or two tools in one
+    server name one geometry twice."""
+    session.execute("""
+big = Box(40, 40, 40)
+small = Box(5, 5, 5)
+show(Compound(children=[big, small]), 'nested')
+""")
+    report = _report(session, "nested")
+    assert report["overlapping_pairs"] == 1
+    text = _warnings(report)
+    assert "CONTAINING" in text
+    assert "\u2283" in text  # #0 ⊃ #1
+
+    from build123d_mcp.tools.measure import _clearance_report
+
+    clearance = json.loads(_clearance_report(session.namespace["big"], session.namespace["small"]))
+    assert clearance["status"] == "containing"
+    assert clearance["intersection_volume"] == pytest.approx(
+        report["pairwise_overlap_volume"], abs=1e-3
+    )
+
+
+def test_bodies_whose_boxes_overlap_but_solids_do_not(session):
+    """The bounding-box reject cannot fire here, so the real boolean runs and
+    must come back empty rather than counting a phantom overlap."""
+    session.execute("""
+p = Box(60, 4, 4)
+q = Box(4, 60, 4).locate(Location((0, 0, 10)))
+show(Compound(children=[p, q]), 'cross')
+""")
+    report = _report(session, "cross")
+    assert report["overlapping_pairs"] == 0
+    assert report["overlap_check"] == "exact"
+    assert "disjoint solid bodies" in _warnings(report)
+
+
+def test_export_surfaces_overlapping_bodies(tmp_path, session):
+    """The issue's actual complaint: export() wrote the interpenetrating
+    compound with no error, and its sanity line restated the summed volume as
+    fact. Overlap does not fail the gate, so export has to read the advisory."""
+    from build123d_mcp.tools.export import export_file
+
+    session.execute(_OVERLAP)
+    out = export_file(
+        session, filename=str(tmp_path / "o.step"), format="step", object_name="overlap"
+    )
+    assert "OVERLAPPING BODIES" in out
+    assert "4000.0" in out
+
+
+def test_export_is_quiet_for_a_clean_single_solid(tmp_path, session):
+    from build123d_mcp.tools.export import export_file
+
+    session.execute("show(Box(20, 20, 20), 'clean')")
+    out = export_file(
+        session, filename=str(tmp_path / "c.step"), format="step", object_name="clean"
+    )
+    assert "OVERLAPPING BODIES" not in out
+    assert "not determined" not in out
