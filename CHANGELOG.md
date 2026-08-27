@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.3.83
+
+### Fixed
+
+- **`cross_sections()` subtracts internal voids instead of adding them.** A
+  section area was computed as outer boundary *plus* every hole, bore and
+  cavity the plane cut, so any slice with an internal void read too large by
+  exactly twice the void area — a 60x40x10 plate with four Ø4.5 bores reported
+  `2442.157` against a true `2314.923` (+5.5%), and a 676-hole part reported
+  +10.4%. `BRepAlgoAPI_Section` returns each closed loop as a separate wire
+  with no record of which contains which; each became its own face and the
+  magnitudes were summed under `abs()`, which discarded the sign that should
+  have subtracted the voids. Loops are now classified by nesting depth —
+  enclosed by an odd number of other loops means void and subtracts, even
+  (zero included) means solid and adds — so several disjoint solid regions in
+  one slice, and an island standing inside a cavity, are all handled. This
+  fired precisely on the advertised "detect internal voids" case: a part with
+  a cavity read *larger* in section than solid stock, while the axis where the
+  same holes cut open notches read correct, which is what kept it hidden. The
+  same code path backs `inspect_part()`'s `sections` block, so its
+  `variation_ratio` and `constant_section` are corrected too. A slice whose
+  loop classification cannot be completed now carries `area_uncertain: true`
+  rather than returning a plausible number, since guessing a loop's sign
+  reproduces the same overstatement (#454).
+
 ## v0.3.82
 
 ### Added

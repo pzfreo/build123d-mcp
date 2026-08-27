@@ -193,16 +193,109 @@ def _inertia(shape) -> dict:
     }
 
 
+def _section_area(plane, wires) -> tuple[float, bool]:
+    """Area enclosed by one slice's section wires, internal voids subtracted.
+
+    Returns ``(area, resolved)``. ``resolved`` is False when the depth
+    classification did not complete — see the end of this docstring.
+
+    BRepAlgoAPI_Section hands back every closed loop of the cut — the outer
+    boundary AND each internal void (hole, bore, cavity) — as a separate wire,
+    with no record of which one contains which. Making each wire its own face
+    and summing the magnitudes therefore ADDS the voids that should subtract,
+    overstating any holed section by exactly twice the void area (#454). It
+    reads correct along an axis where the holes cut full-height notches (no
+    internal loops) and wrong along the axis where they are enclosed — which
+    is the tool's advertised "detect internal voids" case.
+
+    Classify by nesting depth instead: a loop enclosed by an odd number of
+    other loops is a void and subtracts; an even number (zero included) is
+    solid and adds. That covers the general slice, not just one outer boundary
+    with holes — several disjoint solid regions, and islands standing inside a
+    cavity (a boss in a pocket), both come out right. Depth is derived from
+    containment rather than wire orientation, which Section does not promise.
+
+    Where the classification cannot be completed the slice is reported as
+    unresolved rather than returned as a plain number. An undecidable
+    containment leaves a loop's sign a guess, and guessing it wrong reproduces
+    exactly the overstatement above — a wrong area that looks like a
+    measurement, which is the failure #454 was about. The caller flags those
+    slices instead of letting them pass silently.
+    """
+    from OCP.Bnd import Bnd_Box
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepBndLib import BRepBndLib
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+    from OCP.BRepClass import BRepClass_FaceClassifier
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+    from OCP.TopAbs import TopAbs_IN, TopAbs_VERTEX
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    loops = []
+    for j in range(1, wires.Length() + 1):
+        wire = TopoDS.Wire_s(wires.Value(j))
+        try:
+            face_maker = BRepBuilderAPI_MakeFace(plane, wire)
+            if not face_maker.IsDone():
+                continue
+            face = face_maker.Face()
+            props = GProp_GProps()
+            BRepGProp.SurfaceProperties_s(face, props)
+            area = abs(props.Mass())
+            if area <= 0.0:
+                continue
+            # Any point ON this wire decides containment: section loops do not
+            # intersect, so the wire is wholly inside or wholly outside another.
+            vertices = TopExp_Explorer(wire, TopAbs_VERTEX)
+            if not vertices.More():
+                continue
+            point = BRep_Tool.Pnt_s(TopoDS.Vertex_s(vertices.Current()))
+            box = Bnd_Box()
+            BRepBndLib.Add_s(face, box, False)
+            loops.append((area, face, point, box))
+        except Exception:
+            pass
+
+    # Descending area, so a loop's possible containers are all earlier in the
+    # list — only a strictly larger loop can enclose a smaller one.
+    loops.sort(key=lambda loop: loop[0], reverse=True)
+
+    total = 0.0
+    resolved = True
+    for index in range(len(loops)):
+        area, _face, point, box = loops[index]
+        depth = 0
+        for j in range(index):
+            _outer_area, outer_face, _outer_point, outer_box = loops[j]
+            # Bounding-box reject first: on a plate with hundreds of bores each
+            # hole tests against the one enclosing boundary instead of every
+            # larger loop, which keeps this near-linear in practice.
+            if outer_box.IsOut(box):
+                continue
+            try:
+                classifier = BRepClass_FaceClassifier(outer_face, point, 1e-7)
+                if classifier.State() == TopAbs_IN:
+                    depth += 1
+            except Exception:
+                resolved = False
+        total += area if depth % 2 == 0 else -area
+
+    if total < 0.0:
+        # Only subtracting voids left, so the loop that should enclose them
+        # failed to become a face. Report no area rather than negative area —
+        # and unresolved, because a clamped zero is not a measurement either.
+        return 0.0, False
+    return total, resolved
+
+
 def _cross_sections(shape, axis: str = "Z", num_slices: int = 10) -> list:
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Section
-    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
-    from OCP.BRepGProp import BRepGProp
     from OCP.gp import gp_Dir, gp_Pln, gp_Pnt
-    from OCP.GProp import GProp_GProps
     from OCP.ShapeAnalysis import ShapeAnalysis_FreeBounds
     from OCP.TopAbs import TopAbs_EDGE
     from OCP.TopExp import TopExp_Explorer
-    from OCP.TopoDS import TopoDS
     from OCP.TopTools import TopTools_HSequenceOfShape
 
     axis = axis.upper()
@@ -244,20 +337,13 @@ def _cross_sections(shape, axis: str = "Z", num_slices: int = 10) -> list:
         wires = TopTools_HSequenceOfShape()
         ShapeAnalysis_FreeBounds.ConnectEdgesToWires_s(edges, 1e-7, False, wires)
 
-        total_area = 0.0
-        for j in range(1, wires.Length() + 1):
-            wire = TopoDS.Wire_s(wires.Value(j))
-            try:
-                face_maker = BRepBuilderAPI_MakeFace(plane, wire)
-                if face_maker.IsDone():
-                    face = face_maker.Face()
-                    props = GProp_GProps()
-                    BRepGProp.SurfaceProperties_s(face, props)
-                    total_area += abs(props.Mass())
-            except Exception:
-                pass
-
-        results.append({"position": round(pos, 4), "area": round(total_area, 4)})
+        area, resolved = _section_area(plane, wires)
+        record = {"position": round(pos, 4), "area": round(area, 4)}
+        if not resolved:
+            # Only present when the area is not trustworthy, so the ordinary
+            # record keeps its existing two-key shape.
+            record["area_uncertain"] = True
+        results.append(record)
 
     return results
 
