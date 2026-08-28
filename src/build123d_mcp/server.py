@@ -455,6 +455,26 @@ _DRAWING_MOVED = (
 )
 
 
+def _notice_onto_text(text: str) -> str:
+    """Attach the notice without destroying a machine-readable result.
+
+    Three of the six drawing tools return pure JSON — inspect_drawing,
+    lint_drawing and suggest_view_layout. Prefixing prose to those breaks
+    json.loads() for every caller that parses them, and a deprecation must not
+    cost correctness in the releases where the tool still works. A JSON object
+    carries the notice as a leading field instead (a model reads it either way);
+    anything else takes the prose prefix.
+    """
+    if text.lstrip().startswith("{"):
+        try:
+            payload = json.loads(text)
+        except ValueError:
+            return _DRAWING_MOVED + text
+        if isinstance(payload, dict):
+            return json.dumps({"_deprecated": _DRAWING_MOVED.strip(), **payload}, indent=2)
+    return _DRAWING_MOVED + text
+
+
 def _drawing_deprecation(fn):
     """Prefix a drawing tool's RESULT with the move notice.
 
@@ -472,11 +492,11 @@ def _drawing_deprecation(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         result = fn(*args, **kwargs)
-        if isinstance(result, str):
-            return _DRAWING_MOVED + result
         if isinstance(result, list):
             # render_drawing returns marshalled content blocks; lead with the notice.
             return [TextContent(type="text", text=_DRAWING_MOVED), *result]
+        if isinstance(result, str):
+            return _notice_onto_text(result)
         return result
 
     return wrapper

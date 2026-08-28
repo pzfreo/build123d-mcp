@@ -12,6 +12,7 @@ else would tell it).
 """
 
 import inspect
+import json
 
 import pytest
 
@@ -129,3 +130,67 @@ def test_description_notice_stays_terse():
         assert len(notice.encode()) < 160, f"{name}: description notice is {len(notice)}B"
     # The result may be verbose — it is only paid on use.
     assert len(server._DRAWING_MOVED.encode()) > 200
+
+
+# --- the notice must not break machine-readable results ----------------------
+#
+# inspect_drawing, lint_drawing and suggest_view_layout return pure JSON.
+# Prefixing prose to those breaks json.loads() for every caller that parses
+# them, and a deprecation must not cost correctness while the tool still works.
+
+
+def test_json_object_keeps_parsing_and_carries_the_notice():
+    payload = json.dumps({"violations": [], "scale": 1.0}, indent=2)
+    out = server._notice_onto_text(payload)
+    parsed = json.loads(out)  # would raise before the type-aware notice
+    assert parsed["violations"] == []
+    assert parsed["scale"] == 1.0
+    assert "draftwright" in parsed["_deprecated"]
+
+
+def test_notice_is_the_first_key_so_a_model_reads_it_first():
+    out = server._notice_onto_text(json.dumps({"z": 1}))
+    assert next(iter(json.loads(out))) == "_deprecated"
+
+
+def test_prose_result_still_gets_the_prefix():
+    out = server._notice_onto_text("Warning: no annotations registered.")
+    assert out.startswith(server._DRAWING_MOVED)
+    assert out.endswith("Warning: no annotations registered.")
+
+
+def test_malformed_json_falls_back_to_the_prefix():
+    """A truncated or invalid payload must not raise inside the wrapper."""
+    out = server._notice_onto_text('{"unclosed": ')
+    assert out.startswith(server._DRAWING_MOVED)
+
+
+def test_json_array_is_not_given_a_key_it_cannot_hold():
+    out = server._notice_onto_text("[1, 2, 3]")
+    assert out.startswith(server._DRAWING_MOVED)
+
+
+@pytest.mark.parametrize("name", ["inspect_drawing", "lint_drawing", "suggest_view_layout"])
+def test_json_returning_tools_stay_parseable_end_to_end(name):
+    from build123d_mcp.worker import InProcessSession
+
+    session = InProcessSession(exec_timeout=60)
+    server.configure(session)
+    session.execute("from build123d import *")
+    session.execute("show(Box(60, 40, 10), 'b')")
+    calls = {
+        "inspect_drawing": lambda f: f(objects="b"),
+        "lint_drawing": lambda f: f(),
+        "suggest_view_layout": lambda f: f(object_name="b"),
+    }
+    parsed = json.loads(calls[name](getattr(server, name)))
+    assert "_deprecated" in parsed
+    assert len(parsed) > 1, "the payload must survive alongside the notice"
+
+
+def test_no_drawing_tool_is_async():
+    """The wrapper is synchronous; an async tool would return a coroutine and
+    the notice would be silently dropped."""
+    tools = {t.name: t for t in server.mcp._tool_manager.list_tools()}
+    for name in _DRAWING_TOOLS:
+        assert not tools[name].is_async, name
