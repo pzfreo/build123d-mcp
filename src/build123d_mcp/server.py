@@ -1,4 +1,5 @@
 import contextvars
+import functools
 import json
 import sys
 
@@ -27,10 +28,11 @@ register parts with show(part, "name"), measure() after every boolean,
 export() when done. Read the build123d://quickref resource before writing
 build code. Step-by-step workflows: build123d://skill/modeling (build 3D
 parts, incl. from technical drawings), build123d://skill/edit (modify an
-existing model), build123d://skill/drawing (multi-view engineering drawings),
-and build123d://skill/repair (repair a solid that fails the validity gate);
-install any into the project with
-install_skill().
+existing model), and build123d://skill/repair (repair a solid that fails the
+validity gate); install any into the project with install_skill(). Engineering
+drawings have moved to draftwright (https://github.com/pzfreo/draftwright),
+which publishes its own skill; it is importable inside execute(), so a drawing
+is built from live session geometry without leaving the session.
 """
 
 # --- MCP tool annotations (#368) --------------------------------------------- #
@@ -378,7 +380,7 @@ def render_view(
     colors: dict[str, str] | None = None,
     mode: str = "auto",
 ) -> list:
-    """Render model. Auto-detects 3D vs 2D: solids use the VTK tessellation path; 2D shapes (Sketches, edge Compounds, dimensioned drawings) use the ezdxf+matplotlib raster path — review dimensioned drawings the same way as 3D parts. Renders confirm appearance, not geometry — verify booleans with measure() first. format: 'png' (raster, default), 'svg' (HLR line drawing, works without a display), 'dxf' (HLR projection as true CIRCLE/LINE entities for downstream 2D CAD, in model coordinates — arcs exact, not tessellated), or 'both' (PNG + SVG together). If the PNG path fails (headless host), falls back to SVG automatically. direction: top, front, side, iso. azimuth/elevation: camera rotation in degrees applied after the direction preset. objects: comma-separated names or name:color pairs e.g. 'u_frame:blue,roller:red' (default: all, auto-coloured). quality: standard, high. clip_plane: x, y, z to slice; clip_at: absolute world coordinate along that axis (default: each mesh's midpoint). save_to: optional file path; for format='both' writes <save_to>.png and <save_to>.svg. mode: 'auto' (default; no solids + flat in Z = 2D), or '2d'/'3d' to force a pipeline when auto-detection picks wrong (e.g. a Compound mixing a Sketch and a solid routes to 3D); the path used is reported as 'Rendered via <mode> pipeline.' colors: optional dict mapping object names and special layer keys (`_dims`, `_labels`) to colour names or '#aabbcc'; overrides name:color syntax and the default dimension colour (2D PNG/SVG only; ignored for 3D and DXF). label_objects: when true, each named object is labelled at its centroid in the PNG. highlights: optional list of entities to label, e.g. [{"object": "bracket", "type": "edge", "index": 5, "label": "hinge_edge"}]; type is 'face', 'edge', or 'vertex', index matches shape.faces()/edges()/vertices(); the object must be registered with show() and in the rendered set. Labels are PNG-only."""
+    """Render model. Auto-detects 3D vs 2D: solids use the VTK tessellation path; 2D shapes (Sketches, edge Compounds, annotated 2D compounds) use the ezdxf+matplotlib raster path — review 2D output the same way as 3D parts. Renders confirm appearance, not geometry — verify booleans with measure() first. format: 'png' (raster, default), 'svg' (HLR line drawing, works without a display), 'dxf' (HLR projection as true CIRCLE/LINE entities for downstream 2D CAD, in model coordinates — arcs exact, not tessellated), or 'both' (PNG + SVG together). If the PNG path fails (headless host), falls back to SVG automatically. direction: top, front, side, iso. azimuth/elevation: camera rotation in degrees applied after the direction preset. objects: comma-separated names or name:color pairs e.g. 'u_frame:blue,roller:red' (default: all, auto-coloured). quality: standard, high. clip_plane: x, y, z to slice; clip_at: absolute world coordinate along that axis (default: each mesh's midpoint). save_to: optional file path; for format='both' writes <save_to>.png and <save_to>.svg. mode: 'auto' (default; no solids + flat in Z = 2D), or '2d'/'3d' to force a pipeline when auto-detection picks wrong (e.g. a Compound mixing a Sketch and a solid routes to 3D); the path used is reported as 'Rendered via <mode> pipeline.' colors: optional dict mapping object names and special layer keys (`_dims`, `_labels`) to colour names or '#aabbcc'; overrides name:color syntax and the default dimension colour (2D PNG/SVG only; ignored for 3D and DXF). label_objects: when true, each named object is labelled at its centroid in the PNG. highlights: optional list of entities to label, e.g. [{"object": "bracket", "type": "edge", "index": 5, "label": "hinge_edge"}]; type is 'face', 'edge', or 'vertex', index matches shape.faces()/edges()/vertices(); the object must be registered with show() and in the rendered set. Labels are PNG-only."""
     result = _resolve_session().render_view(
         direction=direction,
         objects=objects,
@@ -438,6 +440,66 @@ def verify_spec(spec: str = "", spec_path: str = "", object_name: str = "") -> s
 def suggest_spec(object_name: str = "") -> str:
     """Draft a starter design-intent spec from the current (or named) shape, so you can edit detected values instead of authoring a verify_spec spec from scratch. Introspects the shape with the same primitives verify_spec checks against — bounding box (→ envelope_mm), the validity gate (→ solid), volume, feature recognition (→ hole/hole_pattern/boss features), and top-level numeric parameters — and returns JSON {spec, note}. The `spec` describes what was BUILT (envelope/volume use a ±2% band, parameters ±10% — editable defaults); review and edit each value against your intended drawing, then pass the `spec` object to verify_spec(). NOT captured: absolute positions, and cosmetic/other features (fillets, chamfers, pockets, ribs) the recognizers don't cover — add those manually. object_name: named object from show() (default: current shape)."""
     return _resolve_session().suggest_spec(object_name)
+
+
+# --- drawing deprecation (#465) ---------------------------------------------
+#
+# The drawing tools are moving to draftwright, which owns drawing generation and
+# publishes its own skill. They still work; this phase only announces the move.
+_DRAWING_MOVED = (
+    "NOTE — this drawing tool is DEPRECATED and moves to draftwright "
+    "(https://github.com/pzfreo/draftwright): off by default from 0.4.0, removed in 0.5.0 "
+    "(#465). draftwright is already importable inside execute(), so a drawing can be built "
+    "from live session geometry without leaving the session:\n"
+    '  execute("from draftwright import make_drawing; d = make_drawing(part)")\n'
+)
+
+
+def _notice_onto_text(text: str) -> str:
+    """Attach the notice without destroying a machine-readable result.
+
+    Three of the six drawing tools return pure JSON — inspect_drawing,
+    lint_drawing and suggest_view_layout. Prefixing prose to those breaks
+    json.loads() for every caller that parses them, and a deprecation must not
+    cost correctness in the releases where the tool still works. A JSON object
+    carries the notice as a leading field instead (a model reads it either way);
+    anything else takes the prose prefix.
+    """
+    if text.lstrip().startswith("{"):
+        try:
+            payload = json.loads(text)
+        except ValueError:
+            return _DRAWING_MOVED + text
+        if isinstance(payload, dict):
+            return json.dumps({"_deprecated": _DRAWING_MOVED.strip(), **payload}, indent=2)
+    return _DRAWING_MOVED + text
+
+
+def _drawing_deprecation(fn):
+    """Prefix a drawing tool's RESULT with the move notice.
+
+    The description reaches a client once, at connect. An agent already mid-session
+    holds the tool in its context and never re-reads it — and because these tools
+    keep working, nothing else would tell it either. The result is the only channel
+    that reaches that caller, which is why the notice goes here as well as in the
+    description rather than instead of it.
+
+    Applied UNDER @mcp.tool so the registered callable is the wrapper; functools.wraps
+    carries the docstring and signature through, so the advertised description and
+    input schema are unchanged.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        result = fn(*args, **kwargs)
+        if isinstance(result, list):
+            # render_drawing returns marshalled content blocks; lead with the notice.
+            return [TextContent(type="text", text=_DRAWING_MOVED), *result]
+        if isinstance(result, str):
+            return _notice_onto_text(result)
+        return result
+
+    return wrapper
 
 
 def register_experimental_tools() -> None:
@@ -568,8 +630,9 @@ def export(filename: str, format: str = "step", object_name: str = "") -> str:
 
 
 @mcp.tool(annotations=_READ_ONLY)
+@_drawing_deprecation
 def inspect_drawing(objects: str = "", svg_path: str = "") -> str:
-    """Structured bbox and annotation report for a 2D drawing.
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Structured bbox and annotation report for a 2D drawing.
 
     Two modes:
 
@@ -603,12 +666,13 @@ def inspect_drawing(objects: str = "", svg_path: str = "") -> str:
 
 
 @mcp.tool(annotations=_READ_ONLY)
+@_drawing_deprecation
 def view_axes(
     viewport_origin: list[float],
     viewport_up: list[float] | None = None,
     look_at: list[float] | None = None,
 ) -> str:
-    """Return the world→page axis mapping for a project_to_viewport call,
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Return the world→page axis mapping for a project_to_viewport call,
     computed analytically (no projection performed). Use this BEFORE rendering
     a projected view to confirm which world axis ends up on which page axis
     and with what sign — catches bottom-view/side-view axis swaps before they
@@ -631,12 +695,13 @@ def view_axes(
 
 
 @mcp.tool(annotations=_READ_ONLY)
+@_drawing_deprecation
 def lint_drawing(
     svg_path: str = "",
     drawing_scale: float = 1.0,
     view_shape_names: list[str] | None = None,
 ) -> str:
-    """Run structural drawing-quality checks and return JSON {violations: [...]}.
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Run structural drawing-quality checks and return JSON {violations: [...]}.
 
     Session mode (default): reconstructs the session's annotations and delegates
     to build123d-drafting-helpers (lint_drawing + find_interferences) — single
@@ -669,8 +734,9 @@ def lint_drawing(
 
 
 @mcp.tool(annotations=_READ_ONLY)
+@_drawing_deprecation
 def render_drawing(svg_path: str, width: int = 1200, save_to: str = "") -> list:
-    """Rasterise an existing SVG file to PNG via resvg-py.
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Rasterise an existing SVG file to PNG via resvg-py.
 
     Complements render_view (which takes build123d shapes from the live
     session) by accepting an SVG written outside the sandbox — typically by
@@ -689,8 +755,9 @@ def render_drawing(svg_path: str, width: int = 1200, save_to: str = "") -> list:
 
 
 @mcp.tool(annotations=_MUTATING)
+@_drawing_deprecation
 def save_drawing_annotations(svg_path: str) -> str:
-    """Write a .dims.json sidecar file alongside an SVG with label metadata.
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Write a .dims.json sidecar file alongside an SVG with label metadata.
 
     build123d renders Text as filled glyph paths, not <text> SVG elements, so
     label strings are irrecoverable from a finished SVG. Call this tool after
@@ -1019,9 +1086,9 @@ BUILD123D-MCP WORKFLOW GUIDE
    ezdxf+matplotlib path), and ship it with export(name, "dxf").
 
    Two cookbooks for two audiences:
-   - build123d://drafting — engineering drawings for fabrication: tolerance
-     dims, TechnicalDrawing title block, multi-view sheets, hole tables.
-     Two-colour output (black part + blue dims).
+   - build123d://drafting — DEPRECATED (#465). Engineering drawings have moved to
+     draftwright (https://github.com/pzfreo/draftwright), which owns generation
+     and publishes its own skill.
    - build123d://presentation — design-discussion diagrams: per-group colour
      via ExportSVG layers, filled feature highlights, legends, reference
      axes, Draft scaling for small parts. Multi-colour SVG, run from a
@@ -1033,10 +1100,13 @@ BUILD123D-MCP WORKFLOW GUIDE
    default line_width=0.5 and arrow_length=3.0 make witness lines render as
    thick filled rectangles. Override every parameter, not just font_size.
 
-   For a guided multi-view drawing workflow (choose views, scale/page size,
-   annotate, lint, export SVG/DXF/PDF), call install_skill() to write a
-   step-by-step skill file into the current project, or read the skill directly
-   from the build123d://skill/drawing resource.
+   For a multi-view engineering drawing, use draftwright
+   (https://github.com/pzfreo/draftwright) — it owns drawing generation and
+   publishes its own skill. It is importable inside execute(), so the drawing is
+   built from live session geometry rather than an exported file:
+       execute("from draftwright import make_drawing; d = make_drawing(part)")
+   This server's drawing tools are deprecated: off by default from 0.4.0,
+   removed in 0.5.0 (#465).
 
 11. IMPORTING EXTERNAL FILES
    After import_cad_file(), the shape is a named object — use render_view(objects="name")
@@ -1088,7 +1158,7 @@ def build123d_selectors_cookbook() -> str:
 @mcp.resource(
     "build123d://drafting",
     mime_type="text/plain",
-    description="Code-first 2D engineering drawings cookbook: project a 3D part to a 2D view, dimension with ExtensionLine/DimensionLine, add tolerances, compose a TechnicalDrawing title block, multi-view sheet layout, hole-table pattern, export to DXF/SVG.",
+    description="DEPRECATED (#465) — moving to draftwright (https://github.com/pzfreo/draftwright), which owns drawing generation and publishes its own skill; importable inside execute(). Code-first 2D engineering drawings cookbook: project a 3D part to a 2D view, dimension with ExtensionLine/DimensionLine, add tolerances, compose a TechnicalDrawing title block, multi-view sheet layout, hole-table pattern, export to DXF/SVG.",
 )
 def build123d_drafting_cookbook() -> str:
     """build123d 2D drafting cookbook — code-first engineering drawings."""
@@ -1100,7 +1170,7 @@ def build123d_drafting_cookbook() -> str:
 @mcp.resource(
     "build123d://drafting-api",
     mime_type="text/plain",
-    description="Auto-generated API reference for build123d-drafting-helpers: exact signatures and one-line descriptions for every public class (Dimension, Leader, TitleBlock, Drawing, ...) and function, generated from the installed library so it always matches what execute() imports.",
+    description="DEPRECATED (#465) — moving to draftwright (https://github.com/pzfreo/draftwright), which owns drawing generation and publishes its own skill; importable inside execute(). Auto-generated API reference for build123d-drafting-helpers: exact signatures and one-line descriptions for every public class (Dimension, Leader, TitleBlock, Drawing, ...) and function, generated from the installed library so it always matches what execute() imports.",
 )
 def build123d_drafting_api() -> str:
     """build123d-drafting-helpers API reference — generated from the installed library."""
@@ -1110,7 +1180,7 @@ def build123d_drafting_api() -> str:
 @mcp.resource(
     "build123d://presentation",
     mime_type="text/plain",
-    description="Code-first design-discussion diagrams: per-group colour via ExportSVG layers, filled feature highlights, legends with swatches, reference axes, titles, and Draft scaling for small parts. Sister cookbook to build123d://drafting (which targets fabrication handoff).",
+    description="Code-first design-discussion diagrams: per-group colour via ExportSVG layers, filled feature highlights, legends with swatches, reference axes, titles, and Draft scaling for small parts. Presentation diagrams are NOT engineering drawings and are unaffected by the drawing deprecation (#465); this resource stays.",
 )
 def build123d_presentation_cookbook() -> str:
     """build123d presentation cookbook — discussion diagrams (vs drafting's fab drawings)."""
@@ -1142,6 +1212,7 @@ def build123d_bd_warehouse() -> str:
 
 
 @mcp.tool(annotations=_READ_ONLY)
+@_drawing_deprecation
 def suggest_view_layout(
     object_name: str = "",
     page_w: float = 297.0,
@@ -1154,7 +1225,7 @@ def suggest_view_layout(
     extents: list[float] | None = None,
     centroid: list[float] | None = None,
 ) -> str:
-    """Auto-calculate safe VIEW_X / VIEW_Y positions for a multi-view engineering drawing.
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Auto-calculate safe VIEW_X / VIEW_Y positions for a multi-view engineering drawing.
 
     Measures the named shape's bounding box and returns per-view page positions
     (VIEW_X, VIEW_Y), look_at values, and camera/up vectors for a standard
@@ -1204,7 +1275,7 @@ def suggest_view_layout(
 @mcp.resource(
     "build123d://skill/drawing",
     mime_type="text/plain",
-    description="The b123d-drawing engineering workflow skill: step-by-step guide for creating multi-view engineering drawings from build123d geometry (views, scale, annotation, lint, SVG/DXF/PDF export).",
+    description="DEPRECATED (#465) — moving to draftwright (https://github.com/pzfreo/draftwright), which owns drawing generation and publishes its own skill; importable inside execute(). The b123d-drawing engineering workflow skill: step-by-step guide for creating multi-view engineering drawings from build123d geometry (views, scale, annotation, lint, SVG/DXF/PDF export).",
 )
 def build123d_drawing_skill() -> str:
     """b123d-drawing engineering workflow skill."""
@@ -1250,14 +1321,15 @@ def build123d_repair_skill() -> str:
 
 
 @mcp.tool(annotations=_MUTATING)
-def install_skill(target: str = "claude", force: bool = False, skill: str = "drawing") -> str:
+def install_skill(target: str = "claude", force: bool = False, skill: str = "modeling") -> str:
     """Copy a b123d workflow skill into the current project.
 
     Writes the appropriate config file for the requested agent so the
     step-by-step workflow is available in future sessions.
 
-    skill: which workflow to install (default "drawing")
-      - drawing   → multi-view engineering drawings from build123d geometry
+    skill: which workflow to install (default "modeling")
+      - drawing   → DEPRECATED; still installs, but drawing generation has moved to
+                    draftwright, which publishes its own skill (#465)
       - modeling  → build 3D parts/assemblies (incl. from technical drawings)
       - edit      → modify existing build123d code and verify geometry deltas
       - repair    → repair a solid that fails the validity gate
@@ -1302,7 +1374,7 @@ Workflow:
    .move() — the relationship survives later changes. See build123d://quickref for examples.
 9. When complete: export("part", "step,stl").
 10. For 2D drawings, two cookbooks for two audiences:
-   - build123d://drafting   — engineering drawings for fabrication handoff.
+   - build123d://drafting   — DEPRECATED (#465); drawings moved to draftwright.
    - build123d://presentation — design-discussion diagrams (per-group colour,
      filled features, legends, axes, titles). Read this when the audience is
      a human reviewing a design rather than a fabricator.
