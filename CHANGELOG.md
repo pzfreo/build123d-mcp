@@ -27,8 +27,12 @@
   a single aggregate centre with no way to tell how many entities matched — that
   aggregate was itself offset, because `ShapeList.center()` takes no `CenterOf`
   argument; it is now averaged from the corrected per-entity centres, so the list
-  and its entities cannot disagree. New `geom_type` field on every descriptor
-  (#456).
+  and its entities cannot disagree — and averaged over *every* match, not just
+  the first 50 detailed, so a truncated list still reports a whole aggregate. A
+  sphere carries neither axis nor normal, since every axis through its centre is
+  an axis of rotation and naming one would be as arbitrary as a cylinder's
+  normal; its centre and radius already say everything. New `geom_type` field on
+  every descriptor (#456).
 
 - **`validate()` distinguishes interpenetrating solids from disjoint ones.** The
   gate branched on the solid *count* alone, so two overlapping bodies and two

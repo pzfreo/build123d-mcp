@@ -29,7 +29,7 @@ def _entity_center(shape):
     from build123d import CenterOf, GeomType
     from build123d import Edge as _Edge
 
-    if isinstance(shape, _Edge) and shape.geom_type == GeomType.CIRCLE:
+    if isinstance(shape, _Edge) and shape.geom_type in (GeomType.CIRCLE, GeomType.ELLIPSE):
         return shape.arc_center
     try:
         return shape.center(CenterOf.MASS)
@@ -70,7 +70,11 @@ def _describe(result) -> dict:
             # report the surface's axis instead where it has one — that is also the
             # value a caller wants for a mating axis or a hole callout.
             try:
-                axis = result.axis_of_rotation
+                # A sphere has no distinguished axis — every axis through its
+                # centre is one, so reporting the parametrisation's +Z would be
+                # the same kind of arbitrary answer as a cylinder's "normal".
+                # Its centre and radius already say everything.
+                axis = None if result.geom_type == GeomType.SPHERE else result.axis_of_rotation
                 if axis is not None:
                     out["axis"] = {
                         "origin": _xyz(axis.position),
@@ -97,6 +101,19 @@ def _describe(result) -> dict:
         # count, no per-entity data and no area, so there was no way to tell how
         # many entities matched (#456).
         out["count"] = len(result)
+        # Averaged from the corrected per-entity centres, so the aggregate and the
+        # individual descriptors cannot disagree — and over EVERY entity, not just
+        # the ones detailed below, since a centre taken from the first 50 of 121
+        # would be a sample presented as the whole.
+        centers = []
+        for item in result:
+            try:
+                centers.append(_xyz(_entity_center(item)))
+            except Exception:
+                centers = []
+                break
+        if centers:
+            out["center"] = [round(sum(c[i] for c in centers) / len(centers), 6) for i in range(3)]
         entities = []
         for item in result[:_MAX_LIST_ENTITIES]:
             try:
@@ -107,13 +124,6 @@ def _describe(result) -> dict:
             out["entities"] = entities
             if len(result) > _MAX_LIST_ENTITIES:
                 out["entities_truncated"] = True
-            centers = [e["center"] for e in entities if "center" in e]
-            # Averaged from the corrected per-entity centres, so the aggregate and
-            # the individual descriptors cannot disagree.
-            if centers and len(centers) == len(result):
-                out["center"] = [
-                    round(sum(c[i] for c in centers) / len(centers), 6) for i in range(3)
-                ]
         return out
 
     try:
