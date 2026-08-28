@@ -612,7 +612,7 @@ def export(filename: str, format: str = "step", object_name: str = "") -> str:
 @mcp.tool(annotations=_READ_ONLY)
 @_drawing_deprecation
 def inspect_drawing(objects: str = "", svg_path: str = "") -> str:
-    """DEPRECATED — engineering-drawing generation is moving to draftwright (https://github.com/pzfreo/draftwright), which owns it and publishes its own skill; `draftwright` is already importable inside execute(), so a drawing can be produced from live session geometry without leaving the session. This tool is off by default from 0.4.0 and removed in 0.5.0 (#465). Structured bbox and annotation report for a 2D drawing.
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Structured bbox and annotation report for a 2D drawing.
 
     Two modes:
 
@@ -652,7 +652,7 @@ def view_axes(
     viewport_up: list[float] | None = None,
     look_at: list[float] | None = None,
 ) -> str:
-    """DEPRECATED — engineering-drawing generation is moving to draftwright (https://github.com/pzfreo/draftwright), which owns it and publishes its own skill; `draftwright` is already importable inside execute(), so a drawing can be produced from live session geometry without leaving the session. This tool is off by default from 0.4.0 and removed in 0.5.0 (#465). Return the world→page axis mapping for a project_to_viewport call,
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Return the world→page axis mapping for a project_to_viewport call,
     computed analytically (no projection performed). Use this BEFORE rendering
     a projected view to confirm which world axis ends up on which page axis
     and with what sign — catches bottom-view/side-view axis swaps before they
@@ -681,7 +681,7 @@ def lint_drawing(
     drawing_scale: float = 1.0,
     view_shape_names: list[str] | None = None,
 ) -> str:
-    """DEPRECATED — engineering-drawing generation is moving to draftwright (https://github.com/pzfreo/draftwright), which owns it and publishes its own skill; `draftwright` is already importable inside execute(), so a drawing can be produced from live session geometry without leaving the session. This tool is off by default from 0.4.0 and removed in 0.5.0 (#465). Run structural drawing-quality checks and return JSON {violations: [...]}.
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Run structural drawing-quality checks and return JSON {violations: [...]}.
 
     Session mode (default): reconstructs the session's annotations and delegates
     to build123d-drafting-helpers (lint_drawing + find_interferences) — single
@@ -716,7 +716,7 @@ def lint_drawing(
 @mcp.tool(annotations=_READ_ONLY)
 @_drawing_deprecation
 def render_drawing(svg_path: str, width: int = 1200, save_to: str = "") -> list:
-    """DEPRECATED — engineering-drawing generation is moving to draftwright (https://github.com/pzfreo/draftwright), which owns it and publishes its own skill; `draftwright` is already importable inside execute(), so a drawing can be produced from live session geometry without leaving the session. This tool is off by default from 0.4.0 and removed in 0.5.0 (#465). Rasterise an existing SVG file to PNG via resvg-py.
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Rasterise an existing SVG file to PNG via resvg-py.
 
     Complements render_view (which takes build123d shapes from the live
     session) by accepting an SVG written outside the sandbox — typically by
@@ -737,7 +737,7 @@ def render_drawing(svg_path: str, width: int = 1200, save_to: str = "") -> list:
 @mcp.tool(annotations=_MUTATING)
 @_drawing_deprecation
 def save_drawing_annotations(svg_path: str) -> str:
-    """DEPRECATED — engineering-drawing generation is moving to draftwright (https://github.com/pzfreo/draftwright), which owns it and publishes its own skill; `draftwright` is already importable inside execute(), so a drawing can be produced from live session geometry without leaving the session. This tool is off by default from 0.4.0 and removed in 0.5.0 (#465). Write a .dims.json sidecar file alongside an SVG with label metadata.
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Write a .dims.json sidecar file alongside an SVG with label metadata.
 
     build123d renders Text as filled glyph paths, not <text> SVG elements, so
     label strings are irrecoverable from a finished SVG. Call this tool after
@@ -1205,7 +1205,7 @@ def suggest_view_layout(
     extents: list[float] | None = None,
     centroid: list[float] | None = None,
 ) -> str:
-    """DEPRECATED — engineering-drawing generation is moving to draftwright (https://github.com/pzfreo/draftwright), which owns it and publishes its own skill; `draftwright` is already importable inside execute(), so a drawing can be produced from live session geometry without leaving the session. This tool is off by default from 0.4.0 and removed in 0.5.0 (#465). Auto-calculate safe VIEW_X / VIEW_Y positions for a multi-view engineering drawing.
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Auto-calculate safe VIEW_X / VIEW_Y positions for a multi-view engineering drawing.
 
     Measures the named shape's bounding box and returns per-view page positions
     (VIEW_X, VIEW_Y), look_at values, and camera/up vectors for a standard

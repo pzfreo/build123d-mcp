@@ -115,3 +115,17 @@ def test_draftwright_is_importable_inside_execute():
     from build123d_mcp.security import IMPORT_ALLOWLIST
 
     assert "draftwright" in IMPORT_ALLOWLIST
+
+
+def test_description_notice_stays_terse():
+    """The description is paid by EVERY client on EVERY connect, including ones
+    that never touch drawing. The full explanation belongs in the result, which
+    is paid only by a caller who actually used the tool. Making a deprecated
+    tool more expensive to ignore than it was to keep is the wrong trade."""
+    for name in _DRAWING_TOOLS:
+        doc = inspect.getdoc(getattr(server, name)) or ""
+        first = doc.split("\n", 1)[0]
+        notice = first[: first.index("0.5.0") + len("0.5.0.")]
+        assert len(notice.encode()) < 160, f"{name}: description notice is {len(notice)}B"
+    # The result may be verbose — it is only paid on use.
+    assert len(server._DRAWING_MOVED.encode()) > 200
