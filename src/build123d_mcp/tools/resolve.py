@@ -39,6 +39,51 @@ def _entity_center(shape):
         return shape.center()
 
 
+def _axis_of(face):
+    """The surface's axis of rotation, or None if it has none worth naming.
+
+    build123d 0.10 returns None from ``axis_of_rotation`` for a CONE while 0.11
+    answers it, and the server supports both. Falling back to the OCP adaptor
+    (the idiom the countersink recogniser already uses) keeps the descriptor the
+    same on either version — an agent should not get different fields depending
+    on which build123d is installed.
+
+    A sphere is excluded deliberately: every axis through its centre is an axis
+    of rotation, so naming the parametrisation's +Z would be the same arbitrary
+    answer as a curved face's "normal".
+    """
+    from build123d import GeomType
+
+    if face.geom_type == GeomType.SPHERE:
+        return None
+    try:
+        axis = face.axis_of_rotation
+    except Exception:
+        axis = None
+    if axis is not None:
+        return _xyz(axis.position), _xyz(axis.direction)
+
+    try:
+        from OCP.BRepAdaptor import BRepAdaptor_Surface
+
+        adaptor = BRepAdaptor_Surface(face.wrapped)
+        surface = {
+            GeomType.CYLINDER: adaptor.Cylinder,
+            GeomType.CONE: adaptor.Cone,
+            GeomType.TORUS: adaptor.Torus,
+        }.get(face.geom_type)
+        if surface is None:
+            return None
+        occ_axis = surface().Axis()
+        loc, direction = occ_axis.Location(), occ_axis.Direction()
+        return (
+            [round(loc.X(), 6), round(loc.Y(), 6), round(loc.Z(), 6)],
+            [round(direction.X(), 6), round(direction.Y(), 6), round(direction.Z(), 6)],
+        )
+    except Exception:
+        return None
+
+
 def _radius_of(shape):
     try:
         radius = shape.radius
@@ -69,19 +114,9 @@ def _describe(result) -> dict:
             # surface point, which reads as though it described the whole face, so
             # report the surface's axis instead where it has one — that is also the
             # value a caller wants for a mating axis or a hole callout.
-            try:
-                # A sphere has no distinguished axis — every axis through its
-                # centre is one, so reporting the parametrisation's +Z would be
-                # the same kind of arbitrary answer as a cylinder's "normal".
-                # Its centre and radius already say everything.
-                axis = None if result.geom_type == GeomType.SPHERE else result.axis_of_rotation
-                if axis is not None:
-                    out["axis"] = {
-                        "origin": _xyz(axis.position),
-                        "direction": _xyz(axis.direction),
-                    }
-            except Exception:
-                pass
+            axis = _axis_of(result)
+            if axis is not None:
+                out["axis"] = {"origin": axis[0], "direction": axis[1]}
             radius = _radius_of(result)
             if radius is not None:
                 out["radius"] = radius
