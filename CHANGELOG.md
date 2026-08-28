@@ -21,6 +21,12 @@
   `install_skill()`'s default changes from `drawing` to `modeling`; the drawing
   skill still installs, with the notice on its status line.
 
+  **If you parse these tools' output:** `inspect_drawing`, `lint_drawing` and
+  `suggest_view_layout` return JSON, and their notice is carried as a leading
+  `_deprecated` field rather than as a text prefix, so `json.loads()` keeps
+  working. The prose-returning tools take a text prefix, and `render_drawing`'s
+  content blocks lead with a text block.
+
   Planned: off by default in 0.4.0 (opt back in by tool group), removed in 0.5.0.
   `render_view` is NOT affected in any format — it is model rendering, not drawing,
   and its 2D pipeline for Sketches stays (#465).
