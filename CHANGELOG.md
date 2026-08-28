@@ -4,6 +4,25 @@
 
 ### Fixed
 
+- **`render_view` DXF/SVG projections are anchored at the world origin, not the
+  part centroid.** `project_to_viewport` returns 2D coordinates relative to its
+  `look_at` point, and that point was an aggregate of `shape.center()` — so every
+  written coordinate was displaced by the centre of mass. The shape was exact and
+  every radius and span correct; only the origin moved. That made it silent
+  (nothing in the output said the coordinates were relative), part-dependent (the
+  offset scales with asymmetry, so it could not be corrected once and forgotten),
+  and invisible to inspection until the file was placed against other geometry.
+  For a format whose purpose is fabrication handoff, model-absolute coordinates
+  are the contract. Safe to change because the HLR projection is parallel: moving
+  the camera along the view direction changes only where the 2D origin sits,
+  never the projected shape — verified with the part 1e6 mm off-origin and across
+  a 10,000x range of camera distance. SVG shares the helper and gains the same
+  fix; `ExportSVG` auto-fits with a margin, so its appearance is unchanged.
+
+  Also corrects the tool description: DXF is emitted as true `CIRCLE` and `LINE`
+  entities — arcs exact rather than tessellated — not the "parseable polylines"
+  the docs claimed in three places (#455).
+
 - **`resolve()` reports an entity's centre, not a point on it.** build123d's
   default `.center()` is `CenterOf.GEOMETRY`, the parametric midpoint — which on
   a closed curve or a cylindrical surface lies *on* the entity, a full radius

@@ -461,7 +461,7 @@ save_snapshot("before")            # cheap; geometry-only
 execute("plate = plate - Cylinder(2, 5).move(Location((10, 0, 0)))")
 clearance("hole_proxy", "plate")   # check wall thickness, piercing, etc.
 cross_sections(plate, axis="Z")    # see internal voids at each Z
-render_view(format="dxf")          # geometry as parseable polylines, not a redraw
+render_view(format="dxf")          # geometry as true CIRCLE/LINE entities in model coords, not a redraw
 restore_snapshot("before")          # canonical model untouched
 ```
 
