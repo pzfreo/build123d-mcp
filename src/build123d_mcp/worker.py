@@ -400,6 +400,10 @@ class WorkerSession:
     # alternative constructor would hit the same trap).
     _closed: bool = False
 
+    # Same reason: the timeout path reads this, and it must not blow up on an
+    # instance built via __new__.
+    _consecutive_timeouts: int = 0
+
     def __init__(
         self,
         exec_timeout: int = 120,
@@ -445,6 +449,14 @@ class WorkerSession:
         # process by design (crash recovery), which for a deliberately evicted
         # session would undo the eviction and leak the subprocess back.
         self._closed = False
+        # Consecutive op timeouts, reset by any successful reply. A host that
+        # blocks the worker from spawning helper subprocesses fails EVERY op that
+        # shells out — render_view, health_check, the bounded geometry ops — and
+        # each one burns its whole budget, so the timeouts arrive back to back
+        # (#452). A genuinely slow boolean times out once and then succeeds when
+        # retried smaller. The count is what separates the two, and it is only
+        # touched from _do_call, which runs under the lock. (#322)
+        self._consecutive_timeouts = 0
         self._start_worker()
 
     @property
@@ -684,6 +696,30 @@ class WorkerSession:
                 )
             return self._do_call(op, args, timeout)
 
+    def _spawn_block_hint(self) -> str:
+        """Point at --in-process once timeouts start repeating.
+
+        An MCP host that prevents the worker from creating grandchild processes
+        makes every op that shells out hang until its budget expires, rather than
+        failing fast: render_view and health_check always, plus the bounded
+        geometry ops (#452, and #143 before it). The symptom is indistinguishable
+        from slow geometry on the FIRST timeout, which is why this stays quiet
+        then — telling someone whose fillet is genuinely too big to switch modes
+        would be wrong, and the degraded mode costs crash containment and op
+        timeouts. Two in a row is no longer plausibly slow geometry.
+        """
+        if self._consecutive_timeouts < 2:
+            return ""
+        return (
+            f" This is timeout {self._consecutive_timeouts} in a row. If they persist across "
+            "different operations — especially render_view or health_check, and especially on "
+            "Windows or a sandboxed MCP host — the worker may be unable to spawn the helper "
+            "subprocesses those ops need, in which case each one hangs until its budget expires "
+            "rather than failing. Relaunch with --in-process or BUILD123D_IN_PROCESS=1 to run "
+            "without them; the import sandbox still applies, but that mode has no crash "
+            "containment and no operation timeouts."
+        )
+
     def _do_call(self, op: str, args: dict, timeout: int) -> Any:
         if not self._proc.is_alive():
             restored, n = self._restart_and_replay()
@@ -697,6 +733,7 @@ class WorkerSession:
             self._kill_worker()
             restored, n = self._restart_and_replay()
             detail = self._recovery_detail(restored, n)
+            self._consecutive_timeouts += 1
             from build123d_mcp.security import ExecutionTimeout
 
             if op == "execute":
@@ -712,9 +749,11 @@ class WorkerSession:
                     f"result."
                 )
             raise RuntimeError(
-                f"Operation '{op}' timed out after {timeout}s; the worker was restarted — {detail}."
+                f"Operation '{op}' timed out after {timeout}s; the worker was restarted — "
+                f"{detail}.{self._spawn_block_hint()}"
             )
 
+        self._consecutive_timeouts = 0
         try:
             response = self._conn.recv()
         except EOFError:

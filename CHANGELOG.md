@@ -4,6 +4,22 @@
 
 ### Fixed
 
+- **Repeated operation timeouts now point at `--in-process`.** An MCP host that
+  prevents the worker from creating grandchild processes makes every op that
+  shells out hang until its budget expires rather than failing — `render_view`
+  and `health_check` always, plus the bounded geometry ops. The only places
+  naming the `--in-process` escape hatch were the worker *start* failures, so a
+  user hitting this burned the full budget per call (150 s for a render) with no
+  pointer to the workaround that fixes it completely.
+
+  The op-timeout message now names it, but only from the second consecutive
+  timeout: one slow boolean is indistinguishable from a blocked spawn, and that
+  mode costs crash containment and operation timeouts, so recommending it on a
+  single timeout would be wrong. The counter resets on any successful call.
+  `execute()` keeps its own guidance (smaller steps, `--exec-timeout`) and is not
+  redirected. This does not diagnose the underlying spawn failure — see #452,
+  which is still open (#452).
+
 - **`render_view` DXF/SVG projections are anchored at the world origin, not the
   part centroid.** `project_to_viewport` returns 2D coordinates relative to its
   `look_at` point, and that point was an aggregate of `shape.center()` — so every
