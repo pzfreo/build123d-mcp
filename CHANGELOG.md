@@ -4,6 +4,36 @@
 
 ### Fixed
 
+- **`resolve()` reports an entity's centre, not a point on it.** build123d's
+  default `.center()` is `CenterOf.GEOMETRY`, the parametric midpoint — which on
+  a closed curve or a cylindrical surface lies *on* the entity, a full radius
+  from the axis. So `resolve()` located a Ø4.5 hole's wall at `(24.25, 12, 5)`
+  instead of `(22, 12, 5)`, and its rim edge a radius off in the same way, while
+  planar faces were correct, which is what made it easy to miss. `resolve()` is
+  the natural tool for locating an entity in order to act on it — a hole callout,
+  a mating axis, a joint position — so each of those was silently off by the
+  radius. Circular edges now use the arc centre and everything else the area/mass
+  centroid; the recogniser family (`find_holes()` et al.) already reported true
+  axes, and a test now pins the two to agree.
+
+  Three related fixes in the same output. A curved face no longer reports a
+  `normal` — a cylinder has no single normal, and `normal_at()` answers for one
+  surface point while reading as though it described the face; it now carries the
+  surface `axis` and `radius` instead, which is what a mating axis or a callout
+  actually needs. That also covers the partial-cylinder case the centre alone
+  cannot: on a fillet the area centroid genuinely lies on the patch, so the axis
+  field is the only thing that locates it. And a list-valued selector now reports
+  its `count` and per-entity descriptors (capped at 50) rather than collapsing to
+  a single aggregate centre with no way to tell how many entities matched — that
+  aggregate was itself offset, because `ShapeList.center()` takes no `CenterOf`
+  argument; it is now averaged from the corrected per-entity centres, so the list
+  and its entities cannot disagree — and averaged over *every* match, not just
+  the first 50 detailed, so a truncated list still reports a whole aggregate. A
+  sphere carries neither axis nor normal, since every axis through its centre is
+  an axis of rotation and naming one would be as arbitrary as a cylinder's
+  normal; its centre and radius already say everything. New `geom_type` field on
+  every descriptor (#456).
+
 - **`validate()` distinguishes interpenetrating solids from disjoint ones.** The
   gate branched on the solid *count* alone, so two overlapping bodies and two
   genuinely separate ones produced byte-identical reports — same `passes_gate`,
