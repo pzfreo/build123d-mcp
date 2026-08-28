@@ -2,6 +2,29 @@
 
 ## v0.3.83
 
+### Changed
+
+- **The engineering-drawing tools are deprecated.** Drawing generation has moved
+  to [draftwright](https://github.com/pzfreo/draftwright), which owns it and
+  publishes its own agent skill; this server will stop carrying a second
+  implementation. `draftwright` is already in the `execute()` import allowlist,
+  so a drawing is built from live session geometry without exporting first —
+  `execute("from draftwright import make_drawing; d = make_drawing(part)")` — and
+  the in-session feedback loop is preserved.
+
+  This release only **announces** it: `inspect_drawing`, `view_axes`,
+  `lint_drawing`, `render_drawing`, `save_drawing_annotations` and
+  `suggest_view_layout` all still work and are still registered by default. The
+  notice appears in each tool's description *and* in its returned text — the
+  description reaches a client once at connect, while an agent already mid-session
+  holds the tool in context and would otherwise never learn the tool had moved.
+  `install_skill()`'s default changes from `drawing` to `modeling`; the drawing
+  skill still installs, with the notice on its status line.
+
+  Planned: off by default in 0.4.0 (opt back in by tool group), removed in 0.5.0.
+  `render_view` is NOT affected in any format — it is model rendering, not drawing,
+  and its 2D pipeline for Sketches stays (#465).
+
 ### Fixed
 
 - **Repeated operation timeouts now point at `--in-process`.** An MCP host that
