@@ -1,10 +1,15 @@
 # build123d-mcp
 
 [![PyPI version](https://img.shields.io/pypi/v/build123d-mcp)](https://pypi.org/project/build123d-mcp/)
+[![Downloads](https://img.shields.io/pypi/dm/build123d-mcp)](https://pypistats.org/packages/build123d-mcp)
 [![Python](https://img.shields.io/pypi/pyversions/build123d-mcp)](https://pypi.org/project/build123d-mcp/)
 [![CI](https://github.com/pzfreo/build123d-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/pzfreo/build123d-mcp/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.pzfreo%2Fbuild123d--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=build123d)
 [![build123d-mcp MCP server](https://glama.ai/mcp/servers/pzfreo/build123d-mcp/badges/score.svg)](https://glama.ai/mcp/servers/pzfreo/build123d-mcp)
+
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_server-0098FF?logo=visualstudiocode)](https://insiders.vscode.dev/redirect/mcp/install?name=build123d-mcp&config=%7B%22command%22%3A%22uv%22%2C%22args%22%3A%5B%22tool%22%2C%22run%22%2C%22--python%22%2C%223.12%22%2C%22build123d-mcp%40latest%22%5D%7D)
+[![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=build123d-mcp&config=eyJjb21tYW5kIjoidXYiLCJhcmdzIjpbInRvb2wiLCJydW4iLCItLXB5dGhvbiIsIjMuMTIiLCJidWlsZDEyM2QtbWNwQGxhdGVzdCJdfQ==)
 
 Give your AI CAD eyes.
 
