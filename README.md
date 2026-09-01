@@ -1,7 +1,7 @@
 # build123d-mcp
 
 [![PyPI version](https://img.shields.io/pypi/v/build123d-mcp)](https://pypi.org/project/build123d-mcp/)
-[![Downloads](https://img.shields.io/pypi/dm/build123d-mcp)](https://pypistats.org/packages/build123d-mcp)
+[![Downloads](https://static.pepy.tech/badge/build123d-mcp/month)](https://pepy.tech/project/build123d-mcp)
 [![Python](https://img.shields.io/pypi/pyversions/build123d-mcp)](https://pypi.org/project/build123d-mcp/)
 [![CI](https://github.com/pzfreo/build123d-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/pzfreo/build123d-mcp/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
