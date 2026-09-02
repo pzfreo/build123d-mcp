@@ -42,9 +42,7 @@ def test_execute_file_promotes_clean_model_with_provenance(tmp_path):
 
 def test_incremental_execute_invalidates_source_provenance(tmp_path):
     session = Session()
-    path, code, digest = _source(
-        tmp_path, "from build123d import *\nresult = Box(4, 3, 2)\n"
-    )
+    path, code, digest = _source(tmp_path, "from build123d import *\nresult = Box(4, 3, 2)\n")
     assert json.loads(execute_file_code(session, code, path, digest))["ok"] is True
 
     session.execute("result = Box(5, 3, 2)")
@@ -55,9 +53,7 @@ def test_incremental_execute_invalidates_source_provenance(tmp_path):
 
 def test_partially_failed_incremental_execute_invalidates_source_provenance(tmp_path):
     session = Session()
-    path, code, digest = _source(
-        tmp_path, "from build123d import *\nresult = Box(4, 3, 2)\n"
-    )
+    path, code, digest = _source(tmp_path, "from build123d import *\nresult = Box(4, 3, 2)\n")
     assert json.loads(execute_file_code(session, code, path, digest))["ok"] is True
 
     session.execute("result = Box(5, 3, 2)\nraise RuntimeError('partial mutation')")
