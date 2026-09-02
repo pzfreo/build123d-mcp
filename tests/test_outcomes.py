@@ -887,6 +887,10 @@ def test_mcp_lists_all_tools():
         # test_mcp_experimental_flag_enables_verify_tools covers the --experimental path.
         "export",
         "reset",
+        # Present over stdio too, where they report the single-session mode
+        # rather than doing anything (#428).
+        "destroy_session",
+        "list_sessions",
         "save_snapshot",
         "restore_snapshot",
         "compare",
@@ -903,6 +907,8 @@ def test_mcp_lists_all_tools():
         "cross_sections",
         "inspect_part",
         "inspect_drawing",
+        "prepare_drawing",
+        "crop_drawing",
         "view_axes",
         "lint_drawing",
         "render_drawing",
@@ -1028,7 +1034,7 @@ def test_mcp_render_returns_image_and_file_path():
         result = await mcp.call_tool("render_view", {"direction": "iso"})
         img = result.content[0]
         path_item = result.content[1]
-        return img.type, img.data, img.mimeType, path_item.type, path_item.text
+        return img.type, img.data, img.mime_type, path_item.type, path_item.text
 
     img_type, img_data, mime, path_type, path_text = asyncio.run(_mcp_session(run))
     # ImageContent with base64 PNG

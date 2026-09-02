@@ -71,7 +71,7 @@ def _markers(skill: str) -> tuple[str, str]:
     return f"<!-- {d}:start -->", f"<!-- {d}:end -->"
 
 
-def _load_raw(skill: str = "drawing") -> str:
+def _load_raw(skill: str = "modeling") -> str:
     return (files("build123d_mcp") / "skills" / SKILLS[skill]["dir"] / "SKILL.md").read_text(
         encoding="utf-8"
     )
@@ -125,7 +125,7 @@ def _replace_or_append(existing: str, new_section: str, skill: str) -> str:
     return existing.rstrip() + "\n\n" + new_section
 
 
-def _dest_exists(target: str, cwd: Path | None = None, skill: str = "drawing") -> bool:
+def _dest_exists(target: str, cwd: Path | None = None, skill: str = "modeling") -> bool:
     """Return True if *skill* is already installed for *target*.
 
     NOTE: the file-path logic here must stay in sync with install_skill() below.
@@ -147,20 +147,41 @@ def _dest_exists(target: str, cwd: Path | None = None, skill: str = "drawing") -
     return False
 
 
+# Prepended to the drawing skill's status line. Phase 1 of #465 announces the
+# move without withdrawing anything — a workflow that works today keeps working,
+# and Phase 2 (when the tools leave the default surface) is where installing it
+# stops making sense.
+DRAWING_DEPRECATED = (
+    "NOTE — the drawing skill and the tools it drives are DEPRECATED (#465). "
+    "Engineering-drawing generation has moved to draftwright "
+    "(https://github.com/pzfreo/draftwright), which owns it and publishes its own skill; "
+    "it is importable inside execute(), so a drawing is built from live session geometry "
+    "without exporting first. These tools are off by default from 0.4.0 and removed in "
+    "0.5.0.\n"
+)
+
+
 def install_skill(
     target: str = "claude",
     force: bool = False,
     cwd: Path | None = None,
-    skill: str = "drawing",
+    skill: str = "modeling",
 ) -> str:
     """Install a b123d skill into the current project for *target*.
 
-    Returns a human-readable status string.
+    Returns a human-readable status string. The default is "modeling"; "drawing"
+    still installs but its status line carries the deprecation notice (#465).
     """
     if target not in TARGETS:
         return f"Unknown target '{target}'. Supported targets: {', '.join(TARGETS)}"
     if skill not in SKILLS:
         return f"Unknown skill '{skill}'. Supported skills: {', '.join(SKILLS)}"
+    if skill == "drawing":
+        return DRAWING_DEPRECATED + _install_skill(target, force, cwd, skill)
+    return _install_skill(target, force, cwd, skill)
+
+
+def _install_skill(target: str, force: bool, cwd: Path | None, skill: str) -> str:
 
     base = cwd or Path.cwd()
     skill_dir = SKILLS[skill]["dir"]

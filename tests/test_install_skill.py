@@ -28,7 +28,7 @@ def _read(path: Path) -> str:
 
 
 def test_load_raw_returns_skill_content():
-    content = _load_raw()
+    content = _load_raw("drawing")
     assert "Engineering Drawing" in content
     assert len(content) > 1000
 
@@ -129,7 +129,7 @@ def test_shipped_skills_have_no_personal_markers():
 
 
 def test_install_claude(tmp_path):
-    result = install_skill(target="claude", cwd=tmp_path)
+    result = install_skill(target="claude", cwd=tmp_path, skill="drawing")
     dest = tmp_path / ".claude" / "skills" / "b123d-drawing" / "SKILL.md"
     assert dest.exists()
     assert "Engineering Drawing" in _read(dest)
@@ -137,22 +137,22 @@ def test_install_claude(tmp_path):
 
 
 def test_install_claude_no_overwrite(tmp_path):
-    install_skill(target="claude", cwd=tmp_path)
-    result = install_skill(target="claude", cwd=tmp_path)
+    install_skill(target="claude", cwd=tmp_path, skill="drawing")
+    result = install_skill(target="claude", cwd=tmp_path, skill="drawing")
     assert "already" in result.lower()
 
 
 def test_install_claude_force(tmp_path):
-    install_skill(target="claude", cwd=tmp_path)
-    result = install_skill(target="claude", force=True, cwd=tmp_path)
+    install_skill(target="claude", cwd=tmp_path, skill="drawing")
+    result = install_skill(target="claude", force=True, cwd=tmp_path, skill="drawing")
     assert "Installed" in result
 
 
 def test_install_claude_preserves_claude_markers(tmp_path):
-    install_skill(target="claude", cwd=tmp_path)
+    install_skill(target="claude", cwd=tmp_path, skill="drawing")
     dest = tmp_path / ".claude" / "skills" / "b123d-drawing" / "SKILL.md"
     # Claude target keeps [SEND:] / [ASK:] markers intact
-    raw = _load_raw()
+    raw = _load_raw("drawing")
     assert _read(dest) == raw
 
 
@@ -162,7 +162,7 @@ def test_install_claude_preserves_claude_markers(tmp_path):
 
 
 def test_install_agents_md_creates_file(tmp_path):
-    result = install_skill(target="agents-md", cwd=tmp_path)
+    result = install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
     dest = tmp_path / "AGENTS.md"
     assert dest.exists()
     assert _START in _read(dest)
@@ -174,25 +174,25 @@ def test_install_agents_md_creates_file(tmp_path):
 def test_install_agents_md_appends_to_existing(tmp_path):
     existing = "# My project\n\nSome existing instructions.\n"
     (tmp_path / "AGENTS.md").write_text(existing, encoding="utf-8")
-    install_skill(target="agents-md", cwd=tmp_path)
+    install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
     content = _read(tmp_path / "AGENTS.md")
     assert "Some existing instructions." in content
     assert _START in content
 
 
 def test_install_agents_md_no_overwrite(tmp_path):
-    install_skill(target="agents-md", cwd=tmp_path)
-    result = install_skill(target="agents-md", cwd=tmp_path)
+    install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
+    result = install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
     assert "already" in result.lower()
 
 
 def test_install_agents_md_force_replaces_section(tmp_path):
-    install_skill(target="agents-md", cwd=tmp_path)
+    install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
     (tmp_path / "AGENTS.md").write_text(
         _read(tmp_path / "AGENTS.md").replace("Engineering Drawing", "OLD CONTENT"),
         encoding="utf-8",
     )
-    install_skill(target="agents-md", force=True, cwd=tmp_path)
+    install_skill(target="agents-md", force=True, cwd=tmp_path, skill="drawing")
     content = _read(tmp_path / "AGENTS.md")
     assert "OLD CONTENT" not in content
     assert "Engineering Drawing" in content
@@ -206,7 +206,7 @@ def test_install_agents_md_force_replaces_section(tmp_path):
 
 
 def test_install_cursor_creates_mdc(tmp_path):
-    result = install_skill(target="cursor", cwd=tmp_path)
+    result = install_skill(target="cursor", cwd=tmp_path, skill="drawing")
     dest = tmp_path / ".cursor" / "rules" / "b123d-drawing.mdc"
     assert dest.exists()
     content = _read(dest)
@@ -221,14 +221,14 @@ def test_install_cursor_creates_mdc(tmp_path):
 
 
 def test_install_cursor_no_overwrite(tmp_path):
-    install_skill(target="cursor", cwd=tmp_path)
-    result = install_skill(target="cursor", cwd=tmp_path)
+    install_skill(target="cursor", cwd=tmp_path, skill="drawing")
+    result = install_skill(target="cursor", cwd=tmp_path, skill="drawing")
     assert "already" in result.lower()
 
 
 def test_install_cursor_force(tmp_path):
-    install_skill(target="cursor", cwd=tmp_path)
-    result = install_skill(target="cursor", force=True, cwd=tmp_path)
+    install_skill(target="cursor", cwd=tmp_path, skill="drawing")
+    result = install_skill(target="cursor", force=True, cwd=tmp_path, skill="drawing")
     assert "Installed" in result
 
 
@@ -238,7 +238,7 @@ def test_install_cursor_force(tmp_path):
 
 
 def test_install_windsurf_creates_file(tmp_path):
-    result = install_skill(target="windsurf", cwd=tmp_path)
+    result = install_skill(target="windsurf", cwd=tmp_path, skill="drawing")
     dest = tmp_path / ".windsurfrules"
     assert dest.exists()
     content = _read(dest)
@@ -250,15 +250,15 @@ def test_install_windsurf_creates_file(tmp_path):
 def test_install_windsurf_appends_to_existing(tmp_path):
     existing = "# existing windsurf rules\n\nUse tabs.\n"
     (tmp_path / ".windsurfrules").write_text(existing, encoding="utf-8")
-    install_skill(target="windsurf", cwd=tmp_path)
+    install_skill(target="windsurf", cwd=tmp_path, skill="drawing")
     content = _read(tmp_path / ".windsurfrules")
     assert "Use tabs." in content
     assert _START in content
 
 
 def test_install_windsurf_force_replaces_section(tmp_path):
-    install_skill(target="windsurf", cwd=tmp_path)
-    install_skill(target="windsurf", force=True, cwd=tmp_path)
+    install_skill(target="windsurf", cwd=tmp_path, skill="drawing")
+    install_skill(target="windsurf", force=True, cwd=tmp_path, skill="drawing")
     content = _read(tmp_path / ".windsurfrules")
     assert content.count(_START) == 1
 
@@ -275,8 +275,8 @@ def test_dest_exists_false_before_install(tmp_path):
 
 def test_dest_exists_true_after_install(tmp_path):
     for target in TARGETS:
-        install_skill(target=target, cwd=tmp_path)
-        assert _dest_exists(target, cwd=tmp_path)
+        install_skill(target=target, cwd=tmp_path, skill="drawing")
+        assert _dest_exists(target, cwd=tmp_path, skill="drawing")
 
 
 def test_dest_exists_unknown_target():
@@ -404,10 +404,13 @@ def test_server_instructions_registered():
         "measure()",
         "skill/modeling",
         "skill/edit",
-        "skill/drawing",
         "skill/repair",
+        # Drawings moved out to draftwright (#465); the instructions must say
+        # where they went rather than silently dropping the capability.
+        "draftwright",
     ):
         assert needle in _INSTRUCTIONS
+    assert "skill/drawing" not in _INSTRUCTIONS
 
 
 def test_modeling_skill_resource_registered():
@@ -428,6 +431,6 @@ def test_modeling_skill_resource_registered():
 
 
 def test_unknown_target_returns_error():
-    result = install_skill(target="unknown-agent")
+    result = install_skill(target="unknown-agent", skill="drawing")
     assert "Unknown target" in result
     assert "unknown-agent" in result

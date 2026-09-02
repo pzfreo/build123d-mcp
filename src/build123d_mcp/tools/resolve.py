@@ -2,6 +2,171 @@ import json
 
 from build123d_mcp.security import check_ast, make_restricted_builtins
 
+# Per-entity detail for a list-valued selector is capped: the descriptor is read by
+# an agent, and an unbounded dump of every matched face is the kind of output #437
+# is about. The count is always exact.
+_MAX_LIST_ENTITIES = 50
+
+
+def _xyz(vec) -> list[float]:
+    return [round(vec.X, 6), round(vec.Y, 6), round(vec.Z, 6)]
+
+
+def _geom_type(shape) -> str:
+    return str(shape.geom_type).rsplit(".", 1)[-1]
+
+
+def _entity_center(shape):
+    """The centre a caller means when they ask where an entity is.
+
+    build123d's default is ``CenterOf.GEOMETRY``, the parametric midpoint. On a
+    closed curve or a cylindrical surface that midpoint lies ON the entity, a full
+    radius from the axis — so resolve() named a hole's wall a radius away from the
+    hole while planar faces stayed correct, which is what made it easy to miss
+    (#456). Use the arc centre for a circular edge and the area/mass centroid
+    otherwise; for a full cylinder that centroid is the axis point.
+    """
+    from build123d import CenterOf, GeomType
+    from build123d import Edge as _Edge
+
+    if isinstance(shape, _Edge) and shape.geom_type in (GeomType.CIRCLE, GeomType.ELLIPSE):
+        return shape.arc_center
+    try:
+        return shape.center(CenterOf.MASS)
+    except TypeError:
+        # ShapeList.center() takes no argument and returns an aggregate that
+        # inherits the same offset; callers average _entity_center instead.
+        return shape.center()
+
+
+def _axis_of(face):
+    """The surface's axis of rotation, or None if it has none worth naming.
+
+    build123d 0.10 returns None from ``axis_of_rotation`` for a CONE while 0.11
+    answers it, and the server supports both. Falling back to the OCP adaptor
+    (the idiom the countersink recogniser already uses) keeps the descriptor the
+    same on either version — an agent should not get different fields depending
+    on which build123d is installed.
+
+    A sphere is excluded deliberately: every axis through its centre is an axis
+    of rotation, so naming the parametrisation's +Z would be the same arbitrary
+    answer as a curved face's "normal".
+    """
+    from build123d import GeomType
+
+    if face.geom_type == GeomType.SPHERE:
+        return None
+    try:
+        axis = face.axis_of_rotation
+    except Exception:
+        axis = None
+    if axis is not None:
+        return _xyz(axis.position), _xyz(axis.direction)
+
+    try:
+        from OCP.BRepAdaptor import BRepAdaptor_Surface
+
+        adaptor = BRepAdaptor_Surface(face.wrapped)
+        surface = {
+            GeomType.CYLINDER: adaptor.Cylinder,
+            GeomType.CONE: adaptor.Cone,
+            GeomType.TORUS: adaptor.Torus,
+        }.get(face.geom_type)
+        if surface is None:
+            return None
+        occ_axis = surface().Axis()
+        loc, direction = occ_axis.Location(), occ_axis.Direction()
+        return (
+            [round(loc.X(), 6), round(loc.Y(), 6), round(loc.Z(), 6)],
+            [round(direction.X(), 6), round(direction.Y(), 6), round(direction.Z(), 6)],
+        )
+    except Exception:
+        return None
+
+
+def _radius_of(shape):
+    try:
+        radius = shape.radius
+    except Exception:
+        return None
+    return round(float(radius), 6) if radius is not None else None
+
+
+def _describe(result) -> dict:
+    """Geometry fields for one resolved entity (or list of them)."""
+    from build123d import Edge as _Edge
+    from build123d import Face as _Face
+    from build123d import GeomType, ShapeList
+
+    out: dict = {}
+
+    if isinstance(result, _Face):
+        out["geom_type"] = _geom_type(result)
+        out["area"] = round(result.area, 6)
+        out["center"] = _xyz(_entity_center(result))
+        if result.geom_type == GeomType.PLANE:
+            try:
+                out["normal"] = _xyz(result.normal_at())
+            except Exception:
+                pass
+        else:
+            # A curved face has no single normal. normal_at() answers for one
+            # surface point, which reads as though it described the whole face, so
+            # report the surface's axis instead where it has one — that is also the
+            # value a caller wants for a mating axis or a hole callout.
+            axis = _axis_of(result)
+            if axis is not None:
+                out["axis"] = {"origin": axis[0], "direction": axis[1]}
+            radius = _radius_of(result)
+            if radius is not None:
+                out["radius"] = radius
+        return out
+
+    if isinstance(result, _Edge):
+        out["geom_type"] = _geom_type(result)
+        out["length"] = round(result.length, 6)
+        out["center"] = _xyz(_entity_center(result))
+        radius = _radius_of(result)
+        if radius is not None:
+            out["radius"] = radius
+        return out
+
+    if isinstance(result, ShapeList):
+        # A list-valued selector used to collapse to one aggregate centre with no
+        # count, no per-entity data and no area, so there was no way to tell how
+        # many entities matched (#456).
+        out["count"] = len(result)
+        # Averaged from the corrected per-entity centres, so the aggregate and the
+        # individual descriptors cannot disagree — and over EVERY entity, not just
+        # the ones detailed below, since a centre taken from the first 50 of 121
+        # would be a sample presented as the whole.
+        centers = []
+        for item in result:
+            try:
+                centers.append(_xyz(_entity_center(item)))
+            except Exception:
+                centers = []
+                break
+        if centers:
+            out["center"] = [round(sum(c[i] for c in centers) / len(centers), 6) for i in range(3)]
+        entities = []
+        for item in result[:_MAX_LIST_ENTITIES]:
+            try:
+                entities.append(_describe(item))
+            except Exception:
+                pass
+        if entities:
+            out["entities"] = entities
+            if len(result) > _MAX_LIST_ENTITIES:
+                out["entities_truncated"] = True
+        return out
+
+    try:
+        out["center"] = _xyz(_entity_center(result))
+    except Exception:
+        pass
+    return out
+
 
 def resolve(session, object_name: str, selector: str, label: str = "") -> str:
     """Evaluate a selector expression against a named object and return a face/edge descriptor.
@@ -12,8 +177,12 @@ def resolve(session, object_name: str, selector: str, label: str = "") -> str:
         label: optional name to store the descriptor in session.geometry_refs
 
     Returns:
-        JSON descriptor with label, ref, object, selector, type, area/length, center,
-        and (for Face) normal.
+        JSON descriptor with label, ref, object, selector, type, geom_type,
+        area/length and center. A planar face also carries its normal; a curved
+        face carries the surface axis and radius instead, because a curved face
+        has no single normal. A circular edge carries its radius, and its center
+        is the arc centre rather than a point on the arc. A list-valued selector
+        carries a count.
     """
     if not object_name or object_name not in session.objects:
         return json.dumps(
@@ -82,29 +251,7 @@ def resolve(session, object_name: str, selector: str, label: str = "") -> str:
     }
 
     try:
-        from build123d import Edge as _Edge
-        from build123d import Face as _Face
-
-        if isinstance(result, _Face):
-            descriptor["area"] = round(result.area, 6)
-            cen = result.center()
-            descriptor["center"] = [round(cen.X, 6), round(cen.Y, 6), round(cen.Z, 6)]
-            try:
-                n = result.normal_at()
-                descriptor["normal"] = [round(n.X, 6), round(n.Y, 6), round(n.Z, 6)]
-            except Exception:
-                pass
-        elif isinstance(result, _Edge):
-            descriptor["length"] = round(result.length, 6)
-            cen = result.center()
-            descriptor["center"] = [round(cen.X, 6), round(cen.Y, 6), round(cen.Z, 6)]
-        else:
-            # Vertex or other
-            try:
-                cen = result.center()
-                descriptor["center"] = [round(cen.X, 6), round(cen.Y, 6), round(cen.Z, 6)]
-            except Exception:
-                pass
+        descriptor.update(_describe(result))
     except Exception:
         pass
 

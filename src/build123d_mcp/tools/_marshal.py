@@ -37,7 +37,7 @@ def marshal_render_view(result: dict) -> list:
             ImageContent(
                 type="image",
                 data=base64.b64encode(result["png"]).decode(),
-                mimeType="image/png",
+                mime_type="image/png",
             )
         )
         contents.append(TextContent(type="text", text=f"[SEND: {path}]"))
@@ -93,7 +93,7 @@ def marshal_render_drawing(result: dict, svg_path: str, save_to: str) -> list:
             ImageContent(
                 type="image",
                 data=base64.b64encode(result["png"]).decode(),
-                mimeType="image/png",
+                mime_type="image/png",
             )
         )
         contents.append(TextContent(type="text", text=f"[SEND: {path}]"))

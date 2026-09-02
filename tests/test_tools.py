@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 
 import pytest
 
@@ -1216,6 +1217,345 @@ def test_export_stl(session, tmp_path, monkeypatch):
     export_file(session, "out", "stl")
     assert os.path.exists("out.stl")
     assert os.path.getsize("out.stl") > 0
+
+
+def test_export_3mf(session, tmp_path, monkeypatch):
+    import zipfile
+
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "out", "3mf")
+    assert os.path.exists("out.3mf")
+    assert os.path.getsize("out.3mf") > 0
+    assert zipfile.is_zipfile("out.3mf")
+    with zipfile.ZipFile("out.3mf") as zf:
+        names = zf.namelist()
+        assert "3D/3dmodel.model" in names
+        assert "_rels/.rels" in names
+        assert "[Content_Types].xml" in names
+        model_xml = zf.read("3D/3dmodel.model")
+        assert b"<vertex" in model_xml
+        assert b"<triangle" in model_xml
+
+
+def test_export_3mf_round_trip(session, tmp_path, monkeypatch):
+    """Zip/XML structure alone can stay green on a file no real reader
+    accepts (e.g. a package missing the OPC rels content-type default) --
+    round-trip through this repo's own 3MF reader to catch that class of bug."""
+    monkeypatch.chdir(tmp_path)
+    from build123d_mcp.tools.import_step import import_cad_file
+
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "ref", "3mf")
+    mf_path = str(tmp_path / "ref.3mf")
+    data = json.loads(import_cad_file(session, mf_path, "ref_3mf"))
+    assert data["imported"] == "ref_3mf"
+    assert data["format"] == "3mf"
+    assert abs(data["volume"] - 1000) < 1
+    assert data["solids"] == 1
+    assert "ref_3mf" in session.objects
+
+
+def test_export_3mf_large_mesh_round_trip(session, tmp_path, monkeypatch):
+    """The model part is streamed into the zip in fixed-size chunks, so a mesh
+    spanning several flushes exercises the chunk boundaries -- a dropped or
+    mis-joined chunk yields malformed XML the reader rejects."""
+    import zipfile
+
+    from build123d_mcp.tools.export import _MESH_XML_FLUSH_EVERY
+    from build123d_mcp.tools.import_step import import_cad_file
+
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Sphere(10)")
+    export_file(session, "big", "3mf")
+
+    with zipfile.ZipFile("big.3mf") as zf:
+        model_xml = zf.read("3D/3dmodel.model")
+    elements = model_xml.count(b"<vertex") + model_xml.count(b"<triangle")
+    assert elements > 2 * _MESH_XML_FLUSH_EVERY, f"mesh too small to span chunks ({elements})"
+
+    data = json.loads(import_cad_file(session, str(tmp_path / "big.3mf"), "big_3mf"))
+    assert data["solids"] == 1
+    # Faceted sphere, so under the analytic 4188.79 mm^3 -- within a few percent.
+    assert abs(data["volume"] - 4188.79) / 4188.79 < 0.05
+
+
+def test_export_3mf_entries_are_consistent(session, tmp_path, monkeypatch):
+    """The model part is written via zf.open() rather than writestr(), which
+    defaults to a bare ZipInfo: 1980 epoch timestamp and no compression unless
+    both are set explicitly. All three parts should look alike."""
+    import zipfile
+
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "stamp", "3mf")
+
+    with zipfile.ZipFile("stamp.3mf") as zf:
+        infos = {i.filename: i for i in zf.infolist()}
+    model = infos["3D/3dmodel.model"]
+    assert model.date_time[0] > 1980, f"model part stamped with the zip epoch: {model.date_time}"
+    # Same second in practice, but the parts are stamped by separate calls, so
+    # allow for the DOS 2-second bucket ticking between them.
+    import datetime as _dt
+
+    stamps = [_dt.datetime(*i.date_time) for i in infos.values()]
+    assert (max(stamps) - min(stamps)).total_seconds() <= 2
+    assert all(i.compress_type == zipfile.ZIP_DEFLATED for i in infos.values())
+
+
+def _write_partial_then_fail(shape, path, *args, **kwargs):
+    """Stand-in for a writer killed mid-file: leaves bytes behind, then dies."""
+    with open(path, "wb") as f:
+        f.write(b"partial output that must never reach the target")
+    raise MemoryError("out of memory partway through")
+
+
+def _stream_partial_then_fail(fh, *args, **kwargs):
+    """Same, for the 3MF streamer, which is handed an open zip entry."""
+    fh.write(b"<partial")
+    raise MemoryError("out of memory partway through")
+
+
+@pytest.mark.parametrize(
+    ("fmt", "code", "writer", "saboteur"),
+    [
+        ("3mf", "result = Box(10, 10, 10)", "_stream_model_part", _stream_partial_then_fail),
+        ("stl", "result = Box(10, 10, 10)", "_stl_write", _write_partial_then_fail),
+        ("step", "result = Box(10, 10, 10)", "_write_step", _write_partial_then_fail),
+        ("dxf", "result = Rectangle(10, 10)", "_write_dxf", _write_partial_then_fail),
+        ("svg", "result = Rectangle(10, 10)", "_write_svg", _write_partial_then_fail),
+    ],
+)
+def test_export_failure_keeps_previous_file(
+    session, tmp_path, monkeypatch, fmt, code, writer, saboteur
+):
+    """A write killed partway through must not destroy the export it was
+    replacing -- the caller learns their export failed, and the file it took
+    with it was the one they still had. Every format goes through the same
+    temp-and-rename, so every format is checked here.
+
+    The stand-in writes bytes *before* raising, deliberately: a writer that dies
+    before opening anything leaves the target intact even without the temp file,
+    so a fail-immediately stub would pass on an in-place implementation."""
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, code)
+    export_file(session, "keep", fmt)
+    good = (tmp_path / f"keep.{fmt}").read_bytes()
+    assert good, "nothing written on the first pass"
+
+    monkeypatch.setattr(f"build123d_mcp.tools.export.{writer}", saboteur)
+    with pytest.raises(MemoryError):
+        export_file(session, "keep", fmt)
+
+    assert (tmp_path / f"keep.{fmt}").read_bytes() == good
+    assert not list(tmp_path.glob("*.tmp")), "temp file stranded next to the export"
+
+
+def test_export_fsyncs_the_data_before_renaming_it_into_place(session, tmp_path, monkeypatch):
+    """Without the fsync the rename can reach the disk before the data does, so
+    a power loss leaves exactly the truncated file the temp-and-rename exists to
+    prevent -- it would only ever have protected against SIGKILL."""
+    monkeypatch.chdir(tmp_path)
+    from build123d_mcp.tools import export as export_mod
+
+    order = []
+    real_fsync, real_replace = export_mod._fsync_file, os.replace
+
+    def spy_fsync(path):
+        order.append(("fsync", os.path.getsize(path)))
+        return real_fsync(path)
+
+    def spy_replace(src, dst):
+        order.append(("replace", os.path.getsize(src)))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(export_mod, "_fsync_file", spy_fsync)
+    monkeypatch.setattr(os, "replace", spy_replace)
+
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "durable", "3mf")
+
+    assert [step for step, _ in order] == ["fsync", "replace"], f"wrong order: {order}"
+    # The fsync has to cover the finished file, not a partially written one.
+    assert order[0][1] == order[1][1] == (tmp_path / "durable.3mf").stat().st_size
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlink creation needs privilege")
+def test_export_does_not_write_through_a_planted_temp_symlink(session, tmp_path, monkeypatch):
+    """The export goes via a temp file, and only the target path is checked by
+    safe_output_path(). A predictable temp name is therefore an unvalidated
+    write: a symlink planted at it redirects the whole package, and os.replace
+    renames the link rather than its target. (Whether the link points inside or
+    outside the allowed roots only changes how bad that is -- here it stays
+    inside so the test needs no writable path outside the sandbox.)"""
+    monkeypatch.chdir(tmp_path)
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"ORIGINAL")
+
+    execute_code(session, "result = Box(10, 10, 10)")
+    os.symlink(victim, tmp_path / "part.3mf.tmp")  # the name the old code used
+
+    export_file(session, "part", "3mf")
+
+    assert victim.read_bytes() == b"ORIGINAL", "export wrote through the planted symlink"
+    assert not (tmp_path / "part.3mf").is_symlink()
+    assert (tmp_path / "part.3mf").read_bytes()[:2] == b"PK"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_export_refuses_a_temp_file_swapped_for_a_symlink(session, tmp_path, monkeypatch):
+    """mkstemp's O_EXCL only protects the *create*. Three of the five writers are
+    third-party and take a path, so the fd is closed and the name is resolved
+    again -- and another local user with write access to the output directory can
+    unlink the temp in that window and drop a symlink in its place.
+
+    Those bytes are gone whatever we do here; the stand-in below writes them to
+    make that explicit. What must not follow is os.replace renaming the *link*
+    onto the target, which would point every later export at the victim too, and
+    _set_export_mode chmod'ing a file that was never ours."""
+    from build123d_mcp.tools import export as export_mod
+
+    monkeypatch.chdir(tmp_path)
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"ORIGINAL")
+    victim.chmod(0o600)
+
+    def swap_for_symlink_then_write(shape, path):
+        os.remove(path)
+        os.symlink(victim, path)
+        with open(path, "wb") as fh:
+            fh.write(b"PK\x03\x04the-export")
+
+    monkeypatch.setattr(export_mod, "_write_3mf", swap_for_symlink_then_write)
+    execute_code(session, "result = Box(10, 10, 10)")
+
+    with pytest.raises(OSError):
+        export_file(session, "part", "3mf")
+
+    assert not (tmp_path / "part.3mf").exists(), "the planted link was renamed into place"
+    assert victim.stat().st_mode & 0o777 == 0o600, "victim took the export's mode"
+    assert not list(tmp_path.glob("*.tmp")), "planted link left in the output directory"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_export_preserves_target_mode(session, tmp_path, monkeypatch):
+    """os.replace swaps in a new inode, so the mode has to be set deliberately:
+    mkstemp's own 0600 would be wrong, and a hardcoded 0644 would silently widen
+    a file the user had restricted."""
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Box(10, 10, 10)")
+
+    # Pin the umask: under 077 the fallback would itself produce 0600, and the
+    # preserve-the-target's-mode assertion below would pass without the code
+    # ever looking at the target.
+    old_umask = os.umask(0o022)
+    try:
+        export_file(session, "fresh", "3mf")
+        export_file(session, "stl_ref", "stl")
+        fresh = (tmp_path / "fresh.3mf").stat().st_mode & 0o777
+        assert fresh == (tmp_path / "stl_ref.stl").stat().st_mode & 0o777, (
+            "3mf should land on the same umask default as the other export formats"
+        )
+
+        (tmp_path / "fresh.3mf").chmod(0o600)
+        export_file(session, "fresh", "3mf")
+        mode = (tmp_path / "fresh.3mf").stat().st_mode & 0o777
+        assert mode == 0o600, f"re-export widened the file to {oct(mode)}"
+    finally:
+        os.umask(old_umask)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_export_replaces_a_read_only_target(session, tmp_path, monkeypatch):
+    """Temp-and-rename needs a writable *directory*, not a writable file, so a
+    read-only target (a VCS checkout, a deliberate `chmod 444`) is replaced.
+
+    The trap is ordering: apply that mode to the temp file before the fsync
+    reopens it and the export dies on its own temp path -- after every byte has
+    already been written, and naming a file the caller has never seen."""
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "locked", "3mf")
+    (tmp_path / "locked.3mf").chmod(0o444)
+
+    export_file(session, "locked", "3mf")
+
+    mode = (tmp_path / "locked.3mf").stat().st_mode & 0o777
+    assert mode == 0o444, f"re-export changed the mode to {oct(mode)}"
+    assert (tmp_path / "locked.3mf").read_bytes()[:2] == b"PK"
+    assert not list(tmp_path.glob("*.tmp")), "temp file stranded next to the export"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_export_temp_file_is_private_while_being_written(session, tmp_path, monkeypatch):
+    """The mesh write is the slow part of the export. mkstemp creates the temp
+    file 0600, and it has to stay that way until the bytes are all there --
+    otherwise another local user can write into an in-flight export whose final
+    mode happens to be group- or world-writable."""
+    monkeypatch.chdir(tmp_path)
+    from build123d_mcp.tools import export as export_mod
+
+    target = tmp_path / "part.3mf"
+    target.write_bytes(b"old")
+    target.chmod(0o666)
+
+    seen = []
+    real_stream = export_mod._stream_model_part
+
+    def spy(fh, verts, tris, core_ns):
+        for name in os.listdir(tmp_path):
+            if name.startswith(export_mod._TMP_PREFIX):
+                seen.append(os.stat(tmp_path / name).st_mode & 0o777)
+        return real_stream(fh, verts, tris, core_ns)
+
+    monkeypatch.setattr(export_mod, "_stream_model_part", spy)
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "part", "3mf")
+
+    assert seen == [0o600], f"temp file was {[oct(m) for m in seen]} mid-write, expected 0o600"
+    assert target.stat().st_mode & 0o777 == 0o666, "final mode should still match the target's"
+
+
+def test_export_sweeps_stale_temp_files(session, tmp_path, monkeypatch):
+    """A SIGKILL mid-write strands the temp file with no cleanup handler, and
+    every attempt gets a fresh random name, so they'd otherwise accumulate."""
+    monkeypatch.chdir(tmp_path)
+    from build123d_mcp.tools.export import _TMP_PREFIX
+
+    stale = tmp_path / f"{_TMP_PREFIX}dead0001.tmp"
+    stale.write_bytes(b"leftover from a killed export")
+    os.utime(stale, (time.time() - 7200, time.time() - 7200))
+    recent = tmp_path / f"{_TMP_PREFIX}live0001.tmp"
+    recent.write_bytes(b"another export in flight right now")
+    unrelated = tmp_path / "notes.tmp"
+    unrelated.write_bytes(b"not ours")
+    os.utime(unrelated, (time.time() - 7200, time.time() - 7200))
+
+    # A symlink is aged by its own entry, not its target: a fresh link pointing
+    # at something ancient must survive, and a dangling old one must still go.
+    if sys.platform != "win32":
+        fresh_link = tmp_path / f"{_TMP_PREFIX}link0001.tmp"
+        os.symlink(stale, fresh_link)
+        dangling = tmp_path / f"{_TMP_PREFIX}gone0001.tmp"
+        os.symlink(tmp_path / "nothing-here", dangling)
+        os.utime(dangling, (time.time() - 7200, time.time() - 7200), follow_symlinks=False)
+
+    execute_code(session, "result = Box(10, 10, 10)")
+    export_file(session, "part", "3mf")
+
+    assert not stale.exists(), "stale temp file not swept"
+    assert recent.exists(), "swept a temp file that could still be in flight"
+    assert unrelated.exists(), "swept a file that isn't ours"
+    if sys.platform != "win32":
+        assert fresh_link.is_symlink(), "swept a fresh symlink because its target was old"
+        assert not os.path.lexists(dangling), "dangling stale symlink never swept"
+
+
+def test_export_3mf_rejects_2d_shape(session, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    execute_code(session, "result = Rectangle(10, 10)")
+    with pytest.raises(ValueError, match="2D shape"):
+        export_file(session, "out", "3mf")
 
 
 def test_export_multi_format(session, tmp_path, monkeypatch):
