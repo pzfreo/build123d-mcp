@@ -459,20 +459,6 @@ def crop_drawing(
 
 
 @mcp.tool(annotations=_READ_ONLY)
-def calibrate_drawing(
-    pixel_points: list[list[float]],
-    drawing_points_mm: list[list[float]],
-    mode: str = "similarity",
-    query_pixels: list[list[float]] | None = None,
-    query_drawing_mm: list[list[float]] | None = None,
-) -> str:
-    """Fit a pixel↔millimetre transform from correspondences selected by the model in one orthographic view. similarity (>=2 pairs) preserves scale/angles and may reflect image Y; affine (>=3 non-collinear pairs) permits anisotropic/skew correction. Returns forward/inverse matrices, scale and residual error, plus optional converted query points. It does not discover correspondences or read dimensions; printed dimensions remain authoritative. Never calibrate an isometric view."""
-    from build123d_mcp.tools.drawing_evidence import calibrate_drawing as _calibrate
-
-    return _calibrate(pixel_points, drawing_points_mm, mode, query_pixels, query_drawing_mm)
-
-
-@mcp.tool(annotations=_READ_ONLY)
 def view_axes(
     viewport_origin: list[float],
     viewport_up: list[float] | None = None,

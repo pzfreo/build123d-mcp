@@ -3,7 +3,7 @@ import json
 import pytest
 from PIL import Image
 
-from build123d_mcp.tools.drawing_evidence import calibrate_drawing, crop_drawing
+from build123d_mcp.tools.drawing_evidence import crop_drawing
 
 
 def test_crop_drawing_returns_exact_mapping(tmp_path):
@@ -19,30 +19,3 @@ def test_crop_drawing_returns_exact_mapping(tmp_path):
         [0.0, 0.0, 1.0],
     ]
     assert (tmp_path / "crop.png").is_file()
-
-
-def test_calibrate_similarity_and_queries():
-    result = json.loads(
-        calibrate_drawing(
-            [[100, 200], [300, 200], [100, 100]],
-            [[0, 0], [100, 0], [0, 50]],
-            query_pixels=[[200, 150]],
-            query_drawing_mm=[[25, 25]],
-        )
-    )
-    assert result["rms_error_mm"] == pytest.approx(0)
-    assert result["query_drawing_mm"][0] == pytest.approx([50, 25])
-    assert result["query_pixels"][0] == pytest.approx([150, 150])
-
-
-def test_calibrate_affine():
-    result = json.loads(
-        calibrate_drawing(
-            [[0, 0], [100, 0], [0, 200]],
-            [[10, 20], [60, 20], [10, 70]],
-            mode="affine",
-            query_pixels=[[50, 100]],
-        )
-    )
-    assert result["rms_error_mm"] == pytest.approx(0)
-    assert result["query_drawing_mm"][0] == pytest.approx([35, 45])
