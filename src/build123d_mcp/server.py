@@ -364,6 +364,23 @@ def execute(code: str) -> str:
     return result
 
 
+@mcp.tool(annotations=_MUTATING)
+def execute_file(path: str, result_name: str = "", snapshot: str = "") -> str:
+    """Execute a canonical build123d .py file in a clean namespace and atomically promote its result. The prior active model is restored if the source has a syntax/runtime error, times out, produces no shape, or does not produce result_name. Assign a Shape to `result` or call show(); optionally set result_name to require/register a specific Shape or BuildPart variable. snapshot saves the promoted geometry checkpoint. Returns source SHA-256 provenance plus captured output. The source must be UTF-8, under an allowed read root, and no larger than BUILD123D_MAX_SCRIPT_BYTES (default 2 MiB). Use this for substantial generation revisions: edit model.py, execute_file(), then validate/measure/render/export through MCP."""
+    from build123d_mcp.tools.execute_file import read_source
+
+    source_path, code, source_sha256 = read_source(path)
+    result = _resolve_session().execute_file(
+        code=code,
+        source_path=source_path,
+        source_sha256=source_sha256,
+        result_name=result_name,
+        snapshot=snapshot,
+    )
+    _publish_deltas()
+    return result
+
+
 @mcp.tool(annotations=_READ_ONLY)
 def render_view(
     direction: str = "iso",

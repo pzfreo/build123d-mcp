@@ -54,6 +54,7 @@ def test_mutating_tools_are_not_read_only():
     a = _annotations()
     for n in (
         "execute",
+        "execute_file",
         "load_part",
         "import_cad_file",
         "install_skill",
