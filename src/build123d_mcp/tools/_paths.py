@@ -86,6 +86,7 @@ def safe_input_path(filename: str) -> str:
 _INPUT_SIZE_LIMITS = {
     "svg": (20 * 1024 * 1024, "BUILD123D_MAX_SVG_BYTES"),  # 20 MB
     "cad": (200 * 1024 * 1024, "BUILD123D_MAX_CAD_BYTES"),  # 200 MB
+    "raster": (50 * 1024 * 1024, "BUILD123D_MAX_RASTER_BYTES"),  # 50 MB
 }
 _RASTER_WIDTH_LIMIT = (10000, "BUILD123D_MAX_RASTER_WIDTH")  # px
 

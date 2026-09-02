@@ -397,7 +397,7 @@ def render_view(
     colors: dict[str, str] | None = None,
     mode: str = "auto",
 ) -> list:
-    """Render model. Auto-detects 3D vs 2D: solids use the VTK tessellation path; 2D shapes (Sketches, edge Compounds, annotated 2D compounds) use the ezdxf+matplotlib raster path — review 2D output the same way as 3D parts. Renders confirm appearance, not geometry — verify booleans with measure() first. format: 'png' (raster, default), 'svg' (HLR line drawing, works without a display), 'dxf' (HLR projection as true CIRCLE/LINE entities for downstream 2D CAD, in model coordinates — arcs exact, not tessellated), or 'both' (PNG + SVG together). If the PNG path fails (headless host), falls back to SVG automatically. direction: top, front, side, iso. azimuth/elevation: camera rotation in degrees applied after the direction preset. objects: comma-separated names or name:color pairs e.g. 'u_frame:blue,roller:red' (default: all, auto-coloured). quality: standard, high. clip_plane: x, y, z to slice; clip_at: absolute world coordinate along that axis (default: each mesh's midpoint). save_to: optional file path; for format='both' writes <save_to>.png and <save_to>.svg. mode: 'auto' (default; no solids + flat in Z = 2D), or '2d'/'3d' to force a pipeline when auto-detection picks wrong (e.g. a Compound mixing a Sketch and a solid routes to 3D); the path used is reported as 'Rendered via <mode> pipeline.' colors: optional dict mapping object names and special layer keys (`_dims`, `_labels`) to colour names or '#aabbcc'; overrides name:color syntax and the default dimension colour (2D PNG/SVG only; ignored for 3D and DXF). label_objects: when true, each named object is labelled at its centroid in the PNG. highlights: optional list of entities to label, e.g. [{"object": "bracket", "type": "edge", "index": 5, "label": "hinge_edge"}]; type is 'face', 'edge', or 'vertex', index matches shape.faces()/edges()/vertices(); the object must be registered with show() and in the rendered set. Labels are PNG-only."""
+    """Render model. Auto-detects 3D vs 2D: solids use VTK; flat drawings use the 2D pipeline. Renders confirm appearance, not geometry. format: png, svg, dxf, or both. direction accepts top, bottom, front, rear, side, left, right, or iso. quality: preview, standard, or high; a timed-out standard/high PNG automatically retries once as a coarse preview. azimuth/elevation apply after the preset. objects selects comma-separated registered names. clip_plane: x/y/z. save_to writes the result. mode: auto/2d/3d. label_objects and highlights add PNG labels; colors controls object/layer colours."""
     result = _resolve_session().render_view(
         direction=direction,
         objects=objects,
@@ -548,7 +548,10 @@ _LIBRARY_TOOLS = ("search_library", "load_part")
 
 
 def apply_tool_visibility(
-    disabled_groups: tuple[str, ...] = (), *, has_library: bool = True
+    disabled_groups: tuple[str, ...] = (),
+    *,
+    has_library: bool = True,
+    enabled_tools: tuple[str, ...] = (),
 ) -> None:
     """Trim optional tools from the served surface to reduce per-request schema cost.
 
@@ -569,6 +572,16 @@ def apply_tool_visibility(
         remove.update(_TOOL_GROUPS[group])
     if not has_library:
         remove.update(_LIBRARY_TOOLS)
+    existing = {tool.name for tool in mcp._tool_manager.list_tools()}
+    if enabled_tools:
+        requested = set(enabled_tools)
+        unknown = requested - existing
+        if unknown:
+            print(
+                f"WARNING: unknown --tools value(s): {', '.join(sorted(unknown))}",
+                file=sys.stderr,
+            )
+        remove.update(existing - requested)
     for name in remove:
         try:
             mcp.remove_tool(name)
@@ -680,6 +693,33 @@ def inspect_drawing(objects: str = "", svg_path: str = "") -> str:
         svg_path: path to an SVG file on disk. Switches to SVG mode.
     """
     return _resolve_session().inspect_drawing(objects, svg_path)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def prepare_drawing(
+    image_path: str,
+    output_dir: str = "drawing_regions",
+    max_regions: int = 12,
+    padding: int = 24,
+) -> str:
+    """Prepare a raster engineering drawing for efficient inspection. Detects substantial spatial regions, saves one labelled overview plus readable PNG crops, and returns their pixel bounding boxes and paths. Region ids are layout evidence only: this tool does NOT label views, recognise CAD features, interpret lines, infer dimensions, or trace geometry. Use it once near the start instead of repeatedly writing shell/PIL crop scripts; inspect the returned overview and only the relevant crops. Printed dimensions remain authoritative. image_path: PNG/JPEG/TIFF drawing under an allowed read root. output_dir: crop directory under an allowed write root. max_regions: 1..30. padding: crop padding in pixels, 0..500."""
+    from build123d_mcp.tools.prepare_drawing import prepare_drawing as _prepare
+
+    return _prepare(image_path, output_dir, max_regions, padding)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def crop_drawing(
+    image_path: str,
+    bbox_px: list[int],
+    output_path: str = "drawing_crop.png",
+    scale: float = 2.0,
+    autocontrast: bool = True,
+) -> str:
+    """Save one model-selected raster drawing region at readable scale. bbox_px is exact source-image [x0,y0,x1,y1]; scale is 0.25..12. Returns the saved PNG path and an exact crop-pixel→source-pixel transform, so coordinates read from the enlargement remain usable. This is a mechanical crop only: it performs no OCR, feature recognition, or geometry inference."""
+    from build123d_mcp.tools.drawing_evidence import crop_drawing as _crop
+
+    return _crop(image_path, bbox_px, output_path, scale, autocontrast)
 
 
 @mcp.tool(annotations=_READ_ONLY)
