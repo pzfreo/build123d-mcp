@@ -642,10 +642,6 @@ def _viewport_origin_for(direction: str, shapes, azimuth: float, elevation: floa
     """
     from build123d import Vector
 
-    # Aggregate bounding centre across all shapes for look_at
-    centres = [shape.center() for _name, shape, _c in shapes]
-    centre = sum(centres, Vector(0, 0, 0)) * (1.0 / len(centres))
-
     # Direction vector matches the VTK camera baseline
     dx, dy, dz = {
         "top": (0.0, 0.0, 1.0),
@@ -684,12 +680,19 @@ def _viewport_origin_for(direction: str, shapes, azimuth: float, elevation: floa
         extents.extend([bb.size.X, bb.size.Y, bb.size.Z])
     distance = max(extents + [1.0]) * 10.0
 
-    origin = (
-        centre.X + dx * distance,
-        centre.Y + dy * distance,
-        centre.Z + dz * distance,
-    )
-    look_at = (centre.X, centre.Y, centre.Z)
+    # Anchor the projection at the WORLD ORIGIN, not the part centroid. The 2D
+    # coordinates project_to_viewport returns are relative to look_at, so an
+    # aggregate-centroid anchor silently displaced every DXF/SVG coordinate by
+    # the centre of mass: exact geometry at a wrong origin, which looks right
+    # until the file is placed against other geometry, and which scales with how
+    # asymmetric the part is so it cannot be corrected once and forgotten (#455).
+    #
+    # Safe because the HLR projection is PARALLEL: moving the camera along the
+    # view direction changes only where the 2D origin sits, never the projected
+    # shape. Verified identical spans with the part 1e6 mm off-origin and across
+    # a 10,000x range of camera distance.
+    origin = (dx * distance, dy * distance, dz * distance)
+    look_at = (0.0, 0.0, 0.0)
     return origin, up, look_at
 
 
@@ -775,7 +778,8 @@ def _do_render_dxf(shapes, direction, clip_plane, clip_at, azimuth, elevation) -
     """Produce a DXF via build123d's HLR projection.
 
     DXF is the standard 2D CAD interchange format. Use it when the LLM (or a
-    downstream tool) needs the projected geometry as parseable polylines
+    downstream tool) needs the projected geometry as parseable entities —
+    true CIRCLE and LINE entities, so arcs stay exact rather than tessellated —
     rather than as a raster — e.g. building a matplotlib annotation overlay
     on top of a faithful base layer instead of redrawing the shape by hand.
 

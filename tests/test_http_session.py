@@ -1,6 +1,6 @@
 """HTTP/ASGI transport and per-request session acceptance coverage (#268).
 
-#268 added FastMCP HTTP hosting hooks (shipped in v0.3.50). Two of its
+#268 added MCP HTTP hosting hooks (shipped in v0.3.50). Two of its
 acceptance criteria had no regression test:
 
   1. Concurrent requests with different session keys resolve to different
@@ -125,14 +125,56 @@ def test_http_app_is_mountable_asgi():
     parent = Starlette(routes=[Mount("/mcp", app=app)])
     mount = next((r for r in parent.routes if getattr(r, "path", None) == "/mcp"), None)
     assert mount is not None
-    assert mount.app is app  # the FastMCP app is what got mounted
+    assert mount.app is app  # the MCPServer app is what got mounted
 
 
-def test_fastmcp_is_stateless_http():
+def test_http_app_is_stateless_http():
     """http_app() relies on stateless HTTP (session identity comes from the
     embedder's headers, not MCP session IDs) — pin that the server is built
-    that way so the ASGI hook stays embeddable."""
-    assert server.mcp.settings.stateless_http is True
+    that way so the ASGI hook stays embeddable.
+
+    SDK v2 moved ``stateless_http`` off the server settings onto the transport
+    factory. Asserting the real session manager the app actually builds, rather
+    than that ``http_app()`` passed a keyword, keeps this a state assertion: a
+    future SDK that renamed or ignored the flag would fail here."""
+    server.http_app()
+
+    manager = server.mcp._lowlevel_server.session_manager
+    assert manager.stateless is True
+
+
+def test_serves_both_protocol_eras():
+    """SDK v2 serves the 2026-07-28 protocol alongside the 2025 era, so the
+    migration widened the surface clients can reach — `server/discover` and the
+    stateless per-request lifecycle did not exist before it.
+
+    The conformance job cannot gate that era (the suite has no server scenarios
+    for it yet), so pin it here: both eras negotiable, and discover answering
+    with OUR capabilities and instructions rather than an SDK default."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from mcp.types.version import SUPPORTED_PROTOCOL_VERSIONS
+
+    assert "2026-07-28" in SUPPORTED_PROTOCOL_VERSIONS
+    assert "2025-06-18" in SUPPORTED_PROTOCOL_VERSIONS
+
+    lowlevel = server.mcp._lowlevel_server
+    ctx = SimpleNamespace(protocol_version="2026-07-28")
+    result = asyncio.run(lowlevel._handle_discover(ctx, None))
+
+    assert result.supported_versions == ["2026-07-28"]
+    assert result.instructions == server._INSTRUCTIONS
+    assert result.capabilities.tools is not None
+
+
+def test_server_info_reports_our_own_version():
+    """serverInfo.version is what a user quotes in a bug report, so it must be
+    this package's version. SDK v1 defaulted it to the SDK's own version and v2
+    defaults it to "", so it only holds while we pass it explicitly."""
+    from importlib.metadata import version
+
+    assert server.mcp._lowlevel_server.version == version("build123d-mcp")
 
 
 def test_compare_missing_support_error_does_not_mask_internal_attribute_errors():
@@ -153,3 +195,269 @@ def test_compare_missing_support_error_does_not_mask_internal_attribute_errors()
             server.compare(a="part")
     finally:
         _restore_singleton(state)
+
+
+# --- Mcp-Cad-Session header routing (#428) ----------------------------------- #
+
+
+class _RecordingApp:
+    """Downstream ASGI app that records which session the request resolved to."""
+
+    def __init__(self):
+        self.resolved = None
+        self.handle = None
+        self.called = False
+
+    async def __call__(self, scope, receive, send):
+        self.called = True
+        self.resolved = server._session_var.get()
+        self.handle = server._handle_var.get()
+
+
+def _scope(headers=()):
+    return {
+        "type": "http",
+        "headers": [(k.encode(), v.encode()) for k, v in headers],
+    }
+
+
+async def _noop_receive():  # pragma: no cover - never awaited by these paths
+    return {"type": "http.request", "body": b"", "more_body": False}
+
+
+def _drive(middleware, scope):
+    """Run one request through the middleware, capturing anything it sends."""
+    import asyncio
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    asyncio.run(middleware(scope, _noop_receive, send))
+    return sent
+
+
+def _fake_registry(max_sessions=4):
+    from build123d_mcp.session_registry import SessionRegistry
+
+    class FakeSession:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    return SessionRegistry(factory=FakeSession, max_sessions=max_sessions)
+
+
+def test_header_routes_to_that_handles_session():
+    registry = _fake_registry()
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, registry)
+
+    _drive(mw, _scope([("mcp-cad-session", "alice")]))
+
+    assert downstream.called
+    lease = registry.acquire("alice")
+    assert downstream.resolved is lease.session
+    assert downstream.handle == "alice"
+    lease.release()
+
+
+def test_distinct_handles_reach_distinct_sessions_through_the_middleware():
+    registry = _fake_registry()
+    mw_a, mw_b = _RecordingApp(), _RecordingApp()
+
+    _drive(server.CadSessionMiddleware(mw_a, registry), _scope([("mcp-cad-session", "alice")]))
+    _drive(server.CadSessionMiddleware(mw_b, registry), _scope([("mcp-cad-session", "bob")]))
+
+    assert mw_a.resolved is not mw_b.resolved
+
+
+def test_absent_header_falls_back_to_the_shared_singleton():
+    """Existing HTTP deployments send no such header and must be unaffected —
+    this feature is strictly opt-in."""
+    registry = _fake_registry()
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, registry)
+
+    _drive(mw, _scope())
+
+    assert downstream.called
+    assert downstream.resolved is None  # _resolve_session() will use _session
+    assert len(registry) == 0  # and no session was spawned
+
+
+def test_header_is_matched_case_insensitively():
+    registry = _fake_registry()
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, registry)
+
+    _drive(mw, _scope([("MCP-Cad-Session", "alice")]))
+
+    assert downstream.resolved is not None
+
+
+def test_session_limit_returns_503_without_reaching_the_app():
+    registry = _fake_registry(max_sessions=1)
+    incumbent = registry.acquire("incumbent")
+    incumbent.release()
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, registry)
+
+    sent = _drive(mw, _scope([("mcp-cad-session", "latecomer")]))
+
+    assert sent[0]["status"] == 503
+    assert not downstream.called
+
+
+def test_failed_spawn_returns_500_without_reaching_the_app():
+    from build123d_mcp.session_registry import SessionRegistry
+
+    def boom():
+        raise RuntimeError("no worker for you")
+
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, SessionRegistry(factory=boom, max_sessions=2))
+
+    sent = _drive(mw, _scope([("mcp-cad-session", "alice")]))
+
+    assert sent[0]["status"] == 500
+    assert not downstream.called
+
+
+def test_lifespan_scope_passes_through():
+    """The wrapped Starlette app owns the session manager's lifespan; swallowing
+    the lifespan scope would leave it unstarted."""
+    seen = {}
+
+    class App:
+        async def __call__(self, scope, receive, send):
+            seen["type"] = scope["type"]
+
+    mw = server.CadSessionMiddleware(App(), _fake_registry())
+    import asyncio
+
+    asyncio.run(mw({"type": "lifespan"}, _noop_receive, lambda m: None))
+
+    assert seen["type"] == "lifespan"
+
+
+def test_http_app_is_unwrapped_when_no_registry_configured():
+    """Default deployments get the plain Starlette app, no middleware overhead."""
+    from starlette.applications import Starlette
+
+    assert server._registry is None
+    assert isinstance(server.http_app(), Starlette)
+
+
+def test_duplicate_session_headers_are_rejected():
+    """This header is the gateway-to-session identity boundary. A gateway
+    appending its canonical value (last-wins) while an attacker-supplied one
+    survives first would authorise one tenant and serve another, so ambiguity
+    must be refused rather than resolved by an undocumented first-wins rule."""
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, _fake_registry())
+
+    sent = _drive(mw, _scope([("mcp-cad-session", "alice"), ("mcp-cad-session", "bob")]))
+
+    assert sent[0]["status"] == 400
+    assert not downstream.called
+
+
+def test_blank_session_header_is_rejected_not_silently_shared():
+    """Present-but-empty is a misconfigured gateway; silently downgrading to the
+    shared session would put a tenant's work in the common namespace."""
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, _fake_registry())
+
+    sent = _drive(mw, _scope([("mcp-cad-session", "   ")]))
+
+    assert sent[0]["status"] == 400
+    assert not downstream.called
+
+
+def test_overlong_handle_is_rejected():
+    downstream = _RecordingApp()
+    mw = server.CadSessionMiddleware(downstream, _fake_registry())
+
+    sent = _drive(mw, _scope([("mcp-cad-session", "x" * 5000)]))
+
+    assert sent[0]["status"] == 400
+    assert not downstream.called
+
+
+def test_lease_is_released_after_the_response():
+    """While a lease is held the registry refuses to close the session; if the
+    middleware leaked leases, eviction would stop working entirely."""
+    registry = _fake_registry()
+    mw = server.CadSessionMiddleware(_RecordingApp(), registry)
+
+    _drive(mw, _scope([("mcp-cad-session", "alice")]))
+
+    assert registry.destroy("alice") is True
+    assert len(registry) == 0
+
+
+def test_lease_is_released_even_when_the_app_raises():
+    registry = _fake_registry()
+
+    class Boom:
+        async def __call__(self, scope, receive, send):
+            raise RuntimeError("handler exploded")
+
+    mw = server.CadSessionMiddleware(Boom(), registry)
+    import asyncio
+
+    with pytest.raises(RuntimeError, match="exploded"):
+        asyncio.run(mw(_scope([("mcp-cad-session", "alice")]), _noop_receive, lambda m: None))
+
+    assert registry.destroy("alice") is True  # not stuck holding a lease
+
+
+def test_lifespan_shutdown_closes_every_session():
+    """Without this, every worker subprocess outlives a graceful shutdown —
+    which matters most to embedders that stop the app but keep the process."""
+    registry = _fake_registry()
+    lease = registry.acquire("alice")
+    session = lease.session
+    lease.release()
+
+    class App:
+        async def __call__(self, scope, receive, send):
+            return
+
+    import asyncio
+
+    asyncio.run(
+        server.CadSessionMiddleware(App(), registry)(
+            {"type": "lifespan"}, _noop_receive, lambda m: None
+        )
+    )
+
+    assert session.closed is True
+
+
+def test_session_contextvars_do_not_leak_into_a_later_headerless_request():
+    """Uvicorn gives each request its own task, so a bare set() would not leak
+    there — but that is the server's behaviour, not a contract. An embedder
+    driving the app sequentially in one context must not see the previous
+    tenant's session on a request that sent no header."""
+    registry = _fake_registry()
+    tenant, anonymous = _RecordingApp(), _RecordingApp()
+
+    import asyncio
+
+    async def two_requests_in_one_context():
+        await server.CadSessionMiddleware(tenant, registry)(
+            _scope([("mcp-cad-session", "alice")]), _noop_receive, lambda m: None
+        )
+        await server.CadSessionMiddleware(anonymous, registry)(
+            _scope(), _noop_receive, lambda m: None
+        )
+
+    asyncio.run(two_requests_in_one_context())
+
+    assert tenant.resolved is not None
+    assert anonymous.resolved is None  # falls back to the shared singleton
+    assert anonymous.handle is None  # so destroy_session() cannot target alice

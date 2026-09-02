@@ -1,10 +1,14 @@
 import contextvars
+import functools
 import json
 import sys
 
-from mcp.server.fastmcp import FastMCP
+import anyio
+import anyio.to_thread
+from mcp.server.mcpserver import MCPServer
 from mcp.types import PromptMessage, TextContent, ToolAnnotations
 
+from build123d_mcp.session_registry import MAX_HANDLE_LENGTH
 from build123d_mcp.tools._marshal import marshal_render_drawing, marshal_render_view
 from build123d_mcp.worker import WorkerSession
 
@@ -24,10 +28,11 @@ register parts with show(part, "name"), measure() after every boolean,
 export() when done. Read the build123d://quickref resource before writing
 build code. Step-by-step workflows: build123d://skill/modeling (build 3D
 parts, incl. from technical drawings), build123d://skill/edit (modify an
-existing model), build123d://skill/drawing (multi-view engineering drawings),
-and build123d://skill/repair (repair a solid that fails the validity gate);
-install any into the project with
-install_skill().
+existing model), and build123d://skill/repair (repair a solid that fails the
+validity gate); install any into the project with install_skill(). Engineering
+drawings have moved to draftwright (https://github.com/pzfreo/draftwright),
+which publishes its own skill; it is importable inside execute(), so a drawing
+is built from live session geometry without leaving the session.
 """
 
 # --- MCP tool annotations (#368) --------------------------------------------- #
@@ -39,12 +44,29 @@ install_skill().
 # is a query and the file is a directed output, not a surprising mutation. idempotentHint
 # is set only on mutating-but-idempotent ops (per the spec it's meaningful only when
 # readOnlyHint is false). No wire/behaviour change for clients that ignore annotations.
-_READ_ONLY = ToolAnnotations(readOnlyHint=True)
-_MUTATING = ToolAnnotations(readOnlyHint=False, destructiveHint=False)
-_IDEMPOTENT = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True)
-_DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True)
+_READ_ONLY = ToolAnnotations(read_only_hint=True)
+_MUTATING = ToolAnnotations(read_only_hint=False, destructive_hint=False)
+_IDEMPOTENT = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True)
+_DESTRUCTIVE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True)
 
-mcp = FastMCP("build123d-mcp", instructions=_INSTRUCTIONS, stateless_http=True)
+
+def _server_version() -> str:
+    """Version reported in ``serverInfo`` at initialize / server-discover.
+
+    SDK v1 defaulted this to the *SDK's* version (clients saw "1.27.0"); v2
+    defaults it to the empty string. Neither is useful, so report our own
+    distribution version — the number a user would quote in a bug report.
+    """
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _dist_version
+
+    try:
+        return _dist_version("build123d-mcp")
+    except PackageNotFoundError:  # running from a source tree without an install
+        return "unknown"
+
+
+mcp = MCPServer("build123d-mcp", instructions=_INSTRUCTIONS, version=_server_version())
 _session: WorkerSession
 _session_var: contextvars.ContextVar[WorkerSession | None] = contextvars.ContextVar(
     "b123d_session", default=None
@@ -66,6 +88,27 @@ def configure(session: WorkerSession) -> None:
     """
     global _session
     _session = session
+
+
+# Per-handle CAD sessions for HTTP (#428). None until configure_registry() runs,
+# which cli.main() does only for --transport http with --max-sessions > 1; stdio
+# never touches any of this.
+_registry = None
+_handle_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "b123d_session_handle", default=None
+)
+
+# The header carrying the CAD session handle. Supplied by an auth gateway or a
+# client's static config — never by the MCP client itself, which has no way to
+# learn or adopt a custom header (nothing in the protocol lets a server ask for
+# one). See docs/adr/0003-http-cad-session-handles.md.
+CAD_SESSION_HEADER = "mcp-cad-session"
+
+
+def configure_registry(registry) -> None:
+    """Enable per-handle HTTP session isolation."""
+    global _registry
+    _registry = registry
 
 
 # Live-session viewer publisher (build123d_mcp.viewer.ViewerPublisher), or None
@@ -135,20 +178,180 @@ def _publish_reset() -> None:
     viewer.reset()
 
 
+class CadSessionMiddleware:
+    """Resolve the ``Mcp-Cad-Session`` header to a per-handle CAD session.
+
+    Plain ASGI rather than Starlette's ``BaseHTTPMiddleware``: the latter
+    reads the request through a task group, which both buffers streamed
+    Streamable-HTTP bodies and breaks contextvar propagation into the endpoint —
+    the exact mechanism this middleware depends on.
+
+    No header (or no registry configured) leaves ``_session_var`` unset, so
+    ``_resolve_session()`` falls back to the shared singleton and every existing
+    HTTP deployment behaves exactly as before. This is opt-in.
+    """
+
+    def __init__(self, app, registry) -> None:
+        self.app = app
+        self.registry = registry
+        # Registry work runs in threads, but NOT on anyio's default limiter:
+        # a same-handle caller parks on the creation barrier for up to
+        # _CREATE_WAIT_S, and a burst of those would occupy the whole shared
+        # pool — the same one the MCP server dispatches sync tool calls on. That
+        # would stall unrelated requests, including ones for sessions already
+        # warm, which is the opposite of what offloading was for. A private
+        # limiter bounds the damage to this feature.
+        self._limit = max(4, getattr(registry, "max_sessions", 8) + 4)
+        self._limiter = None
+
+    def _thread_limiter(self):
+        # Built lazily: a CapacityLimiter binds to the running async backend, so
+        # it cannot be constructed when the app object is (outside any loop).
+        if self._limiter is None:
+            self._limiter = anyio.CapacityLimiter(self._limit)
+        return self._limiter
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "lifespan":
+            await self._lifespan(scope, receive, send)
+            return
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        values = [
+            value.decode("latin-1").strip()
+            for key, value in scope.get("headers", ())
+            if key.decode("latin-1").lower() == CAD_SESSION_HEADER
+        ]
+
+        # Duplicates are an identity-confusion hazard, not a curiosity: this
+        # header is the gateway-to-session boundary, and a gateway appending its
+        # canonical value (last-wins) while an attacker-supplied one survives
+        # first would authorise one tenant and serve another. Refuse to guess.
+        if len(values) > 1:
+            await _send_json(send, 400, {"error": f"Duplicate {CAD_SESSION_HEADER} header."})
+            return
+
+        if not values:
+            await self.app(scope, receive, send)
+            return
+
+        handle = values[0]
+        if not handle:
+            # Present but blank is a misconfigured gateway, not a request to use
+            # the shared session — say so rather than silently downgrading.
+            await _send_json(send, 400, {"error": f"Empty {CAD_SESSION_HEADER} header."})
+            return
+        if len(handle) > MAX_HANDLE_LENGTH:
+            await _send_json(
+                send,
+                400,
+                {"error": f"{CAD_SESSION_HEADER} header exceeds {MAX_HANDLE_LENGTH} characters."},
+            )
+            return
+
+        from build123d_mcp.session_registry import SessionLimitExceeded, SessionUnavailable
+
+        # Off the event loop: acquiring can spawn a worker subprocess (seconds),
+        # and a same-handle caller can block on the creation barrier for far
+        # longer. Called inline, either would stall every other in-flight HTTP
+        # request on this process — including ones for sessions that are already
+        # warm. Releasing can close a worker (kill + join), so it goes too.
+        try:
+            lease = await anyio.to_thread.run_sync(
+                self.registry.acquire, handle, limiter=self._thread_limiter()
+            )
+        except SessionLimitExceeded as exc:
+            await _send_json(send, 503, {"error": str(exc)})
+            return
+        except SessionUnavailable as exc:
+            await _send_json(send, 503, {"error": str(exc)})
+            return
+        except Exception as exc:  # worker failed to spawn
+            await _send_json(send, 500, {"error": f"Could not start a CAD session: {exc}"})
+            return
+
+        # Released only after the response completes: while a lease is held the
+        # registry will not close this session, so eviction or a concurrent
+        # destroy_session() cannot kill the worker mid-CAD-call.
+        #
+        # The contextvars are restored via tokens rather than just set. Under
+        # Uvicorn each request runs in its own task, so a set would not leak —
+        # but that is the server's behaviour, not a contract this middleware
+        # should depend on. An embedder calling the app sequentially in one
+        # context would otherwise leave the previous tenant's session visible to
+        # a following request that sent no header, which is a cross-tenant leak
+        # and, worse, one where destroy_session() would target the wrong handle.
+        session_token = _session_var.set(lease.session)
+        handle_token = _handle_var.set(handle)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            _session_var.reset(session_token)
+            _handle_var.reset(handle_token)
+            with anyio.CancelScope(shield=True):
+                # Shielded: if the client disconnected, an unshielded await here
+                # would be cancelled and the lease never returned, so the session
+                # could never be evicted.
+                await anyio.to_thread.run_sync(lease.release, limiter=self._thread_limiter())
+
+    async def _lifespan(self, scope, receive, send) -> None:
+        """Pass lifespan through to the wrapped app, reaping sessions on the way
+        out. Without this, every worker subprocess outlives a graceful shutdown —
+        which matters most to embedders that stop the ASGI app but keep the
+        process alive."""
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            # Off the loop: closing N workers is N kill+join round trips, which
+            # would otherwise block the event loop through graceful shutdown.
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(
+                    self.registry.close_all, limiter=self._thread_limiter()
+                )
+
+
+async def _send_json(send, status: int, payload: dict) -> None:
+    body = json.dumps(payload).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
 def http_app():
-    """Return the FastMCP ASGI app for use with an ASGI server (e.g. uvicorn).
+    """Return the MCPServer ASGI app for use with an ASGI server (e.g. uvicorn).
 
     **Single-session mode (default)**: all HTTP requests share the module-level
     WorkerSession set by ``configure()``.  This is correct for single-user
     deployments (one operator, one CAD namespace).  Concurrent clients will
     interleave operations in the same session.
 
-    **Multi-session mode**: host middleware can isolate tenants by setting
-    ``_session_var`` to a per-request ``WorkerSession`` before the MCP handler
-    runs; ``_resolve_session()`` will then return that session instead of the
-    singleton.  No such middleware is included — this hook exists for embedders.
+    **Per-handle mode**: when ``configure_registry()`` has been called, a request
+    carrying an ``Mcp-Cad-Session`` header gets that handle's own
+    ``WorkerSession``, created on first sight.  The handle comes from an auth
+    gateway or a client's static config, never from the MCP client itself.
+
+    Embedders wanting a different policy can still set ``_session_var`` from
+    their own middleware; ``_resolve_session()` honours whatever is set.
+
+    ``stateless_http=True`` is set here rather than on the ``MCPServer``
+    constructor: SDK v2 moved the flag off the server object onto the transport
+    factory.  It stays on because CAD session identity is ours (the handle
+    registry / ``_session_var``), never the protocol's — see ADR 0001 and 0003.
     """
-    return mcp.streamable_http_app()
+    app = mcp.streamable_http_app(stateless_http=True)
+    if _registry is not None:
+        return CadSessionMiddleware(app, _registry)
+    return app
 
 
 @mcp.tool(annotations=_MUTATING)
@@ -194,7 +397,7 @@ def render_view(
     colors: dict[str, str] | None = None,
     mode: str = "auto",
 ) -> list:
-    """Render model. Auto-detects 3D vs 2D: solids use the VTK tessellation path; 2D shapes (Sketches, edge Compounds, dimensioned drawings) use the ezdxf+matplotlib raster path — review dimensioned drawings the same way as 3D parts. Renders confirm appearance, not geometry — verify booleans with measure() first. format: 'png' (raster, default), 'svg' (HLR line drawing, works without a display), 'dxf' (HLR projection as parseable polylines for downstream 2D CAD), or 'both' (PNG + SVG together). If the PNG path fails (headless host), falls back to SVG automatically. direction: top, front, side, iso. azimuth/elevation: camera rotation in degrees applied after the direction preset. objects: comma-separated names or name:color pairs e.g. 'u_frame:blue,roller:red' (default: all, auto-coloured). quality: standard, high. clip_plane: x, y, z to slice; clip_at: absolute world coordinate along that axis (default: each mesh's midpoint). save_to: optional file path; for format='both' writes <save_to>.png and <save_to>.svg. mode: 'auto' (default; no solids + flat in Z = 2D), or '2d'/'3d' to force a pipeline when auto-detection picks wrong (e.g. a Compound mixing a Sketch and a solid routes to 3D); the path used is reported as 'Rendered via <mode> pipeline.' colors: optional dict mapping object names and special layer keys (`_dims`, `_labels`) to colour names or '#aabbcc'; overrides name:color syntax and the default dimension colour (2D PNG/SVG only; ignored for 3D and DXF). label_objects: when true, each named object is labelled at its centroid in the PNG. highlights: optional list of entities to label, e.g. [{"object": "bracket", "type": "edge", "index": 5, "label": "hinge_edge"}]; type is 'face', 'edge', or 'vertex', index matches shape.faces()/edges()/vertices(); the object must be registered with show() and in the rendered set. Labels are PNG-only."""
+    """Render model. Auto-detects 3D vs 2D: solids use the VTK tessellation path; 2D shapes (Sketches, edge Compounds, annotated 2D compounds) use the ezdxf+matplotlib raster path — review 2D output the same way as 3D parts. Renders confirm appearance, not geometry — verify booleans with measure() first. format: 'png' (raster, default), 'svg' (HLR line drawing, works without a display), 'dxf' (HLR projection as true CIRCLE/LINE entities for downstream 2D CAD, in model coordinates — arcs exact, not tessellated), or 'both' (PNG + SVG together). If the PNG path fails (headless host), falls back to SVG automatically. direction: top, front, side, iso. azimuth/elevation: camera rotation in degrees applied after the direction preset. objects: comma-separated names or name:color pairs e.g. 'u_frame:blue,roller:red' (default: all, auto-coloured). quality: standard, high. clip_plane: x, y, z to slice; clip_at: absolute world coordinate along that axis (default: each mesh's midpoint). save_to: optional file path; for format='both' writes <save_to>.png and <save_to>.svg. mode: 'auto' (default; no solids + flat in Z = 2D), or '2d'/'3d' to force a pipeline when auto-detection picks wrong (e.g. a Compound mixing a Sketch and a solid routes to 3D); the path used is reported as 'Rendered via <mode> pipeline.' colors: optional dict mapping object names and special layer keys (`_dims`, `_labels`) to colour names or '#aabbcc'; overrides name:color syntax and the default dimension colour (2D PNG/SVG only; ignored for 3D and DXF). label_objects: when true, each named object is labelled at its centroid in the PNG. highlights: optional list of entities to label, e.g. [{"object": "bracket", "type": "edge", "index": 5, "label": "hinge_edge"}]; type is 'face', 'edge', or 'vertex', index matches shape.faces()/edges()/vertices(); the object must be registered with show() and in the rendered set. Labels are PNG-only."""
     result = _resolve_session().render_view(
         direction=direction,
         objects=objects,
@@ -256,11 +459,71 @@ def suggest_spec(object_name: str = "") -> str:
     return _resolve_session().suggest_spec(object_name)
 
 
+# --- drawing deprecation (#465) ---------------------------------------------
+#
+# The drawing tools are moving to draftwright, which owns drawing generation and
+# publishes its own skill. They still work; this phase only announces the move.
+_DRAWING_MOVED = (
+    "NOTE — this drawing tool is DEPRECATED and moves to draftwright "
+    "(https://github.com/pzfreo/draftwright): off by default from 0.4.0, removed in 0.5.0 "
+    "(#465). draftwright is already importable inside execute(), so a drawing can be built "
+    "from live session geometry without leaving the session:\n"
+    '  execute("from draftwright import make_drawing; d = make_drawing(part)")\n'
+)
+
+
+def _notice_onto_text(text: str) -> str:
+    """Attach the notice without destroying a machine-readable result.
+
+    Three of the six drawing tools return pure JSON — inspect_drawing,
+    lint_drawing and suggest_view_layout. Prefixing prose to those breaks
+    json.loads() for every caller that parses them, and a deprecation must not
+    cost correctness in the releases where the tool still works. A JSON object
+    carries the notice as a leading field instead (a model reads it either way);
+    anything else takes the prose prefix.
+    """
+    if text.lstrip().startswith("{"):
+        try:
+            payload = json.loads(text)
+        except ValueError:
+            return _DRAWING_MOVED + text
+        if isinstance(payload, dict):
+            return json.dumps({"_deprecated": _DRAWING_MOVED.strip(), **payload}, indent=2)
+    return _DRAWING_MOVED + text
+
+
+def _drawing_deprecation(fn):
+    """Prefix a drawing tool's RESULT with the move notice.
+
+    The description reaches a client once, at connect. An agent already mid-session
+    holds the tool in its context and never re-reads it — and because these tools
+    keep working, nothing else would tell it either. The result is the only channel
+    that reaches that caller, which is why the notice goes here as well as in the
+    description rather than instead of it.
+
+    Applied UNDER @mcp.tool so the registered callable is the wrapper; functools.wraps
+    carries the docstring and signature through, so the advertised description and
+    input schema are unchanged.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        result = fn(*args, **kwargs)
+        if isinstance(result, list):
+            # render_drawing returns marshalled content blocks; lead with the notice.
+            return [TextContent(type="text", text=_DRAWING_MOVED), *result]
+        if isinstance(result, str):
+            return _notice_onto_text(result)
+        return result
+
+    return wrapper
+
+
 def register_experimental_tools() -> None:
     """Register the experimental, not-yet-production-ready tools (verify_spec,
     suggest_spec) into the served tool set. Called by ``cli.main()`` ONLY when
     ``--experimental`` / ``BUILD123D_EXPERIMENTAL`` is set — they are off by default
-    (#362). Idempotent: FastMCP warns on duplicate registration, so guard on it."""
+    (#362). Idempotent: MCPServer warns on duplicate registration, so guard on it."""
     existing = {t.name for t in mcp._tool_manager.list_tools()}
     for fn in (verify_spec, suggest_spec):
         if fn.__name__ not in existing:
@@ -379,13 +642,14 @@ def inspect_part(
 
 @mcp.tool(annotations=_IDEMPOTENT)
 def export(filename: str, format: str = "step", object_name: str = "") -> str:
-    """Export model. format: step, stl, dxf, svg, or comma-separated list e.g. 'step,stl' or 'dxf,svg'. 3D shapes (solids) export to step/stl; 2D shapes (Sketches and dimensioned drawings composed via build123d.drafting) export to dxf/svg. Mixing 2D and 3D formats for the same shape errors with a clear message. object_name: named object from show(), '*' to export all named shapes as a combined assembly (default: current shape). STEP exports carry the session names as labels — single-object exports use the object_name, '*' exports produce a Compound labelled 'assembly' with each child labelled by its show() name. Downstream CAD tools (FreeCAD, Fusion) will see the structured assembly with named bodies. Use dxf for engineering-drawing handoff to other CAD tools; svg for embedding in docs/wikis. The result echoes the exported shape's volume/bbox/face count (or bbox/edge count for 2D) as a final sanity check that the right, non-degenerate object was written."""
+    """Export model. format: step, stl, 3mf, dxf, svg, or comma-separated list e.g. 'step,stl' or 'dxf,svg'. 3D shapes (solids) export to step/stl/3mf; 2D shapes (Sketches and dimensioned drawings composed via build123d.drafting) export to dxf/svg. 3mf is a minimal core-spec mesh export (single object, no color/material) intended for slicers (Bambu Studio, PrusaSlicer, Orca) — use step for downstream CAD interop instead. Mixing 2D and 3D formats for the same shape errors with a clear message. object_name: named object from show(), '*' to export all named shapes as a combined assembly (default: current shape). STEP exports carry the session names as labels — single-object exports use the object_name, '*' exports produce a Compound labelled 'assembly' with each child labelled by its show() name. Downstream CAD tools (FreeCAD, Fusion) will see the structured assembly with named bodies. Use dxf for engineering-drawing handoff to other CAD tools; svg for embedding in docs/wikis. The result echoes the exported shape's volume/bbox/face count (or bbox/edge count for 2D) as a final sanity check that the right, non-degenerate object was written."""
     return _resolve_session().export_file(filename, format, object_name)
 
 
 @mcp.tool(annotations=_READ_ONLY)
+@_drawing_deprecation
 def inspect_drawing(objects: str = "", svg_path: str = "") -> str:
-    """Structured bbox and annotation report for a 2D drawing.
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Structured bbox and annotation report for a 2D drawing.
 
     Two modes:
 
@@ -419,12 +683,13 @@ def inspect_drawing(objects: str = "", svg_path: str = "") -> str:
 
 
 @mcp.tool(annotations=_READ_ONLY)
+@_drawing_deprecation
 def view_axes(
     viewport_origin: list[float],
     viewport_up: list[float] | None = None,
     look_at: list[float] | None = None,
 ) -> str:
-    """Return the world→page axis mapping for a project_to_viewport call,
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Return the world→page axis mapping for a project_to_viewport call,
     computed analytically (no projection performed). Use this BEFORE rendering
     a projected view to confirm which world axis ends up on which page axis
     and with what sign — catches bottom-view/side-view axis swaps before they
@@ -447,12 +712,13 @@ def view_axes(
 
 
 @mcp.tool(annotations=_READ_ONLY)
+@_drawing_deprecation
 def lint_drawing(
     svg_path: str = "",
     drawing_scale: float = 1.0,
     view_shape_names: list[str] | None = None,
 ) -> str:
-    """Run structural drawing-quality checks and return JSON {violations: [...]}.
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Run structural drawing-quality checks and return JSON {violations: [...]}.
 
     Session mode (default): reconstructs the session's annotations and delegates
     to build123d-drafting-helpers (lint_drawing + find_interferences) — single
@@ -485,8 +751,9 @@ def lint_drawing(
 
 
 @mcp.tool(annotations=_READ_ONLY)
+@_drawing_deprecation
 def render_drawing(svg_path: str, width: int = 1200, save_to: str = "") -> list:
-    """Rasterise an existing SVG file to PNG via resvg-py.
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Rasterise an existing SVG file to PNG via resvg-py.
 
     Complements render_view (which takes build123d shapes from the live
     session) by accepting an SVG written outside the sandbox — typically by
@@ -505,8 +772,9 @@ def render_drawing(svg_path: str, width: int = 1200, save_to: str = "") -> list:
 
 
 @mcp.tool(annotations=_MUTATING)
+@_drawing_deprecation
 def save_drawing_annotations(svg_path: str) -> str:
-    """Write a .dims.json sidecar file alongside an SVG with label metadata.
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Write a .dims.json sidecar file alongside an SVG with label metadata.
 
     build123d renders Text as filled glyph paths, not <text> SVG elements, so
     label strings are irrecoverable from a finished SVG. Call this tool after
@@ -584,6 +852,36 @@ def reset() -> str:
     return result
 
 
+# --- HTTP session-handle tools (#428) ---------------------------------------- #
+# These act on the registry, not on a WorkerSession, so they have no worker op and
+# no stub in worker.py — they never cross the process boundary. Both are no-ops
+# over stdio, where there is exactly one session and nothing to manage.
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+def destroy_session() -> str:
+    """Close THIS client's CAD session, discarding its namespace, objects and snapshots, and release its worker subprocess. The next tool call transparently starts a fresh session under the same handle. Use when abandoning a model entirely; prefer reset() to clear geometry while keeping the session. Only meaningful over HTTP with a session handle configured."""
+    if _registry is None:
+        return "Per-handle sessions are not enabled; this server has a single CAD session. Use reset() instead."
+    handle = _handle_var.get()
+    if handle is None:
+        return "This request carries no session handle, so it is using the shared session. Use reset() instead."
+    existed = _registry.destroy(handle)
+    return (
+        "Session destroyed; the next call will start a fresh one."
+        if existed
+        else "No session to destroy; the next call will start a fresh one."
+    )
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def list_sessions() -> str:
+    """Report how many CAD sessions this server process is holding, its configured limit, and how long each has been idle. Handles are secrets and are never returned. Operator/diagnostic tool for HTTP deployments — over stdio there is always exactly one session."""
+    if _registry is None:
+        return json.dumps({"sessions": 1, "mode": "single-session"}, indent=2)
+    return json.dumps(_registry.stats(), indent=2)
+
+
 @mcp.tool(annotations=_READ_ONLY)
 def compare(
     a: str,
@@ -658,7 +956,7 @@ def find_countersinks(object_name: str = "") -> str:
 # Idempotent — the same label overwrites.
 @mcp.tool(annotations=_IDEMPOTENT)
 def resolve(object_name: str, selector: str, label: str = "") -> str:
-    """Evaluate a selector expression against a named object and return a geometry descriptor. selector is a Python expression suffix applied to the object, e.g. '.faces().filter_by(Axis.Z).last()'. If label is given, the descriptor is stored in session.geometry_refs[label] and appears in session_state(). Returns JSON: {label, ref, object, selector, type, area/length, center, normal (for Face)}. The ref field uses @cad[object#label] format."""
+    """Evaluate a selector expression against a named object and return a geometry descriptor. selector is a Python expression suffix applied to the object, e.g. '.faces().filter_by(Axis.Z).last()'. If label is given, the descriptor is stored in session.geometry_refs[label] and appears in session_state(). Returns JSON: {label, ref, object, selector, type, geom_type, area/length, center}. center is the entity's true centre — the arc centre for a circular/elliptical edge, the area centroid otherwise — not the parametric midpoint, which for a circle or cylinder lies ON the entity a radius from its axis. A planar face also carries normal; a curved face carries axis {origin, direction} and radius instead, because a curved face has no single normal (a sphere carries neither — its centre and radius say everything). A list-valued selector carries count, an aggregate center averaged over every match, and per-entity descriptors in entities (first 50, with entities_truncated when there are more). The ref field uses @cad[object#label] format."""
     return _resolve_session().resolve(object_name, selector, label=label)
 
 
@@ -805,9 +1103,9 @@ BUILD123D-MCP WORKFLOW GUIDE
    ezdxf+matplotlib path), and ship it with export(name, "dxf").
 
    Two cookbooks for two audiences:
-   - build123d://drafting — engineering drawings for fabrication: tolerance
-     dims, TechnicalDrawing title block, multi-view sheets, hole tables.
-     Two-colour output (black part + blue dims).
+   - build123d://drafting — DEPRECATED (#465). Engineering drawings have moved to
+     draftwright (https://github.com/pzfreo/draftwright), which owns generation
+     and publishes its own skill.
    - build123d://presentation — design-discussion diagrams: per-group colour
      via ExportSVG layers, filled feature highlights, legends, reference
      axes, Draft scaling for small parts. Multi-colour SVG, run from a
@@ -819,10 +1117,13 @@ BUILD123D-MCP WORKFLOW GUIDE
    default line_width=0.5 and arrow_length=3.0 make witness lines render as
    thick filled rectangles. Override every parameter, not just font_size.
 
-   For a guided multi-view drawing workflow (choose views, scale/page size,
-   annotate, lint, export SVG/DXF/PDF), call install_skill() to write a
-   step-by-step skill file into the current project, or read the skill directly
-   from the build123d://skill/drawing resource.
+   For a multi-view engineering drawing, use draftwright
+   (https://github.com/pzfreo/draftwright) — it owns drawing generation and
+   publishes its own skill. It is importable inside execute(), so the drawing is
+   built from live session geometry rather than an exported file:
+       execute("from draftwright import make_drawing; d = make_drawing(part)")
+   This server's drawing tools are deprecated: off by default from 0.4.0,
+   removed in 0.5.0 (#465).
 
 11. IMPORTING EXTERNAL FILES
    After import_cad_file(), the shape is a named object — use render_view(objects="name")
@@ -874,7 +1175,7 @@ def build123d_selectors_cookbook() -> str:
 @mcp.resource(
     "build123d://drafting",
     mime_type="text/plain",
-    description="Code-first 2D engineering drawings cookbook: project a 3D part to a 2D view, dimension with ExtensionLine/DimensionLine, add tolerances, compose a TechnicalDrawing title block, multi-view sheet layout, hole-table pattern, export to DXF/SVG.",
+    description="DEPRECATED (#465) — moving to draftwright (https://github.com/pzfreo/draftwright), which owns drawing generation and publishes its own skill; importable inside execute(). Code-first 2D engineering drawings cookbook: project a 3D part to a 2D view, dimension with ExtensionLine/DimensionLine, add tolerances, compose a TechnicalDrawing title block, multi-view sheet layout, hole-table pattern, export to DXF/SVG.",
 )
 def build123d_drafting_cookbook() -> str:
     """build123d 2D drafting cookbook — code-first engineering drawings."""
@@ -886,7 +1187,7 @@ def build123d_drafting_cookbook() -> str:
 @mcp.resource(
     "build123d://drafting-api",
     mime_type="text/plain",
-    description="Auto-generated API reference for build123d-drafting-helpers: exact signatures and one-line descriptions for every public class (Dimension, Leader, TitleBlock, Drawing, ...) and function, generated from the installed library so it always matches what execute() imports.",
+    description="DEPRECATED (#465) — moving to draftwright (https://github.com/pzfreo/draftwright), which owns drawing generation and publishes its own skill; importable inside execute(). Auto-generated API reference for build123d-drafting-helpers: exact signatures and one-line descriptions for every public class (Dimension, Leader, TitleBlock, Drawing, ...) and function, generated from the installed library so it always matches what execute() imports.",
 )
 def build123d_drafting_api() -> str:
     """build123d-drafting-helpers API reference — generated from the installed library."""
@@ -896,7 +1197,7 @@ def build123d_drafting_api() -> str:
 @mcp.resource(
     "build123d://presentation",
     mime_type="text/plain",
-    description="Code-first design-discussion diagrams: per-group colour via ExportSVG layers, filled feature highlights, legends with swatches, reference axes, titles, and Draft scaling for small parts. Sister cookbook to build123d://drafting (which targets fabrication handoff).",
+    description="Code-first design-discussion diagrams: per-group colour via ExportSVG layers, filled feature highlights, legends with swatches, reference axes, titles, and Draft scaling for small parts. Presentation diagrams are NOT engineering drawings and are unaffected by the drawing deprecation (#465); this resource stays.",
 )
 def build123d_presentation_cookbook() -> str:
     """build123d presentation cookbook — discussion diagrams (vs drafting's fab drawings)."""
@@ -928,6 +1229,7 @@ def build123d_bd_warehouse() -> str:
 
 
 @mcp.tool(annotations=_READ_ONLY)
+@_drawing_deprecation
 def suggest_view_layout(
     object_name: str = "",
     page_w: float = 297.0,
@@ -940,7 +1242,7 @@ def suggest_view_layout(
     extents: list[float] | None = None,
     centroid: list[float] | None = None,
 ) -> str:
-    """Auto-calculate safe VIEW_X / VIEW_Y positions for a multi-view engineering drawing.
+    """DEPRECATED (#465) — moved to draftwright; off by default in 0.4.0, removed in 0.5.0. Calling it explains the replacement. Auto-calculate safe VIEW_X / VIEW_Y positions for a multi-view engineering drawing.
 
     Measures the named shape's bounding box and returns per-view page positions
     (VIEW_X, VIEW_Y), look_at values, and camera/up vectors for a standard
@@ -990,7 +1292,7 @@ def suggest_view_layout(
 @mcp.resource(
     "build123d://skill/drawing",
     mime_type="text/plain",
-    description="The b123d-drawing engineering workflow skill: step-by-step guide for creating multi-view engineering drawings from build123d geometry (views, scale, annotation, lint, SVG/DXF/PDF export).",
+    description="DEPRECATED (#465) — moving to draftwright (https://github.com/pzfreo/draftwright), which owns drawing generation and publishes its own skill; importable inside execute(). The b123d-drawing engineering workflow skill: step-by-step guide for creating multi-view engineering drawings from build123d geometry (views, scale, annotation, lint, SVG/DXF/PDF export).",
 )
 def build123d_drawing_skill() -> str:
     """b123d-drawing engineering workflow skill."""
@@ -1036,14 +1338,15 @@ def build123d_repair_skill() -> str:
 
 
 @mcp.tool(annotations=_MUTATING)
-def install_skill(target: str = "claude", force: bool = False, skill: str = "drawing") -> str:
+def install_skill(target: str = "claude", force: bool = False, skill: str = "modeling") -> str:
     """Copy a b123d workflow skill into the current project.
 
     Writes the appropriate config file for the requested agent so the
     step-by-step workflow is available in future sessions.
 
-    skill: which workflow to install (default "drawing")
-      - drawing   → multi-view engineering drawings from build123d geometry
+    skill: which workflow to install (default "modeling")
+      - drawing   → DEPRECATED; still installs, but drawing generation has moved to
+                    draftwright, which publishes its own skill (#465)
       - modeling  → build 3D parts/assemblies (incl. from technical drawings)
       - edit      → modify existing build123d code and verify geometry deltas
       - repair    → repair a solid that fails the validity gate
@@ -1088,7 +1391,7 @@ Workflow:
    .move() — the relationship survives later changes. See build123d://quickref for examples.
 9. When complete: export("part", "step,stl").
 10. For 2D drawings, two cookbooks for two audiences:
-   - build123d://drafting   — engineering drawings for fabrication handoff.
+   - build123d://drafting   — DEPRECATED (#465); drawings moved to draftwright.
    - build123d://presentation — design-discussion diagrams (per-group colour,
      filled features, legends, axes, titles). Read this when the audience is
      a human reviewing a design rather than a fabricator.

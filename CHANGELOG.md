@@ -1,5 +1,267 @@
 # Changelog
 
+## v0.3.83
+
+### Changed
+
+- **The engineering-drawing tools are deprecated.** Drawing generation has moved
+  to [draftwright](https://github.com/pzfreo/draftwright), which owns it and
+  publishes its own agent skill; this server will stop carrying a second
+  implementation. `draftwright` is already in the `execute()` import allowlist,
+  so a drawing is built from live session geometry without exporting first —
+  `execute("from draftwright import make_drawing; d = make_drawing(part)")` — and
+  the in-session feedback loop is preserved.
+
+  This release only **announces** it: `inspect_drawing`, `view_axes`,
+  `lint_drawing`, `render_drawing`, `save_drawing_annotations` and
+  `suggest_view_layout` all still work and are still registered by default. The
+  notice appears in each tool's description *and* in its returned text — the
+  description reaches a client once at connect, while an agent already mid-session
+  holds the tool in context and would otherwise never learn the tool had moved.
+  `install_skill()`'s default changes from `drawing` to `modeling`; the drawing
+  skill still installs, with the notice on its status line.
+
+  **If you parse these tools' output:** `inspect_drawing`, `lint_drawing` and
+  `suggest_view_layout` return JSON, and their notice is carried as a leading
+  `_deprecated` field rather than as a text prefix, so `json.loads()` keeps
+  working. The prose-returning tools take a text prefix, and `render_drawing`'s
+  content blocks lead with a text block.
+
+  Planned: off by default in 0.4.0 (opt back in by tool group), removed in 0.5.0.
+  `render_view` is NOT affected in any format — it is model rendering, not drawing,
+  and its 2D pipeline for Sketches stays (#465).
+
+### Fixed
+
+- **Repeated operation timeouts now point at `--in-process`.** An MCP host that
+  prevents the worker from creating grandchild processes makes every op that
+  shells out hang until its budget expires rather than failing — `render_view`
+  and `health_check` always, plus the bounded geometry ops. The only places
+  naming the `--in-process` escape hatch were the worker *start* failures, so a
+  user hitting this burned the full budget per call (150 s for a render) with no
+  pointer to the workaround that fixes it completely.
+
+  The op-timeout message now names it, but only from the second consecutive
+  timeout: one slow boolean is indistinguishable from a blocked spawn, and that
+  mode costs crash containment and operation timeouts, so recommending it on a
+  single timeout would be wrong. The counter resets on any successful call.
+  `execute()` keeps its own guidance (smaller steps, `--exec-timeout`) and is not
+  redirected. This does not diagnose the underlying spawn failure — see #452,
+  which is still open (#452).
+
+- **`render_view` DXF/SVG projections are anchored at the world origin, not the
+  part centroid.** `project_to_viewport` returns 2D coordinates relative to its
+  `look_at` point, and that point was an aggregate of `shape.center()` — so every
+  written coordinate was displaced by the centre of mass. The shape was exact and
+  every radius and span correct; only the origin moved. That made it silent
+  (nothing in the output said the coordinates were relative), part-dependent (the
+  offset scales with asymmetry, so it could not be corrected once and forgotten),
+  and invisible to inspection until the file was placed against other geometry.
+  For a format whose purpose is fabrication handoff, model-absolute coordinates
+  are the contract. Safe to change because the HLR projection is parallel: moving
+  the camera along the view direction changes only where the 2D origin sits,
+  never the projected shape — verified with the part 1e6 mm off-origin and across
+  a 10,000x range of camera distance. SVG shares the helper and gains the same
+  fix; `ExportSVG` auto-fits with a margin, so its appearance is unchanged.
+
+  Also corrects the tool description: DXF is emitted as true `CIRCLE` and `LINE`
+  entities — arcs exact rather than tessellated — not the "parseable polylines"
+  the docs claimed in three places (#455).
+
+- **`resolve()` reports an entity's centre, not a point on it.** build123d's
+  default `.center()` is `CenterOf.GEOMETRY`, the parametric midpoint — which on
+  a closed curve or a cylindrical surface lies *on* the entity, a full radius
+  from the axis. So `resolve()` located a Ø4.5 hole's wall at `(24.25, 12, 5)`
+  instead of `(22, 12, 5)`, and its rim edge a radius off in the same way, while
+  planar faces were correct, which is what made it easy to miss. `resolve()` is
+  the natural tool for locating an entity in order to act on it — a hole callout,
+  a mating axis, a joint position — so each of those was silently off by the
+  radius. Circular edges now use the arc centre and everything else the area/mass
+  centroid; the recogniser family (`find_holes()` et al.) already reported true
+  axes, and a test now pins the two to agree.
+
+  Three related fixes in the same output. A curved face no longer reports a
+  `normal` — a cylinder has no single normal, and `normal_at()` answers for one
+  surface point while reading as though it described the face; it now carries the
+  surface `axis` and `radius` instead, which is what a mating axis or a callout
+  actually needs. That also covers the partial-cylinder case the centre alone
+  cannot: on a fillet the area centroid genuinely lies on the patch, so the axis
+  field is the only thing that locates it. And a list-valued selector now reports
+  its `count` and per-entity descriptors (capped at 50) rather than collapsing to
+  a single aggregate centre with no way to tell how many entities matched — that
+  aggregate was itself offset, because `ShapeList.center()` takes no `CenterOf`
+  argument; it is now averaged from the corrected per-entity centres, so the list
+  and its entities cannot disagree — and averaged over *every* match, not just
+  the first 50 detailed, so a truncated list still reports a whole aggregate. A
+  sphere carries neither axis nor normal, since every axis through its centre is
+  an axis of rotation and naming one would be as arbitrary as a cylinder's
+  normal; its centre and radius already say everything. New `geom_type` field on
+  every descriptor (#456).
+
+- **`validate()` distinguishes interpenetrating solids from disjoint ones.** The
+  gate branched on the solid *count* alone, so two overlapping bodies and two
+  genuinely separate ones produced byte-identical reports — same `passes_gate`,
+  same `volume`, and an advisory asserting they were `disjoint`. Because
+  `shape.volume` sums the solids, an interpenetrating pair reported *more*
+  material than it had (two 20 mm cubes offset by 10 mm reported 16000 against a
+  true fused 12000, a 33.3% overstatement) and `export()` wrote that to STEP
+  without complaint. The gate now runs a pairwise intersection sweep and says
+  which it found: the advisory names the overlapping pairs and their
+  intersection volumes, and states that the reported volume counts overlapping
+  material more than once. A pair where one body wholly contains the other is
+  called `containing`, the same word `clearance()` uses, so the two tools do not
+  name one relationship twice. New report fields `overlap_check`,
+  `overlapping_pairs` and `pairwise_overlap_volume`.
+
+  `export()` surfaces it too. Overlap does not fail the gate, and export only
+  ever read `reasons` (the fail list), so the written STEP previously carried the
+  extra material silently while export's own sanity line restated the summed
+  volume as fact — the case the issue was actually about.
+
+  Two deliberate limits. `passes_gate` is unchanged — an interference fit in an
+  assembly export is legitimate geometry, so this is reported rather than failed.
+  And `pairwise_overlap_volume` is a sum of *pairwise* intersections: a region
+  shared by three or more bodies appears in several pairs, so it over-counts the
+  excess and must not be subtracted from the summed volume. The advisory says so
+  and tells you to fuse and re-measure instead; only with a single overlapping
+  pair does it state the true fused volume outright.
+
+  The sweep is bounded twice — a bounding-box reject skips pairs that cannot
+  touch, and a wall-clock budget plus a 64-body ceiling cap the O(n²) worst case.
+  Over either limit it reports `overlap_check: "undetermined"` and an advisory
+  that the bodies cannot be assumed disjoint, rather than a partial answer. Cost
+  on the ordinary single-solid path is negligible (#453).
+
+- **`cross_sections()` subtracts internal voids instead of adding them.** A
+  section area was computed as outer boundary *plus* every hole, bore and
+  cavity the plane cut, so any slice with an internal void read too large by
+  exactly twice the void area — a 60x40x10 plate with four Ø4.5 bores reported
+  `2442.157` against a true `2314.923` (+5.5%), and a 676-hole part reported
+  +10.4%. `BRepAlgoAPI_Section` returns each closed loop as a separate wire
+  with no record of which contains which; each became its own face and the
+  magnitudes were summed under `abs()`, which discarded the sign that should
+  have subtracted the voids. Loops are now classified by nesting depth —
+  enclosed by an odd number of other loops means void and subtracts, even
+  (zero included) means solid and adds — so several disjoint solid regions in
+  one slice, and an island standing inside a cavity, are all handled. This
+  fired precisely on the advertised "detect internal voids" case: a part with
+  a cavity read *larger* in section than solid stock, while the axis where the
+  same holes cut open notches read correct, which is what kept it hidden. The
+  same code path backs `inspect_part()`'s `sections` block, so its
+  `variation_ratio` and `constant_section` are corrected too. A slice whose
+  loop classification cannot be completed now carries `area_uncertain: true`
+  rather than returning a plausible number, since guessing a loop's sign
+  reproduces the same overstatement (#454).
+
+## v0.3.82
+
+### Added
+
+- **Native 3MF export.** `export(format="3mf")` joins the existing
+  `step`/`stl`/`dxf`/`svg` formats, complementing the 3MF *import* support
+  added in #423. Writes a minimal core-spec package (single mesh, no
+  color/material extensions) with the stdlib only (`zipfile` +
+  `xml.etree.ElementTree`, no new dependency), reusing the same
+  `shape.tessellate()` call the STL writer already uses so 3MF and STL
+  vertex positions match exactly for the same shape. The mesh is streamed
+  straight into the zip rather than built as an element tree, which makes
+  serialisation ~3x faster and cuts its transient allocation, though
+  `tessellate()` still dominates both time and memory on large models (#441).
+
+- **`export()` no longer destroys the file it is replacing when a write
+  fails.** Every format — `step`, `stl`, `3mf`, `dxf`, `svg` — now writes to a
+  temp file in the target directory, fsyncs it, and renames it into place. A
+  write interrupted partway through (the op timeout SIGKILLs the worker, and
+  the mesh formats stream) used to leave a truncated file where the last good
+  export had been: the caller learned the export failed, and the file it took
+  with it was the one they still had. The fsync means this survives power loss
+  and not just SIGKILL.
+
+  Four consequences worth knowing. The *directory* now has to be writable,
+  rather than the target file — so a read-only target (a `chmod 444`, a
+  read-only VCS checkout) is now replaced where the export used to fail, and
+  keeps its mode. A temp file stranded by a SIGKILL is swept on the next export
+  to the same directory, once it is an hour old; that is comfortably past a
+  default op budget, though not necessarily past an `--exec-timeout` set above
+  an hour. The permission bits are carried over from the export being replaced
+  instead of being reset by the rename — the nine mode bits only, and only if
+  the target was readable by its owner, otherwise the umask default applies.
+
+  And the export is now a *new file*, not the same file rewritten. Anything
+  tied to the old inode is left behind: a hard link to the export stops
+  tracking it, a process holding it open goes on reading the previous version,
+  and owner, ACLs, xattrs and the setgid/sticky bits are not carried over.
+
+- **HTTP deployments can isolate clients into separate CAD sessions.** Until now
+  every HTTP request shared one build123d namespace — safe, since the worker
+  pipe is lock-guarded, but not isolated: one client's `reset()` destroyed
+  another's model. With `--max-sessions N` (N > 1), a request carrying an
+  `Mcp-Cad-Session` header gets that handle's own worker subprocess, created on
+  first sight of the handle. Requests without the header keep sharing the default
+  session, so **existing deployments are unchanged** — this is opt-in.
+
+  The handle is supplied from *outside* the MCP client, by an auth gateway
+  mapping authenticated identity to a stable handle or by a handle in a client's
+  static config. It is deliberately not the MCP protocol session id, which dies
+  on every reconnect and would silently discard a half-built model. There is also
+  no `create_session` call, because nothing in MCP lets a server ask a client to
+  adopt a custom header — so create-on-first-use is the only workable contract.
+
+  Each session costs a subprocess with the OCC kernel loaded, so the registry
+  enforces a hard cap and evicts sessions idle beyond `--session-idle-timeout`
+  (default 1 hour), closing their workers. **The server does not authenticate
+  handles** — put an auth gateway in front of it, and a session-aware load
+  balancer if you run more than one process, since handles are process-local by
+  design. Rationale in `docs/adr/0003-http-cad-session-handles.md`; supersedes
+  ADR 0001's position that isolation was the embedder's job (#428).
+
+- **`destroy_session()` and `list_sessions()` tools.** `destroy_session()`
+  discards the calling client's own session and releases its worker; the next
+  call transparently starts a fresh one. `list_sessions()` reports how many
+  sessions the process holds, the configured limit, and idle ages — never the
+  handles, which are secrets.
+
+- **The official MCP conformance suite runs in CI.** A new `conformance` job
+  starts a real Streamable HTTP server and runs
+  `@modelcontextprotocol/conformance` against it at both currently testable
+  protocol eras (`2025-06-18` and `2025-11-25`). The suite's server mode targets
+  the spec's reference "everything server", so scenarios needing its fixture
+  primitives — and those probing capabilities this server does not declare
+  (sampling, elicitation, logging, completion, progress, subscriptions) — are
+  recorded in `tests/conformance-baseline.yml` with the reason for each. The
+  gate fails in both directions: a newly failing scenario is a regression, and a
+  baselined scenario that starts passing is a stale entry. `server-initialize`,
+  `ping`, `tools-list`, `tools-call-simple-text`, `tools-call-error`,
+  `resources-list`, `prompts-list` and `dns-rebinding-protection` are now
+  enforced. The 2026-07-28 era is not yet gateable — the suite has no server
+  scenarios for it (#428).
+
+### Changed
+
+- **Migrated to the MCP Python SDK v2, lifting the temporary `<2` cap.** SDK v2
+  removed `mcp.server.fastmcp`, so the server is now built on
+  `mcp.server.mcpserver.MCPServer`; the runtime dependency moves from
+  `mcp>=1.9,<2` to `mcp>=2,<3`. All 38 tools, 12 resources and the prompt
+  register unchanged — the decorator API is source-compatible for the way this
+  server uses it. Two changes were not: `stateless_http` moved off the server
+  constructor onto the transport factory, so `http_app()` now passes it to
+  `streamable_http_app()`, and the `mcp.types` models became snake_case
+  (`mime_type`, `read_only_hint`), which affects attribute reads but not the
+  wire format — clients see byte-identical JSON. Protocol negotiation now spans
+  `2024-11-05` through `2026-07-28`, so existing 2025-era clients are
+  unaffected. Verified against the official conformance suite and by diffing
+  the actual wire responses of a v1 and a v2 server side by side: `initialize`
+  capabilities, all 36 listed tool schemas, `structuredContent` and the
+  `ImageContent` shape returned by `render_view` are identical (#428).
+
+### Fixed
+
+- **`serverInfo.version` reports this package's version.** SDK v1 defaulted the
+  field to the *SDK's* own version, so clients saw `1.27.0`; SDK v2 defaults it
+  to the empty string. Neither identifies the server, so the version is now
+  passed explicitly and clients see e.g. `0.3.82` — the number worth quoting in
+  a bug report.
+
 ## v0.3.81
 
 ### Fixed

@@ -1,6 +1,12 @@
+import contextlib
 import copy
+import errno
+import os
+import stat
 import struct
+import tempfile
 import time
+from collections.abc import Iterator
 
 from build123d_mcp.tools._budget import op_budget
 from build123d_mcp.tools._paths import safe_output_path
@@ -11,7 +17,18 @@ from build123d_mcp.tools._paths import safe_output_path
 _EXPORT_MESH_MARGIN_S = 15
 _EXPORT_MESH_MIN_S = 10
 
-_VALID_FORMATS = ("step", "stl", "dxf", "svg")
+_VALID_FORMATS = ("step", "stl", "3mf", "dxf", "svg")
+
+# How many mesh elements to buffer before pushing them into the 3MF zip stream.
+# Large enough that the per-write overhead is negligible, small enough that peak
+# memory stays flat regardless of mesh size.
+_MESH_XML_FLUSH_EVERY = 4096
+
+# Prefix for the atomic-write temp file. Deliberately not dot-hidden, so a temp
+# file stranded by a killed export is visible rather than accumulating unseen,
+# and distinctive enough that the stale-temp sweep is unlikely to match anything
+# but our own files.
+_TMP_PREFIX = "export-tmp-"
 
 
 def _labelled_copy(shape, label: str):
@@ -63,6 +80,250 @@ def _stl_write(shape, abs_path: str) -> None:
             for v in (v0, v1, v2):
                 f.write(struct.pack("<3f", v.X, v.Y, v.Z))
             f.write(b"\x00\x00")  # attribute byte count
+
+
+def _stream_model_part(fh, verts, tris, core_ns: str) -> None:
+    """Serialise the 3MF model part straight into the open zip entry `fh`.
+
+    The mesh is the only part of the package that scales with the model, and one
+    ElementTree element per vertex/triangle costs ~8x the streaming STL writer
+    while holding the whole tree *and* its serialised bytes in memory — enough
+    to overrun the export op budget on large meshes (#441). Every attribute
+    written here is a number, so no XML escaping is needed. Output matches what
+    ElementTree produced, so exported files are unchanged."""
+    from datetime import datetime, timezone
+
+    buf: list[str] = []
+
+    def flush() -> None:
+        fh.write("".join(buf).encode("utf-8"))
+        buf.clear()
+
+    buf.append("<?xml version='1.0' encoding='utf-8'?>\n")
+    buf.append(f'<model xml:lang="en-US" xmlns="{core_ns}" unit="millimeter">')
+    buf.append('<metadata name="Application">build123d-mcp</metadata>')
+    buf.append(f'<metadata name="CreationDate">{datetime.now(timezone.utc).isoformat()}</metadata>')
+    buf.append('<resources><object id="1" type="model"><mesh><vertices>')
+    for v in verts:
+        buf.append(f'<vertex x="{v.X}" y="{v.Y}" z="{v.Z}" />')
+        if len(buf) >= _MESH_XML_FLUSH_EVERY:
+            flush()
+    buf.append("</vertices><triangles>")
+    for t in tris:
+        buf.append(f'<triangle v1="{t[0]}" v2="{t[1]}" v3="{t[2]}" />')
+        if len(buf) >= _MESH_XML_FLUSH_EVERY:
+            flush()
+    buf.append("</triangles></mesh></object></resources>")
+    buf.append('<build><item objectid="1" /></build></model>')
+    flush()
+
+
+def _set_export_mode(tmp_path: str, abs_path: str) -> None:
+    """Give the temp file the mode the finished export should have.
+
+    mkstemp creates 0600, but `os.replace` swaps in a new inode, so without this
+    every export would silently change the file's permissions. Prefer the mode of
+    the file being replaced — a user who ran `chmod 600 part.step` should not have
+    it widened by the next export, which is what writing in place used to give
+    them — and fall back to the umask default a plain open() would have produced.
+
+    A target with no owner-read bit is the one case where the previous mode is
+    not worth honouring: copying it produces an export the caller cannot open,
+    and every later export re-copies it, with no way out through the tool.
+
+    Best-effort: FAT/exFAT (the canonical 3MF destination) refuses chmod, and
+    that must not fail an export whose bytes are already written."""
+    mode = None
+    try:
+        mode = os.stat(abs_path).st_mode & 0o777
+    except OSError:
+        pass
+    if not mode or not mode & 0o400:
+        umask = os.umask(0)
+        os.umask(umask)
+        mode = 0o666 & ~umask
+    try:
+        os.chmod(tmp_path, mode)
+    except OSError:  # refused on FAT/exFAT
+        pass
+
+
+def _fsync_file(path: str) -> None:
+    """Flush the temp file to disk before it is renamed into place.
+
+    Without this the rename can reach the disk before the data does, so a power
+    loss leaves exactly the truncated file the temp-and-rename dance exists to
+    prevent — the whole scheme would only ever have protected against SIGKILL.
+
+    Reopens for writing, so it has to run before the export mode is applied —
+    see the ordering note in `_atomic_output`."""
+    fd = os.open(path, os.O_RDWR)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _fsync_dir(path: str) -> None:
+    """Persist the rename itself. Best-effort: Windows cannot open a directory,
+    and some filesystems refuse fsync on one. The file's own data is already
+    durable by then, so failing the export over this would be wrong."""
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+@contextlib.contextmanager
+def _atomic_output(abs_path: str) -> Iterator[str]:
+    """Yield a temp path to write to; rename it onto `abs_path` on success.
+
+    Every writer here can be interrupted mid-file — the op timeout SIGKILLs the
+    worker, and the mesh formats stream — so writing in place leaves a truncated
+    export where a previously good one was. The caller only learns the export
+    failed; the file it destroyed was the one they still had.
+
+    mkstemp rather than `abs_path + ".tmp"`: only `abs_path` has been through
+    `safe_output_path()`, so a concatenated sibling is an unvalidated path that
+    would follow a symlink planted at that name out of the allowed write roots,
+    and clobber any real file already there. mkstemp opens O_CREAT|O_EXCL, which
+    refuses both, and its random name keeps concurrent exports to the same target
+    off each other's temp file. The prefix is not dot-hidden: a SIGKILL strands
+    the temp file, and invisible litter is worse than visible litter.
+
+    O_EXCL only covers the *create*, though. Three of the five writers are
+    third-party and take a path, not a descriptor, so the fd is closed and the
+    name is resolved again by someone else — and a name we do not hold open is a
+    name another local user with write access to the output directory can swap
+    for a symlink. That is checked for below, but only partially: see the note
+    there. Exports belong in a directory only you can write.
+
+    The mode is set only after the writer returns, so the file stays at mkstemp's
+    0600 for the whole write and no one else can write into a half-built export.
+    """
+    out_dir = os.path.dirname(abs_path)
+    _sweep_stale_temps(out_dir)
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=out_dir, prefix=_TMP_PREFIX, suffix=".tmp")
+    except OSError as e:
+        # Report the path the caller asked for, not a temp name they never saw.
+        raise OSError(e.errno, e.strerror, abs_path) from None
+    os.close(fd)  # writers open the path themselves; several are third-party
+    try:
+        yield tmp_path
+        # The writer resolved the name itself, so check we still own what it
+        # wrote. If a symlink was swapped in, the bytes have already gone to
+        # whatever it pointed at and nothing here can recall them — but without
+        # this we would go on to chmod that file and rename the *link* onto
+        # abs_path, so every later export writes through it too. Refusing here
+        # keeps someone else's mistake out of the caller's own tree. lstat, not
+        # stat: the question is what the name is, not what it resolves to.
+        if not stat.S_ISREG(os.lstat(tmp_path).st_mode):
+            raise OSError(errno.EPERM, "export temp file was replaced mid-write", abs_path)
+        # fsync before chmod, deliberately. The temp file is still mkstemp's 0600
+        # here, so it can be reopened. Do it the other way round and a target mode
+        # without owner-write — a read-only VCS checkout, a `chmod 444` the user
+        # meant — gets copied onto the temp file first, and the export then dies
+        # reopening it, after every byte had already been written.
+        _fsync_file(tmp_path)
+        _set_export_mode(tmp_path, abs_path)
+        os.replace(tmp_path, abs_path)
+        _fsync_dir(out_dir)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _sweep_stale_temps(out_dir: str) -> None:
+    """Delete export temp files left behind by a killed worker.
+
+    The op timeout SIGKILLs the process mid-write, so no cleanup handler runs and
+    the temp file survives. Each attempt gets a fresh random name, so without a
+    sweep they accumulate without bound in the user's output directory. An export
+    cannot outlive the op budget by more than a couple of minutes, so anything an
+    hour old is certainly dead. Only the prefix is matched, so this can still hit
+    a file someone else named that way — it removes it, which is the same deal
+    any scratch-file convention makes.
+
+    lstat, not stat: the age that matters is the directory entry's own. Through
+    stat, a symlink named like a temp file inherits its target's age, so a link
+    made a second ago gets swept if it points at something old, and a dangling
+    one can never be swept at all. os.remove unlinks the link either way, so this
+    never touches the target."""
+    cutoff = time.time() - 3600
+    try:
+        names = os.listdir(out_dir)
+    except OSError:
+        return
+    for name in names:
+        if not (name.startswith(_TMP_PREFIX) and name.endswith(".tmp")):
+            continue
+        path = os.path.join(out_dir, name)
+        try:
+            if os.lstat(path).st_mtime < cutoff:
+                os.remove(path)
+        except OSError:
+            pass
+
+
+def _write_3mf(shape, abs_path: str) -> None:
+    """Write a minimal core-spec 3MF: single mesh, no color/material extensions.
+    Slicers (Bambu Studio, PrusaSlicer, Orca) accept this fine. stdlib-only
+    (zipfile + ElementTree) — same tessellate() call as _stl_write, so vertex
+    positions match the STL export exactly."""
+    import xml.etree.ElementTree as ET
+    from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
+
+    verts, tris = shape.tessellate(0.001, 0.1)
+
+    core_ns = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+    ct_ns = "http://schemas.openxmlformats.org/package/2006/content-types"
+    rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+    model_ct = "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"
+    model_rel_type = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"
+
+    content_types = ET.Element("Types", xmlns=ct_ns)
+    ET.SubElement(
+        content_types,
+        "Default",
+        Extension="rels",
+        ContentType="application/vnd.openxmlformats-package.relationships+xml",
+    )
+    ET.SubElement(content_types, "Override", PartName="/3D/3dmodel.model", ContentType=model_ct)
+    content_types_xml = ET.tostring(content_types, xml_declaration=True, encoding="utf-8")
+
+    rels = ET.Element("Relationships", xmlns=rel_ns)
+    ET.SubElement(
+        rels,
+        "Relationship",
+        Target="/3D/3dmodel.model",
+        Id="rel-1",
+        Type=model_rel_type,
+    )
+    rels_xml = ET.tostring(rels, xml_declaration=True, encoding="utf-8")
+
+    # writestr() stamps entries with the current time, but zf.open(name, "w")
+    # builds a bare ZipInfo that defaults to the 1980 zip epoch — so the model
+    # part needs its own ZipInfo to stay consistent with the other two. Passing
+    # a ZipInfo also skips the branch that applies the archive's compression,
+    # hence compress_type here; without it the mesh would be stored uncompressed.
+    model_info = ZipInfo("3D/3dmodel.model", date_time=time.localtime(time.time())[:6])
+    model_info.compress_type = ZIP_DEFLATED
+
+    with ZipFile(abs_path, "w", ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types_xml)
+        zf.writestr("_rels/.rels", rels_xml)
+        with zf.open(model_info, "w") as fh:
+            _stream_model_part(fh, verts, tris, core_ns)
 
 
 def _is_2d(shape) -> bool:
@@ -219,16 +480,23 @@ def _write_step(shape, abs_path: str) -> None:
 
 
 def _write_one(shape, abs_path: str, fmt: str) -> None:
-    if fmt == "step":
-        _write_step(shape, abs_path)
-    elif fmt == "stl":
-        _stl_write(shape, abs_path)
-    elif fmt == "dxf":
-        _write_dxf(shape, abs_path)
-    elif fmt == "svg":
-        _write_svg(shape, abs_path)
-    else:
+    if fmt not in _VALID_FORMATS:
         raise ValueError(f"Unknown format '{fmt}'")
+    # Every format goes through the temp-and-rename, so an interrupted export
+    # can't destroy the file it was replacing. The writers below are handed the
+    # temp path and never see the real one — including the STEP retries, which
+    # read back what they just wrote.
+    with _atomic_output(abs_path) as tmp_path:
+        if fmt == "step":
+            _write_step(shape, tmp_path)
+        elif fmt == "stl":
+            _stl_write(shape, tmp_path)
+        elif fmt == "3mf":
+            _write_3mf(shape, tmp_path)
+        elif fmt == "dxf":
+            _write_dxf(shape, tmp_path)
+        elif fmt == "svg":
+            _write_svg(shape, tmp_path)
 
 
 def _nauo_count(step_path: str) -> int:
@@ -250,12 +518,12 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
         raise ValueError("No format specified.")
     unknown = [f for f in formats if f not in _VALID_FORMATS]
     if unknown:
-        raise ValueError(f"Unknown format(s) '{', '.join(unknown)}'. Use: step, stl, dxf, svg")
+        raise ValueError(f"Unknown format(s) '{', '.join(unknown)}'. Use: step, stl, 3mf, dxf, svg")
 
     # Sanity: 2D shapes can only export 2D formats; 3D shapes can only export 3D.
     is_2d = _is_2d(shape)
     if is_2d:
-        bad_2d = [f for f in formats if f in ("step", "stl")]
+        bad_2d = [f for f in formats if f in ("step", "stl", "3mf")]
         if bad_2d:
             raise ValueError(
                 f"Cannot export 2D shape as {bad_2d}. Use 'dxf' or 'svg' for 2D drawings."
@@ -264,14 +532,20 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
         bad_3d = [f for f in formats if f in ("dxf", "svg")]
         if bad_3d:
             raise ValueError(
-                f"Cannot export 3D shape as {bad_3d}. Use 'step' or 'stl' for 3D solids; "
+                f"Cannot export 3D shape as {bad_3d}. Use 'step', 'stl', or '3mf' for 3D solids; "
                 f'use render_view(format="dxf") for the projected 2D outline.'
             )
 
     exported = []
     for fmt in formats:
         path = filename
-        ext_for_fmt = {"step": ".step", "stl": ".stl", "dxf": ".dxf", "svg": ".svg"}[fmt]
+        ext_for_fmt = {
+            "step": ".step",
+            "stl": ".stl",
+            "3mf": ".3mf",
+            "dxf": ".dxf",
+            "svg": ".svg",
+        }[fmt]
         existing_exts = (".step", ".stp") if fmt == "step" else (ext_for_fmt,)
         if not path.lower().endswith(existing_exts):
             path += ext_for_fmt
@@ -297,6 +571,7 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
         # (export runs once, so the extra import + exact mesh check is fine).
         step_path = next((p for p in exported if p.lower().endswith((".step", ".stp"))), None)
         gate_shape = shape
+        report: dict | None = None
         if step_path is not None:
             try:
                 from build123d import import_step
@@ -358,6 +633,27 @@ def export_file(session, filename: str, format: str = "step", object_name: str =
                     + ". Fix the solid and re-export (run validate() for detail; the "
                     "build123d://skill/repair resource has the defect-class repair ladder)."
                 )
+
+        # Overlapping bodies do NOT fail the gate (a deliberate interference fit is
+        # legitimate), so the advisory lives in report["warnings"] — which nothing
+        # here reads. Surface it explicitly: this is the path #453 was actually
+        # about, where the written STEP carries more material than the part has and
+        # the sanity line above restates the summed volume as if it were the truth.
+        if report is not None and report.get("overlapping_pairs"):
+            suffix += (
+                f"\n⚠ OVERLAPPING BODIES — {report['overlapping_pairs']} pair(s) of solids "
+                f"share material (pairwise intersection total "
+                f"{report['pairwise_overlap_volume']}). The volume reported above SUMS the "
+                "bodies, so it counts the shared material more than once and this file "
+                "carries more material than the part has. Fuse them and re-export unless "
+                "the interference is deliberate; validate() names the pairs."
+            )
+        elif report is not None and report.get("overlap_check") == "undetermined":
+            suffix += (
+                "\n⚠ NOTE — whether the solid bodies overlap was not determined (too many "
+                "bodies, or the intersection sweep ran out of budget), so the volume "
+                "reported above cannot be assumed free of double-counted material."
+            )
 
         # A single solid must land as a single STEP product. The #1356 ``Compound``
         # workaround (or any stray wrapper) writes it as ``PRODUCT('COMPOUND')`` ->
