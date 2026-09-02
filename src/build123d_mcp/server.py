@@ -1376,12 +1376,16 @@ def start_cad_session(description: str) -> list[PromptMessage]:
 Design task: {description}
 
 Workflow:
-1. Call reset(), then execute 'from build123d import *' to start clean.
-2. Build incrementally — small execute() calls are easier to debug than one large block.
+1. Call reset(), then read build123d://skill/modeling for the full workflow.
+2. Build incrementally with execute() by default. Use a canonical model.py with
+   execute_file() only when matching-view evidence shows that the valid checkpoint
+   needs a body-family/global-form rebuild; a failed rebuild atomically preserves it.
 3. After every execute(), call measure() to verify geometry (check volume and topology.faces).
 4. After every boolean (-, +, &), confirm topology.faces changed — unchanged counts mean the boolean failed.
 5. Use show(shape, "name") to register important intermediate shapes; it prints vol + face count immediately.
 6. Call render_view() only after measure() confirms the geometry is correct.
+   When working from a drawing, compare matching projections; printed dimensions
+   remain authoritative, while calibrated silhouettes may resolve undimensioned form.
 7. Call save_snapshot("name") before any experiment you might want to undo.
    For "what if?" proposals (add a hole, modify a feature) use the snapshot+restore loop:
    save_snapshot → mutate via execute → run analyses (measure/compare/render_view) → restore_snapshot.
