@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "build123d-mcp"
-version = "0.3.82.dev0"
+version = "0.3.84.dev0"
 description = "MCP server wrapping build123d for interactive 3D CAD"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "mcp>=1.9,<2",
+    "mcp>=2,<3",
     # build123d is pre-1.0 and 0.x minor bumps may break the API.
     # We test against both 0.10 and 0.11 (CI matrix), so the range spans both.
     # bump deliberately.

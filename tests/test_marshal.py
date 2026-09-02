@@ -26,7 +26,7 @@ def test_marshal_render_drawing_png_to_tempfile():
         {"png": _PNG, "size_bytes": len(_PNG), "width": 120}, "drawing.svg", ""
     )
     assert out[0].type == "image"
-    assert out[0].mimeType == "image/png"
+    assert out[0].mime_type == "image/png"
     assert out[0].data == base64.b64encode(_PNG).decode()
 
     assert out[1].type == "text" and out[1].text.startswith("[SEND: ")

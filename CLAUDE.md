@@ -16,14 +16,15 @@ The target is 100% passing. There are no accepted pre-existing failures — if t
 uv tool run --python 3.12 build123d-mcp
 ```
 
-Communicates over stdio (FastMCP). When configuring an MCP client, set `cwd` to the project root.
+Communicates over stdio (MCP SDK v2 `MCPServer`). When configuring an MCP client, set `cwd` to the project root.
 
 ## Project structure
 
 ```
-server.py          — FastMCP entry point; registers all MCP tools; holds module-level _session singleton
+server.py          — MCPServer entry point; registers all MCP tools; holds module-level _session singleton
 session.py         — Persistent state: namespace, current_shape, objects dict, snapshots
 security.py        — Three-layer defence: AST check → restricted builtins → exec timeout
+session_registry.py — Per-handle CAD sessions for HTTP (cap + idle eviction)
 tools/execute.py   — Thin wrapper delegating to session.execute()
 tools/render.py    — pyvista-based PNG rendering; headless (xvfb) if no DISPLAY
 tools/measure.py   — Geometry queries returning JSON (bounding_box, volume, area, wall thickness, clearance)
@@ -74,10 +75,22 @@ tools/export.py    — STEP/STL export; path traversal blocked
   override `_do_call`, not `_call`**, so they inherit the guard (e.g.
   `InProcessSession`). See `docs/adr/0001-worker-ipc-concurrency.md` (#322).
 - **HTTP mode shares one CAD session by default.** The lock makes the sharing
-  *safe*, not *isolated* — concurrent clients still see one namespace.
-  Per-tenant isolation is an embedder concern via the `_session_var` contextvar
-  hook in `server.py`; the CLI does not ship multi-session middleware, and
-  building it is a deliberate non-goal until a real hosting requirement exists.
+  *safe*, not *isolated* — concurrent clients still see one namespace. This is
+  still the default (`--max-sessions 1`), so existing deployments are unchanged.
+- **`--max-sessions N` (N > 1) isolates clients by handle.** A request carrying
+  an `Mcp-Cad-Session` header gets that handle's own `WorkerSession` from
+  `SessionRegistry` (`session_registry.py`), resolved by `CadSessionMiddleware`
+  and created on first sight; requests without the header still share the
+  default session. Sessions are capped and evicted after
+  `--session-idle-timeout` seconds, because each one is a subprocess with the
+  OCC kernel loaded.
+- **The handle comes from outside the MCP client** — an auth gateway or a
+  client's static config. It is deliberately *not* the MCP protocol session id,
+  which dies on reconnect and would silently discard a half-built model. **We do
+  not authenticate handles**: put an auth gateway in front, and a session-aware
+  load balancer if running multiple processes. See
+  `docs/adr/0003-http-cad-session-handles.md` (#428), which supersedes ADR
+  0001's "isolation is the embedder's job" position.
 
 ## Security model
 

@@ -401,6 +401,15 @@ class WorkerSession:
     Exposes the same interface as Session so server.py can use either.
     """
 
+    # Class-level default so the _call guard holds even for instances built
+    # without running __init__ (tests stub sessions via __new__, and any future
+    # alternative constructor would hit the same trap).
+    _closed: bool = False
+
+    # Same reason: the timeout path reads this, and it must not blow up on an
+    # instance built via __new__.
+    _consecutive_timeouts: int = 0
+
     def __init__(
         self,
         exec_timeout: int = 120,
@@ -422,7 +431,7 @@ class WorkerSession:
         self._proc: Any = None
         # Serialises the request/reply critical section (send -> poll -> recv)
         # over the single worker Pipe. Under HTTP transport one WorkerSession is
-        # shared across concurrent requests (FastMCP runs sync tools off the
+        # shared across concurrent requests (the MCP server runs sync tools off the
         # event loop); without this lock two threads can interleave on the pipe
         # and one can recv() the other's response. A single OCC worker is serial
         # anyway, so serialising costs no real throughput. (#322)
@@ -441,6 +450,19 @@ class WorkerSession:
         # crash skips the append), so replay can't re-hit it. Only execute()-driven
         # state is covered — not snapshots or import_cad_file/load_part geometry. (#359)
         self._execute_history: list[str] = []
+        # Set by close(). Checked in _call so a call on a closed session raises
+        # instead of silently resurrecting the worker: _do_call restarts a dead
+        # process by design (crash recovery), which for a deliberately evicted
+        # session would undo the eviction and leak the subprocess back.
+        self._closed = False
+        # Consecutive op timeouts, reset by any successful reply. A host that
+        # blocks the worker from spawning helper subprocesses fails EVERY op that
+        # shells out — render_view, health_check, the bounded geometry ops — and
+        # each one burns its whole budget, so the timeouts arrive back to back
+        # (#452). A genuinely slow boolean times out once and then succeeds when
+        # retried smaller. The count is what separates the two, and it is only
+        # touched from _do_call, which runs under the lock. (#322)
+        self._consecutive_timeouts = 0
         self._start_worker()
 
     @property
@@ -592,6 +614,12 @@ class WorkerSession:
         (restored, total). History is truncated to the steps actually re-applied so
         it stays consistent with the live worker. Lock held. If the worker can't be
         started at all, the history is cleared and (0, 0) returned."""
+        if self._closed:
+            # Crash recovery must not undo a deliberate close: a replacement
+            # worker here would be unreachable (every later call fails the
+            # _closed guard) and would leak until the process exits.
+            self._execute_history.clear()
+            return 0, 0
         try:
             self._start_worker()
         except Exception:  # noqa: BLE001 - host can't spawn a worker (e.g. #143)
@@ -622,12 +650,81 @@ class WorkerSession:
             )
         return "the session could not be rebuilt and has been reset"
 
+    def close(self) -> None:
+        """Tear down the worker process and its pipe. Idempotent.
+
+        Only the registry-backed HTTP path needs this: a session evicted for
+        idleness has to actually release its OCC subprocess (hundreds of MB of
+        RSS), not merely be dropped from a dict. The session is unusable
+        afterwards — further calls raise rather than restart the worker.
+
+        Sets ``_closed`` before taking the lock so a call that has not started
+        yet fails fast, then takes it so teardown cannot interleave with a call
+        already inside ``_do_call`` — otherwise killing the worker and dropping
+        the pipe under it produces a ``None`` dereference on ``self._conn``, or
+        an ``EOFError`` that sends the caller into crash recovery and starts a
+        replacement subprocess nothing will ever reach.
+
+        The registry only closes lease-free sessions, so in practice this lock
+        is uncontended; it is correctness insurance for direct callers.
+
+        Raises if the worker is still alive afterwards. ``_kill_worker`` swallows
+        everything — right for crash recovery, where a restart follows anyway —
+        but the session registry frees a capacity slot on the strength of this
+        call, so a worker that survived must not be reported as gone.
+        """
+        self._closed = True
+        with self._lock:
+            self._kill_worker()
+            conn, self._conn = self._conn, None
+            survived = self._proc is not None and self._proc.is_alive()
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        if survived:
+            raise RuntimeError(
+                f"Worker process {getattr(self._proc, 'pid', '?')} is still alive after "
+                "kill and join; its memory is not reclaimed."
+            )
+
     def _call(self, op: str, args: dict, timeout: int) -> Any:
         # Serialise the IPC critical section so concurrent callers (HTTP shared
         # session, pipelined clients) can't interleave on the pipe. Subclasses
         # override _do_call, not _call, so they inherit this guard. (#322)
         with self._lock:
+            # Guard here rather than in _do_call so subclasses inherit it.
+            if self._closed:
+                raise RuntimeError(
+                    "This CAD session has been closed (evicted for idleness or explicitly "
+                    "destroyed). Start a new session instead of reusing this handle."
+                )
             return self._do_call(op, args, timeout)
+
+    def _spawn_block_hint(self) -> str:
+        """Point at --in-process once timeouts start repeating.
+
+        An MCP host that prevents the worker from creating grandchild processes
+        makes every op that shells out hang until its budget expires, rather than
+        failing fast: render_view and health_check always, plus the bounded
+        geometry ops (#452, and #143 before it). The symptom is indistinguishable
+        from slow geometry on the FIRST timeout, which is why this stays quiet
+        then — telling someone whose fillet is genuinely too big to switch modes
+        would be wrong, and the degraded mode costs crash containment and op
+        timeouts. Two in a row is no longer plausibly slow geometry.
+        """
+        if self._consecutive_timeouts < 2:
+            return ""
+        return (
+            f" This is timeout {self._consecutive_timeouts} in a row. If they persist across "
+            "different operations — especially render_view or health_check, and especially on "
+            "Windows or a sandboxed MCP host — the worker may be unable to spawn the helper "
+            "subprocesses those ops need, in which case each one hangs until its budget expires "
+            "rather than failing. Relaunch with --in-process or BUILD123D_IN_PROCESS=1 to run "
+            "without them; the import sandbox still applies, but that mode has no crash "
+            "containment and no operation timeouts."
+        )
 
     def _do_call(self, op: str, args: dict, timeout: int) -> Any:
         if not self._proc.is_alive():
@@ -642,6 +739,7 @@ class WorkerSession:
             self._kill_worker()
             restored, n = self._restart_and_replay()
             detail = self._recovery_detail(restored, n)
+            self._consecutive_timeouts += 1
             from build123d_mcp.security import ExecutionTimeout
 
             if op == "execute":
@@ -657,9 +755,11 @@ class WorkerSession:
                     f"result."
                 )
             raise RuntimeError(
-                f"Operation '{op}' timed out after {timeout}s; the worker was restarted — {detail}."
+                f"Operation '{op}' timed out after {timeout}s; the worker was restarted — "
+                f"{detail}.{self._spawn_block_hint()}"
             )
 
+        self._consecutive_timeouts = 0
         try:
             response = self._conn.recv()
         except EOFError:
@@ -729,6 +829,14 @@ class WorkerSession:
         raise NotImplementedError
 
     def reset(self) -> str:
+        # Checked before the dead-worker shortcut below, which bypasses _call and
+        # would otherwise start a replacement subprocess for a closed session —
+        # unreachable (later calls fail the _closed guard) and leaked.
+        if self._closed:
+            raise RuntimeError(
+                "This CAD session has been closed (evicted for idleness or explicitly "
+                "destroyed). Start a new session instead of reusing this handle."
+            )
         self._execute_history.clear()
         if not self._proc.is_alive():
             self._start_worker()

@@ -1,0 +1,76 @@
+# MCP conformance baseline (#428).
+#
+# Consumed by `@modelcontextprotocol/conformance server --expected-failures`.
+# Every scenario listed here is expected to FAIL and does not fail CI; anything
+# NOT listed must pass. The runner also fails on stale entries (a listed
+# scenario that starts passing), so this file cannot silently rot.
+#
+# The scenarios below are inapplicable to build123d-mcp, not defects. The
+# server suite is written against the spec's reference "everything server", so
+# most scenarios require the server under test to expose specific fixture
+# primitives (e.g. a `test://static-text` resource, a `test_simple_prompt`
+# prompt). We deliberately do not implement those fixtures — doing so would
+# exercise the upstream Python SDK, which upstream already conformance-tests,
+# and would add a test-only tool surface to a real CAD server.
+#
+# What this file therefore protects is the intersection that DOES apply to us:
+# server-initialize, ping, tools-list, tools-call-simple-text, tools-call-error,
+# resources-list, prompts-list and dns-rebinding-protection must all keep
+# passing.
+#
+# Entries are whole scenarios rather than the finer `scenario:check-id` form.
+# That is not masking sibling checks: each baselined scenario here emits exactly
+# one check, and it fails on the missing fixture before any wire traffic the
+# suite could schema-check is produced. `tools-call-image` and friends therefore
+# cannot reach render_view/render_drawing at all — the ImageContent wire shape
+# they would otherwise cover is pinned by tests/test_marshal.py instead.
+#
+# To refresh: run the suite against a local `--transport http` server and
+# reconcile the failures listed below with the run summary.
+
+server:
+  # --- Deliberate: we run stateless HTTP ----------------------------------- #
+  # Warns "Server did not provide session ID". Correct for us — http_app()
+  # passes stateless_http=True, so CAD session identity is the module-level
+  # WorkerSession / _session_var, never an MCP protocol session ID (ADR 0001).
+  # The scenario emits no passing checks, which the baseline gate counts as a
+  # failure, so it is listed here rather than silently tolerated.
+  - server-sse-multiple-streams
+
+  # --- Capabilities build123d-mcp does not declare ------------------------- #
+  # Nothing to fix: the server advertises tools/resources/prompts only, so the
+  # suite's probes for these features have no counterpart to exercise.
+  - logging-set-level
+  - completion-complete
+  - tools-call-with-logging
+  - tools-call-with-progress
+  - tools-call-sampling
+  - tools-call-elicitation
+  - elicitation-sep1034-defaults
+  - elicitation-sep1330-enums
+  - resources-subscribe
+  - resources-unsubscribe
+
+  # --- Requires the reference server's fixture tools ----------------------- #
+  # Each expects a purpose-built tool returning a specific content type. Our
+  # image-returning tools (render_view / render_drawing) are real CAD renders,
+  # not the fixtures these scenarios call by name.
+  - tools-call-image
+  - tools-call-audio
+  - tools-call-embedded-resource
+  - tools-call-mixed-content
+
+  # --- Requires the reference server's fixture resources ------------------- #
+  # e.g. `Unknown resource: test://static-text`. Our resources are the
+  # build123d:// quickref/skill documents; `resources-list` covers them.
+  - resources-read-text
+  - resources-read-binary
+  - resources-templates-read
+
+  # --- Requires the reference server's fixture prompts --------------------- #
+  # e.g. `Unknown prompt: test_simple_prompt`. We ship one real prompt
+  # (start_cad_session); `prompts-list` covers it.
+  - prompts-get-simple
+  - prompts-get-with-args
+  - prompts-get-embedded-resource
+  - prompts-get-with-image
