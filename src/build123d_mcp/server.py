@@ -25,8 +25,11 @@ snapshots — a feedback loop a one-shot script cannot give.
 
 Quick start: execute("from build123d import *"), build in small steps,
 register parts with show(part, "name"), measure() after every boolean,
-export() when done. Read the build123d://quickref resource before writing
-build code. Step-by-step workflows: build123d://skill/modeling (build 3D
+export() when done. For edits to imported B-reps, call recognise_features()
+once for a compact inventory before hand-walking topology, then expand only
+the likely feature families and use their exact face evidence where available.
+Read the build123d://quickref resource before writing build code. Step-by-step
+workflows: build123d://skill/modeling (build 3D
 parts, incl. from technical drawings), build123d://skill/edit (modify an
 existing model), and build123d://skill/repair (repair a solid that fails the
 validity gate); install any into the project with install_skill(). Engineering
@@ -989,6 +992,24 @@ def find_bored_bosses(object_name: str = "") -> str:
 def find_countersinks(object_name: str = "") -> str:
     """Recognise countersinks (conical screw-head recesses) on a session object (defaults to current shape) — the feature find_holes reports only as a plain opening. A countersink is an internal cone flaring from a drilled bore out to a larger opening, coaxial with the drill; drill-point cones and external edge chamfers are excluded. Returns JSON: {count, countersinks: [{location (opening centre), axis (into the part), major_diameter (countersink Ø at the surface), drill_diameter, included_angle (deg, e.g. 82/90/100/120), depth}]}. object_name: named object from show() (default: current shape)."""
     return _resolve_session().find_countersinks(object_name)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def recognise_features(
+    object_name: str = "",
+    families: str = "",
+    coordinate_frame: str = "caller",
+    include_faces: bool = False,
+    max_features: int = 50,
+) -> str:
+    """Run the shared b123d-recognisers inventory once and return exact, run-local edit evidence. With families='' the response is a compact inventory and targetable-family count; pass comma-separated families such as 'holes,bosses,blends' for structured records and @feature handles. Returned handles are usable inside execute() as recognition_faces(handle), or recognition_faces(handle, role='defining'), and fail if their source geometry has been replaced. coordinate_frame='caller' (default) preserves the imported model coordinates used by edit instructions; 'part' uses a rigid-equivariant part-relative frame and returns that frame. include_faces adds exact caller-face indices and geometry descriptors. max_features limits expanded records to 1..100; counts remain exact."""
+    return _resolve_session().recognise_features(
+        object_name,
+        families=families,
+        coordinate_frame=coordinate_frame,
+        include_faces=include_faces,
+        max_features=max_features,
+    )
 
 
 # not read-only: with the optional label= arg it stores the descriptor in

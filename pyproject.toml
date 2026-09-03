@@ -40,6 +40,8 @@ dependencies = [
     # build123d://drafting cookbook — actually work out of the box.
     # Import name remains `build123d_drafting` (install name ≠ import name).
     "build123d-drafting-helpers>=0.10.0",
+    # Shared geometry-only feature inventory and exact run-local face evidence.
+    "b123d-recognisers>=0.4.14,<0.5",
     "defusedxml>=0.7.1",
     "augura>=0.1.6",
     "scipy",

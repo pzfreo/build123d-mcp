@@ -75,6 +75,12 @@ class Session:
         self.drawing_annotations: dict[str, Any] = {}
         self.drawing_page: dict[str, Any] | None = None
         self.geometry_refs: dict[str, Any] = {}
+        # Run-local b123d-recognisers evidence. The public handles resolve through
+        # recognition_faces() below and are rejected when their source object has
+        # been replaced; opaque package references never cross the MCP wire.
+        self._recognition_runs: dict[tuple[str, str], dict[str, Any]] = {}
+        self._recognition_targets: dict[str, dict[str, Any]] = {}
+        self._recognition_next_run = 1
         self.source_provenance: dict[str, str] | None = None
         self.execute_history: list[str] = []
         # Live-viewer delta tracking: name -> id(shape) at the last delta pull,
@@ -218,6 +224,44 @@ class Session:
                 print(f"Registered '{name}'")
 
         self.namespace["show"] = show
+
+        def recognition_faces(reference: str, role: str = "constituent"):
+            """Resolve a recognise_features() handle to exact caller-part faces.
+
+            References are intentionally valid only while their source session
+            object is unchanged. This mirrors b123d-recognisers' evidence
+            lifecycle instead of turning transient topology into persistent IDs.
+            """
+            target = self._recognition_targets.get(reference)
+            if target is None:
+                raise ValueError(
+                    f"Unknown or expired recognition reference {reference!r}; "
+                    "call recognise_features() again."
+                )
+            source_name = target["source_name"]
+            source = target["source"]
+            active = (
+                self.current_shape if source_name == "@current" else self.objects.get(source_name)
+            )
+            if active is not source:
+                raise ValueError(
+                    f"Stale recognition reference {reference!r}; source geometry changed. "
+                    "Call recognise_features() again."
+                )
+            evidence = target["evidence"]
+            feature = target["feature"]
+            if role == "constituent":
+                refs = evidence.constituent_faces(feature)
+            elif role == "defining":
+                refs = evidence.defining_faces(feature)
+            else:
+                raise ValueError("recognition face role must be 'constituent' or 'defining'")
+            resolver = getattr(evidence, "caller_face", evidence.face)
+            from build123d import ShapeList
+
+            return ShapeList([resolver(face_ref) for face_ref in refs])
+
+        self.namespace["recognition_faces"] = recognition_faces
 
         def set_page(width: float, height: float, margin: float = 5.0) -> None:
             """Register the drawing page extent for lint_drawing bounds checking.
@@ -994,6 +1038,9 @@ class Session:
         self.drawing_page = None
         self.last_error_detail = None
         self.geometry_refs.clear()
+        self._recognition_runs.clear()
+        self._recognition_targets.clear()
+        self._recognition_next_run = 1
         self.source_provenance = None
         self.execute_history = []
         self._viewer_baseline.clear()

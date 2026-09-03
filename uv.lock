@@ -72,6 +72,18 @@ wheels = [
 ]
 
 [[package]]
+name = "b123d-recognisers"
+version = "0.4.14"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "build123d" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/88/b7/70b19bf001f04df637da9383a36d809ed55bce92ba691886fe0728caced9/b123d_recognisers-0.4.14.tar.gz", hash = "sha256:c8d10b66610085ce907bd36ea19933fb5a9f7f9ac9ce0e67cb940cf780eae7dc", size = 11259308, upload-time = "2026-09-03T03:27:52.168Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/47/15/11bdcd2f1b76d457ce5abce840bb87a713074bab5e529da7e10e647f7164/b123d_recognisers-0.4.14-py3-none-any.whl", hash = "sha256:c46f270196b4197fd9ce15c37ddb19974d49615223caa9fabf9e4db1294c9d76", size = 427085, upload-time = "2026-09-03T03:27:49.568Z" },
+]
+
+[[package]]
 name = "bd-warehouse"
 version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -130,6 +142,7 @@ version = "0.3.84.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "augura" },
+    { name = "b123d-recognisers" },
     { name = "bd-warehouse" },
     { name = "build123d" },
     { name = "build123d-drafting-helpers" },
@@ -158,6 +171,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "augura", specifier = ">=0.1.6" },
+    { name = "b123d-recognisers", specifier = ">=0.4.14,<0.5" },
     { name = "bd-warehouse" },
     { name = "build123d", specifier = ">=0.10,<0.12" },
     { name = "build123d-drafting-helpers", specifier = ">=0.10.0" },

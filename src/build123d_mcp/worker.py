@@ -1062,6 +1062,17 @@ class WorkerSession:
     def find_hole_patterns(self, object_name: str = "") -> str:
         raise NotImplementedError
 
+    @_op(_tool(f"{_T}.recognise_features:recognise_features"), _exec_budget)
+    def recognise_features(
+        self,
+        object_name: str = "",
+        families: str = "",
+        coordinate_frame: str = "caller",
+        include_faces: bool = False,
+        max_features: int = 50,
+    ) -> str:
+        raise NotImplementedError
+
     @_op(_tool(f"{_T}.align_check:align_check"), _GEOMETRY_TIMEOUT)
     def align_check(
         self, object_a: str, object_b: str, axis: str = "Z", mode: str = "flush"
