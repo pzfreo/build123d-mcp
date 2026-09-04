@@ -186,6 +186,11 @@ def _find_hole_patterns(ws, tmp_path):
     assert "error" not in r and r["patterns"] == []
 
 
+def _recognise_features(ws, tmp_path):
+    r = json.loads(ws.recognise_features("a"))
+    assert "error" not in r and r["inventory"]["holes"] == 0
+
+
 def _align_check(ws, tmp_path):
     r = json.loads(ws.align_check("a", "b", mode="center"))
     assert "error" not in r and "delta" in r
@@ -305,6 +310,7 @@ SESSION_STATEFUL_TOOLS = {
     "find_bored_bosses": _find_bored_bosses,
     "find_countersinks": _find_countersinks,
     "find_hole_patterns": _find_hole_patterns,
+    "recognise_features": _recognise_features,
     "cross_sections": _cross_sections,
     "inspect_part": _inspect_part,
     "resolve": _resolve,

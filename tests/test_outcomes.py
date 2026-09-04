@@ -918,6 +918,7 @@ def test_mcp_lists_all_tools():
         "find_bored_bosses",
         "find_countersinks",
         "find_hole_patterns",
+        "recognise_features",
         "resolve",
         "script",
         "install_skill",

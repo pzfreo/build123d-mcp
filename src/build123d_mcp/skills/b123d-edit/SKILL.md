@@ -95,6 +95,18 @@ the feature in code. For spatial edits, render with labels or use
 `render_view(highlights=...)` to confirm the face/edge index before changing
 construction.
 
+For an imported B-rep with no feature history, call `recognise_features()`
+without `families` once for the compact shared inventory, then request only the
+likely family, for example `families="holes"` or `families="blends"`. Each
+returned `@feature[...]` handle can be resolved inside `execute()` with
+`recognition_faces(handle)` for all constituent faces, or
+`recognition_faces(handle, role="defining")` for the minimum recognition
+evidence. The default caller-coordinate records agree with the imported model;
+use `coordinate_frame="part"` only when a part-relative frame is useful. Handles
+are run-local and deliberately fail after their named source geometry is
+replaced, so recognise again after an edit. Empty families are explicit misses,
+not permission to substitute a nearby feature.
+
 ## Step 3 - Make One Explicit Edit
 
 Make a small source edit, then run the complete model.

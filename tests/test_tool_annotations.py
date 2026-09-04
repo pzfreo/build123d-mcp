@@ -29,6 +29,7 @@ def test_read_only_query_tools_are_marked_read_only():
         "find_bosses",
         "find_bored_bosses",
         "find_countersinks",
+        "recognise_features",
         "session_state",
         "design_audit",
         "analyze_printability",
