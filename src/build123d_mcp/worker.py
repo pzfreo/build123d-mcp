@@ -914,6 +914,30 @@ class WorkerSession:
     def cross_sections(self, object_name: str = "", axis: str = "Z", num_slices: int = 10) -> str:
         raise NotImplementedError
 
+    @_op(_tool(f"{_T}.mesh_analysis:mesh_section"), _export_budget)
+    def mesh_section(
+        self,
+        object_name: str = "",
+        axis: str = "Z",
+        position: float = 0.0,
+        tolerance: float = 0.1,
+        weld: float = 0.001,
+    ) -> str:
+        raise NotImplementedError
+
+    @_op(_tool(f"{_T}.mesh_analysis:mesh_holes"), _export_budget)
+    def mesh_holes(
+        self,
+        object_name: str = "",
+        min_diameter: float = 2.0,
+        max_diameter: float = 12.0,
+        slices: int = 48,
+        min_depth: float = 1.0,
+        tolerance: float = 0.1,
+        weld: float = 0.001,
+    ) -> str:
+        raise NotImplementedError
+
     @_op(_tool(f"{_T}.inspect_part:inspect_part"), _export_budget)
     def inspect_part(
         self,

@@ -201,6 +201,16 @@ def _cross_sections(ws, tmp_path):
     assert "error" not in r
 
 
+def _mesh_section(ws, tmp_path):
+    r = json.loads(ws.mesh_section("a", axis="Z", position=0.0))
+    assert "error" not in r and r["loop_count"] >= 1
+
+
+def _mesh_holes(ws, tmp_path):
+    r = json.loads(ws.mesh_holes("a"))
+    assert "error" not in r and r["holes"] == []
+
+
 def _inspect_part(ws, tmp_path):
     r = json.loads(ws.inspect_part("a"))
     assert "error" not in r and r["topology"]["solids"] == 1
@@ -312,6 +322,8 @@ SESSION_STATEFUL_TOOLS = {
     "find_hole_patterns": _find_hole_patterns,
     "recognise_features": _recognise_features,
     "cross_sections": _cross_sections,
+    "mesh_section": _mesh_section,
+    "mesh_holes": _mesh_holes,
     "inspect_part": _inspect_part,
     "resolve": _resolve,
     "suggest_view_layout": _suggest_view_layout,
