@@ -906,6 +906,8 @@ def test_mcp_lists_all_tools():
         "repair_advice",
         "import_cad_file",
         "cross_sections",
+        "mesh_section",
+        "mesh_holes",
         "inspect_part",
         "inspect_drawing",
         "prepare_drawing",
