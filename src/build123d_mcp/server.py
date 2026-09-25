@@ -1048,6 +1048,34 @@ def recognise_features(
     )
 
 
+@mcp.tool(annotations=_READ_ONLY)
+def find_candidates(
+    kind: str,
+    qualifiers: str = "{}",
+    stated_value: float | None = None,
+    object_name: str = "",
+) -> str:
+    """List recognised instances of a hole, boss, polygonal boss, slot, chamfer or fillet. qualifiers is JSON with optional axis (X/Y/Z), side (+X/-X/+Y/-Y/+Z/-Z, relative to the part bounding-box centre), and value_field; each candidate is checked under literal and Y/Z-swapped readings. stated_value is checked against the measured feature value within 0.1 mm or 1%. An unmatched value is flagged; empty or truncated recognition is never treated as proof of absence. Returns exact @feature handles for recognised instances."""
+    return _resolve_session().find_candidates(kind, qualifiers, stated_value, object_name)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def interface_features(object_name: str = "") -> str:
+    """Suggest planar mounting faces from recognised hole openings, with exact hole handles. These are geometric candidates, not a declaration of design intent. Pass chosen hole handles as protected_refs to edit_feature(); that edit also checks every other recognised hole and the outer envelope."""
+    return _resolve_session().interface_features(object_name)
+
+
+@mcp.tool(annotations=_MUTATING)
+def edit_feature(
+    handle: str,
+    diameter: float,
+    result_name: str = "",
+    protected_refs: str = "[]",
+) -> str:
+    """Transactionally resize one plain cylindrical through hole identified by a current @feature handle. Reject holes with counterbores, spotfaces, countersinks or multiple constituent faces. Predict the annular volume change, then check exact added/removed material, hole recognition, every other hole and the outer envelope before registering the result. protected_refs is a JSON list of other hole handles; the target itself cannot be protected. On failure no result is registered. Defaults to replacing the named source; result_name can preserve it under a new name."""
+    return _resolve_session().edit_feature(handle, diameter, result_name, protected_refs)
+
+
 # not read-only: with the optional label= arg it stores the descriptor in
 # session.geometry_refs (persistent, cleared by reset(), shown in session_state()).
 # Idempotent — the same label overwrites.

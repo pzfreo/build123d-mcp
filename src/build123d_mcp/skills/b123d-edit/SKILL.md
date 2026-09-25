@@ -110,6 +110,17 @@ passages are all reported as `section_recesses`; a record whose `record_type`
 is `SectionRecessRefusal` means a recess was detected but its geometry was not
 proved, so do not reconstruct from it.
 
+For an edit described by kind, axis, side or starting size, use
+`find_candidates(kind="hole", qualifiers='{"axis":"Z","side":"+X"}',
+stated_value=6)` before selecting a handle. It reports all recognised instances
+under both literal and Y/Z-swapped axis readings and flags an unmatched stated
+value. `interface_features()` suggests flat faces with hole openings and their
+handles; identify the actual mating interface before editing. For a plain
+through hole with one cylindrical wall, `edit_feature(handle, diameter=8,
+protected_refs='[...]')` predicts and measures its change and rejects an edit
+that moves another recognised hole or the outer envelope. It refuses complex
+hole stacks; use the manual workflow below for those.
+
 ## Step 3 - Make One Explicit Edit
 
 Make a small source edit, then run the complete model.
