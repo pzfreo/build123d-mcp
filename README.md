@@ -178,6 +178,20 @@ The useful loop is:
 If something goes wrong, ask the assistant to inspect `last_error`, repair the
 script, and try the next smaller step.
 
+### Editing an imported part
+
+After importing a STEP and establishing a valid baseline, use
+`find_candidates(kind="hole", qualifiers='{"axis":"Z","side":"+X"}',
+stated_value=6)` to list every recognised candidate and check both the part's
+literal axes and a Y/Z-swapped reading. `interface_features()` suggests flat
+faces carrying holes; choose which hole handles to protect. For a plain through
+hole, `edit_feature(handle, diameter=8, protected_refs='["@feature[...]"]')`
+resizes it and reports predicted and measured added or removed volume. It
+registers the result only when the hole, other recognised holes, and the outer
+envelope pass its checks. Holes with counterbores, spotfaces, countersinks or
+multiple constituent faces are refused; edit those in `execute()` and verify
+them with `compare(kind="shape")` and the STEP export gate.
+
 Good prompts usually ask the assistant to use the MCP tools explicitly and to
 verify the result before exporting. For example:
 

@@ -30,6 +30,8 @@ def test_read_only_query_tools_are_marked_read_only():
         "find_bored_bosses",
         "find_countersinks",
         "recognise_features",
+        "find_candidates",
+        "interface_features",
         "session_state",
         "design_audit",
         "analyze_printability",
@@ -58,6 +60,7 @@ def test_mutating_tools_are_not_read_only():
         "execute_file",
         "load_part",
         "import_cad_file",
+        "edit_feature",
         "install_skill",
         "save_drawing_annotations",
     ):

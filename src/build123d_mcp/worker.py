@@ -1162,6 +1162,30 @@ class WorkerSession:
     ) -> str:
         raise NotImplementedError
 
+    @_op(_tool(f"{_T}.edit_features:find_candidates"), _exec_budget)
+    def find_candidates(
+        self,
+        kind: str,
+        qualifiers: str = "{}",
+        stated_value: float | None = None,
+        object_name: str = "",
+    ) -> str:
+        raise NotImplementedError
+
+    @_op(_tool(f"{_T}.edit_features:interface_features"), _exec_budget)
+    def interface_features(self, object_name: str = "") -> str:
+        raise NotImplementedError
+
+    @_op(_tool(f"{_T}.edit_features:edit_feature"), _exec_budget)
+    def edit_feature(
+        self,
+        handle: str,
+        diameter: float,
+        result_name: str = "",
+        protected_refs: str = "[]",
+    ) -> str:
+        raise NotImplementedError
+
     @_op(_tool(f"{_T}.align_check:align_check"), _GEOMETRY_TIMEOUT)
     def align_check(
         self, object_a: str, object_b: str, axis: str = "Z", mode: str = "flush"

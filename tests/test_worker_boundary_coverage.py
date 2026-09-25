@@ -191,6 +191,16 @@ def _recognise_features(ws, tmp_path):
     assert "error" not in r and r["inventory"]["holes"] == 0
 
 
+def _find_candidates(ws, tmp_path):
+    r = json.loads(ws.find_candidates("hole", object_name="a"))
+    assert "error" not in r and r["candidates"] == []
+
+
+def _interface_features(ws, tmp_path):
+    r = json.loads(ws.interface_features("a"))
+    assert "error" not in r and r["mounting_face_candidates"] == []
+
+
 def _align_check(ws, tmp_path):
     r = json.loads(ws.align_check("a", "b", mode="center"))
     assert "error" not in r and "delta" in r
@@ -329,6 +339,8 @@ SESSION_STATEFUL_TOOLS = {
     "find_countersinks": _find_countersinks,
     "find_hole_patterns": _find_hole_patterns,
     "recognise_features": _recognise_features,
+    "find_candidates": _find_candidates,
+    "interface_features": _interface_features,
     "cross_sections": _cross_sections,
     "mesh_section": _mesh_section,
     "mesh_holes": _mesh_holes,
@@ -354,6 +366,7 @@ SESSION_STATEFUL_TOOLS = {
 # cannot be exercised with a plain geometry seed. A new dispatch op must be added
 # to SESSION_STATEFUL_TOOLS or here (see test_every_dispatch_op_is_classified).
 NON_SMOKED_OPS = {
+    "edit_feature": "requires a recognised hole handle and changes geometry; covered by test_edit_features",
     "execute": "the seeding mechanism itself; exercised by every WorkerSession test",
     "execute_file": "requires an external Python source file; covered by test_execute_file",
     "reset": "session-lifecycle op; smoke-testing it would clear the seeded worker state",

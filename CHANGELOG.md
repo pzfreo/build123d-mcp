@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.89
+
+### Added
+
+- **Generic edit targeting and a checked through-hole resize.** `find_candidates()`
+  lists recognised instances with measured values under literal and Y/Z-swapped
+  axis and side readings. `interface_features()` suggests planar hole-bearing
+  faces. `edit_feature()` resizes one plain through hole transactionally and
+  checks an analytic volume prediction, exact material added/removed, the
+  other recognised holes, and the outer envelope before committing. Complex
+  hole stacks are refused for manual editing and verification.
+
 ## v0.3.88
 
 ### Changed
