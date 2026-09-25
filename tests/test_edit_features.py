@@ -74,6 +74,19 @@ def test_interface_suggests_planar_openings_without_claiming_intent(drilled_plat
     assert "caller must choose" in report["note"]
 
 
+def test_interface_does_not_attach_hole_to_other_coplanar_face():
+    session = Session()
+    session.execute(
+        "from build123d import *\n"
+        "p = Box(60, 40, 10) - Pos(0, 0, 5) * Box(2, 42, 2)\n"
+        "p -= Pos(15, 0, 0) * Cylinder(3, 12)\n"
+        "show(p, 'p')"
+    )
+    report = json.loads(interface_features(session, "p"))
+    assert len(report["mounting_face_candidates"]) == 1
+    assert report["mounting_face_candidates"][0]["area"] < 1200
+
+
 @pytest.mark.parametrize("diameter", [4.0, 8.0])
 def test_edit_resizes_one_hole_and_proves_annular_change(drilled_plate, diameter):
     holes = _holes(drilled_plate)
@@ -123,6 +136,7 @@ def test_dependent_hole_geometry_is_refused():
         "show(p, 'p')"
     )
     target = json.loads(find_candidates(session, "hole", object_name="p"))["candidates"][0]["ref"]
+    assert json.loads(interface_features(session, "p"))["protected_hole_refs"] == [target]
     before = session.objects["p"]
     report = json.loads(edit_feature(session, target, 12))
     assert report["committed"] is False

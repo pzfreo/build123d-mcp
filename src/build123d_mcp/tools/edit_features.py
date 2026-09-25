@@ -203,13 +203,33 @@ def interface_features(session, object_name: str = "") -> str:
                 continue
             normal = tuple(face.normal_at())
             center = tuple(face.center())
+            opening_edges = [
+                (tuple(edge.arc_center), edge.radius)
+                for edge in face.edges()
+                if str(edge.geom_type).split(".")[-1] == "CIRCLE"
+            ]
             holes = []
             for feature in report["features"]:
-                opening = feature["record"]["location"]
+                record = feature["record"]
+                opening = record["location"]
                 offset = sum((opening[i] - center[i]) * normal[i] for i in range(3))
-                axis = feature["record"]["axis"]
+                axis = record["axis"]
                 parallel = abs(sum(axis[i] * normal[i] for i in range(3)))
-                if abs(offset) <= 0.01 and parallel >= 0.98:
+                opening_radii = {record["diameter"] / 2}
+                for stack in (record["cbore"], record["spotface"], record["csink"]):
+                    if isinstance(stack, dict):
+                        opening_radii.update(
+                            value / 2
+                            for key, value in stack.items()
+                            if key in {"diameter", "major_diameter"}
+                            and isinstance(value, (int, float))
+                        )
+                on_boundary = any(
+                    any(abs(radius - wanted) <= 0.01 for wanted in opening_radii)
+                    and all(abs(edge_center[i] - opening[i]) <= 0.01 for i in range(3))
+                    for edge_center, radius in opening_edges
+                )
+                if abs(offset) <= 0.01 and parallel >= 0.98 and on_boundary:
                     holes.append(feature["ref"])
             if holes:
                 rows.append(
