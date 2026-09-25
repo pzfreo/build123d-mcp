@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.3.88
+
+### Changed
+
+- **`recognise_features()` returns aggregate families read-only.** Agents often
+  ask for `cylinders` or `hole_patterns` (also `slot_patterns`,
+  `oriented_slot_patterns`, `section_recess_patterns`, `gusset_rib_patterns`);
+  these used to fail as "unknown targetable families". They now come back under
+  `read_only` with their records and counts but no `@feature` handles, since
+  they are aggregates rather than editable features. Targetable families work
+  as before, and genuinely unknown names still error (now also listing
+  `read_only_families`).
+
 ## v0.3.87
 
 ### Added
@@ -16,19 +29,6 @@
   retaining its dedicated IPC pipe and stderr logging. This addresses the
   first-call `execute`, `render_view`, and `health_check` hangs reported in #452
   without requiring `BUILD123D_IN_PROCESS=1`.
-
-## v0.3.87
-
-### Changed
-
-- **`recognise_features()` returns aggregate families read-only.** Agents often
-  ask for `cylinders` or `hole_patterns` (also `slot_patterns`,
-  `oriented_slot_patterns`, `section_recess_patterns`, `gusset_rib_patterns`);
-  these used to fail as "unknown targetable families". They now come back under
-  `read_only` with their records and counts but no `@feature` handles, since
-  they are aggregates rather than editable features. Targetable families work
-  as before, and genuinely unknown names still error (now also listing
-  `read_only_families`).
 
 ## v0.3.86
 
