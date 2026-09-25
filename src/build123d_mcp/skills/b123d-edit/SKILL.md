@@ -113,7 +113,8 @@ proved, so do not reconstruct from it.
 For an edit described by kind, axis, side or starting size, use
 `find_candidates(kind="hole", qualifiers='{"axis":"Z","side":"+X"}',
 stated_value=6)` before selecting a handle. It reports all recognised instances
-under both literal and Y/Z-swapped axis readings and flags an unmatched stated
+under the literal axes and every proper rotation of the request frame
+(grouped by the candidates each selects) and flags an unmatched stated
 value. `interface_features()` suggests flat faces with hole openings and their
 handles; identify the actual mating interface before editing. For a plain
 through hole with one cylindrical wall, `edit_feature(handle, diameter=8,

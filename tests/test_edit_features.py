@@ -27,25 +27,54 @@ def _holes(session):
     return json.loads(find_candidates(session, "hole", object_name="plate"))["candidates"]
 
 
-def test_candidates_check_both_axis_readings_and_stated_value(drilled_plate):
+def test_candidates_report_literal_and_rotated_readings_and_stated_value(drilled_plate):
     literal = json.loads(find_candidates(drilled_plate, "hole", '{"axis":"Z"}', 6, "plate"))
     assert literal["count"] == 2
     assert len(literal["literal_matches"]) == 2
-    assert literal["yz_swapped_matches"] == []
+    assert literal["orientations_evaluated"] == 24
+    assert literal["orientation_readings"][0]["includes_literal"] is True
 
-    swapped = json.loads(find_candidates(drilled_plate, "hole", '{"axis":"Y"}', 6, "plate"))
-    assert swapped["literal_matches"] == []
-    assert len(swapped["yz_swapped_matches"]) == 2
+    rotated = json.loads(find_candidates(drilled_plate, "hole", '{"axis":"Y"}', 6, "plate"))
+    assert rotated["literal_matches"] == []
+    (reading,) = rotated["orientation_readings"]
+    assert len(reading["matches"]) == 2 and reading["includes_literal"] is False
+    # Every rotation that sends the request's Y onto the part's Z axis, with no preference.
+    assert len(reading["orientations"]) == 8
+    assert all(("Y->+Z" in o or "Y->-Z" in o) for o in reading["orientations"])
+
+    unqualified = json.loads(find_candidates(drilled_plate, "hole", "{}", 6, "plate"))
+    assert len(unqualified["literal_matches"]) == 2
+    assert unqualified["orientation_readings"] == []
 
     wrong_value = json.loads(find_candidates(drilled_plate, "hole", "{}", 9, "plate"))
     assert wrong_value["stated_value_unmatched"] is True
     assert wrong_value["literal_matches"] == []
+    assert wrong_value["orientation_readings"] == []
 
     positive_side = json.loads(
         find_candidates(drilled_plate, "hole", '{"side":"+X"}', object_name="plate")
     )
     assert len(positive_side["literal_matches"]) == 1
-    assert len(positive_side["yz_swapped_matches"]) == 1
+    readings = positive_side["orientation_readings"]
+    literal_group = next(r for r in readings if r["includes_literal"])
+    assert literal_group["matches"] == positive_side["literal_matches"]
+    # Request +X onto part -X selects the other hole; onto +Z (both openings sit
+    # above the centre) selects both. Each distinct set appears exactly once.
+    sets = [tuple(r["matches"]) for r in readings]
+    assert len(sets) == len(set(sets)) == 3
+    assert sum(len(r["orientations"]) for r in readings) <= 24
+
+
+def test_orientations_are_proper_rotations_without_mirrors():
+    from build123d_mcp.tools.edit_features import _ORIENTATIONS
+
+    assert len(_ORIENTATIONS) == 24 and len(set(_ORIENTATIONS)) == 24
+    assert _ORIENTATIONS[0] == ((0, 1), (1, 1), (2, 1))
+    # The old Y/Z swap mapped Y->+Z and Z->+Y with X fixed: a mirror, now excluded.
+    assert ((0, 1), (2, 1), (1, 1)) not in _ORIENTATIONS
+    # Both proper quarter-turns about X relating Y-up and Z-up frames are present.
+    assert ((0, 1), (2, 1), (1, -1)) in _ORIENTATIONS  # Y->+Z, Z->-Y
+    assert ((0, 1), (2, -1), (1, 1)) in _ORIENTATIONS  # Y->-Z, Z->+Y
 
 
 def test_polygonal_boss_candidates_include_axis_and_across_flats():
@@ -63,7 +92,6 @@ def test_polygonal_boss_candidates_include_axis_and_across_flats():
     assert candidate["record"]["side_count"] == 6
     assert candidate["measured_field"] == "across_flats"
     assert candidate["literal_axis_matches"] is True
-    assert candidate["yz_swapped_axis_matches"] is False
     assert json.loads(find_candidates(session, "boss", object_name="part"))["count"] >= 1
 
 

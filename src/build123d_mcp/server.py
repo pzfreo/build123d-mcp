@@ -1055,7 +1055,7 @@ def find_candidates(
     stated_value: float | None = None,
     object_name: str = "",
 ) -> str:
-    """List recognised instances of a hole, boss, polygonal boss, slot, chamfer or fillet. qualifiers is JSON with optional axis (X/Y/Z), side (+X/-X/+Y/-Y/+Z/-Z, relative to the part bounding-box centre), and value_field; each candidate is checked under literal and Y/Z-swapped readings. stated_value is checked against the measured feature value within 0.1 mm or 1%. An unmatched value is flagged; empty or truncated recognition is never treated as proof of absence. Returns exact @feature handles for recognised instances."""
+    """List recognised instances of a hole, boss, polygonal boss, slot, chamfer or fillet. qualifiers is JSON with optional axis (X/Y/Z), side (+X/-X/+Y/-Y/+Z/-Z, relative to the part bounding-box centre), and value_field; matches are reported for the literal axes and grouped over all 24 proper rotations of the request frame (no mirror readings, none preferred). stated_value is checked against the measured feature value within 0.1 mm or 1%. An unmatched value is flagged; empty or truncated recognition is never treated as proof of absence. Returns exact @feature handles for recognised instances."""
     return _resolve_session().find_candidates(kind, qualifiers, stated_value, object_name)
 
 
