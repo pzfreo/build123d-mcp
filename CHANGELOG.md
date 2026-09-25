@@ -2,6 +2,11 @@
 
 ## v0.3.89
 
+### Changed
+
+- **Feature recognition uses quiddity 0.3.5.** The dependency minimum and lockfile
+  now include its latest recognition fixes and feature metadata.
+
 ### Added
 
 - **Generic edit targeting and a checked through-hole resize.** `find_candidates()`

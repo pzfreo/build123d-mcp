@@ -41,7 +41,7 @@ dependencies = [
     # Import name remains `build123d_drafting` (install name ≠ import name).
     "build123d-drafting-helpers>=0.10.0",
     # Shared geometry-only feature inventory and exact run-local face evidence.
-    "quiddity>=0.3.4,<0.4",
+    "quiddity>=0.3.5,<0.4",
     "defusedxml>=0.7.1",
     "augura>=0.1.6",
     "scipy",
