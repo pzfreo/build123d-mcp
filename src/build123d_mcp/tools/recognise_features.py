@@ -38,6 +38,37 @@ _NON_TARGET_RESULT_FIELDS = frozenset(
 _READ_ONLY_RESULT_FIELDS = _NON_TARGET_RESULT_FIELDS - {"rotational", "section_recess_refusals"}
 
 
+def _read_only_records(value: Any) -> list[Any]:
+    """Flatten an aggregate result field (some are tuples of per-axis lists)."""
+    items = list(value)
+    if items and all(isinstance(item, (list, tuple)) for item in items):
+        return [record for group in items for record in group]
+    return items
+
+
+def _compact_record(record: Any) -> Any:
+    """JSON-safe summary of one aggregate record, bounded in size.
+
+    Raw B-rep objects (e.g. a cylinder's ``face``) are dropped, and nested lists
+    of member records (e.g. a pattern's ``holes``) collapse to a count, so one
+    aggregate record cannot drag every member feature into the response.
+    """
+    data = record.to_dict() if hasattr(record, "to_dict") else _json_value(record)
+    if not isinstance(data, dict):
+        return _json_value(data)
+    out: dict[str, Any] = {}
+    for key, val in data.items():
+        if isinstance(val, (list, tuple)) and any(isinstance(v, dict) for v in val):
+            out[f"{key}_count"] = len(val)
+            continue
+        try:
+            json.dumps(val)
+        except TypeError:
+            continue
+        out[key] = _json_value(val)
+    return out
+
+
 def _json_value(value: Any) -> Any:
     """Round record values while preserving their JSON-compatible shape."""
     if isinstance(value, float):
@@ -261,13 +292,10 @@ def recognise_features(
     selected = [name for name in requested if name in known]
     read_only = {}
     for name in (n for n in requested if n in read_only_known):
-        records = list(getattr(result, name))
+        records = _read_only_records(getattr(result, name))
         read_only[name] = {
             "count": len(records),
-            "records": [
-                _json_value(r.to_dict() if hasattr(r, "to_dict") else r)
-                for r in records[:max_features]
-            ],
+            "records": [_compact_record(r) for r in records[:max_features]],
             "truncated": len(records) > max_features,
         }
 
@@ -316,6 +344,4 @@ def recognise_features(
     frame = _frame(evidence)
     if frame is not None:
         response["frame"] = frame
-    # Read-only aggregate records can embed raw B-rep objects (e.g. a Face);
-    # they are context, not edit targets, so name the type instead of failing.
-    return json.dumps(response, indent=2, default=lambda obj: f"<{type(obj).__name__}>")
+    return json.dumps(response, indent=2)

@@ -161,10 +161,35 @@ def test_aggregate_families_are_returned_read_only(featured_session):
     assert report["requested_families"] == ["holes"]
     assert report["matched"] == 4
     assert set(report["read_only"]) == {"cylinders", "hole_patterns"}
-    assert report["read_only"]["cylinders"]["count"] >= 1
-    assert all("ref" not in rec for rec in report["read_only"]["cylinders"]["records"])
+    cylinders = report["read_only"]["cylinders"]
+    assert cylinders["count"] >= 4  # flattened across axis groups, one per hole
+    assert all("ref" not in rec and "face" not in rec for rec in cylinders["records"])
     assert "no @feature handles" in report["read_only_note"]
+
+    capped = json.loads(
+        recognise_features(featured_session, "plate", families="cylinders", max_features=1)
+    )["read_only"]["cylinders"]
+    assert len(capped["records"]) == 1 and capped["truncated"] is True
 
     unknown = json.loads(recognise_features(featured_session, "plate", families="widgets"))
     assert "cylinders" in unknown["read_only_families"]
     assert "cylinders" not in unknown["targetable_families"]
+
+
+def test_read_only_pattern_records_collapse_members_to_counts():
+    session = Session()
+    session.execute(
+        """
+from build123d import *
+with BuildPart() as bp:
+    Box(120, 80, 10)
+    with GridLocations(20, 20, 4, 3):
+        Hole(3)
+show(bp.part, 'grid')
+"""
+    )
+    report = json.loads(recognise_features(session, "grid", families="hole_patterns"))
+    patterns = report["read_only"]["hole_patterns"]["records"]
+    assert patterns
+    assert all("holes" not in rec and rec["holes_count"] >= 2 for rec in patterns)
+    assert len(json.dumps(report)) < 20_000
