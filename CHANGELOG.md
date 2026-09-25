@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.90
+
+### Changed
+
+- **`find_candidates()` evaluates every proper axis orientation, not a Y/Z swap.**
+  The single "Y/Z-swapped" reading singled out one axis convention and mapped it
+  as a mirror (a request's +Z to the part's +Y), which is not a rotation and is
+  wrong for genuinely Y-up sources. Candidates are now checked under all 24
+  proper rotations of the request frame and reported once per distinct match set
+  in `orientation_readings` (`matches`, `includes_literal`, `orientations`);
+  `literal_matches` is unchanged. The `yz_swapped_*` fields are removed.
+
 ## v0.3.89
 
 ### Changed

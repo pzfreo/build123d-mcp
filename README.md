@@ -183,7 +183,8 @@ script, and try the next smaller step.
 After importing a STEP and establishing a valid baseline, use
 `find_candidates(kind="hole", qualifiers='{"axis":"Z","side":"+X"}',
 stated_value=6)` to list every recognised candidate and check both the part's
-literal axes and a Y/Z-swapped reading. `interface_features()` suggests flat
+literal axes and every proper rotation of the request frame (grouped by the
+candidates each selects). `interface_features()` suggests flat
 faces carrying holes; choose which hole handles to protect. For a plain through
 hole, `edit_feature(handle, diameter=8, protected_refs='["@feature[...]"]')`
 resizes it and reports predicted and measured added or removed volume. It

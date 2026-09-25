@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import math
 
@@ -63,7 +64,45 @@ def _axis(record: dict) -> list[float] | None:
     return None
 
 
-def _axis_matches(axis: list[float] | None, requested: str, swapped: bool) -> bool:
+_AXES = "XYZ"
+
+
+def _proper_orientations() -> list[tuple[tuple[int, int], ...]]:
+    """All 24 proper rotations of the request frame, identity first.
+
+    Each orientation maps request axis i (X, Y, Z) to ``(part_axis, sign)``. Only
+    signed permutations with determinant +1 are kept, so no reading mirrors the
+    part; none is preferred beyond reporting the identity as the literal reading.
+    """
+    out = []
+    for perm in itertools.permutations(range(3)):
+        for signs in itertools.product((1, -1), repeat=3):
+            matrix = [[0] * 3 for _ in range(3)]
+            for i, (j, sign) in enumerate(zip(perm, signs)):
+                matrix[j][i] = sign
+            det = (
+                matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
+                - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
+                + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0])
+            )
+            if det == 1:
+                out.append(tuple(zip(perm, signs)))
+    identity = ((0, 1), (1, 1), (2, 1))
+    out.remove(identity)
+    return [identity, *out]
+
+
+_ORIENTATIONS = _proper_orientations()
+
+
+def _orientation_label(orientation: tuple[tuple[int, int], ...]) -> str:
+    return ", ".join(
+        f"{_AXES[i]}->{'+' if sign > 0 else '-'}{_AXES[j]}"
+        for i, (j, sign) in enumerate(orientation)
+    )
+
+
+def _axis_matches(axis: list[float] | None, requested: str, orientation) -> bool:
     if not requested:
         return True
     if axis is None:
@@ -71,20 +110,19 @@ def _axis_matches(axis: list[float] | None, requested: str, swapped: bool) -> bo
     requested = requested.upper()
     if requested not in {"X", "Y", "Z"}:
         raise ValueError("qualifiers.axis must be X, Y, or Z")
-    index = {"X": 0, "Y": 2 if swapped else 1, "Z": 1 if swapped else 2}[requested]
-    return abs(axis[index]) >= 0.98
+    part_axis, _ = orientation[_AXES.index(requested)]
+    return abs(axis[part_axis]) >= 0.98
 
 
-def _side_matches(record: dict, requested: str, swapped: bool, midpoint: tuple) -> bool:
+def _side_matches(record: dict, requested: str, orientation, midpoint: tuple) -> bool:
     if not requested:
         return True
     point = record.get("location", record.get("center"))
     if not isinstance(point, (list, tuple)) or len(point) != 3:
         return False
-    axis = requested[1]
-    index = {"X": 0, "Y": 2 if swapped else 1, "Z": 1 if swapped else 2}[axis]
-    distance = point[index] - midpoint[index]
-    return distance > 0.01 if requested[0] == "+" else distance < -0.01
+    part_axis, sign = orientation[_AXES.index(requested[1])]
+    direction = sign * (1 if requested[0] == "+" else -1)
+    return (point[part_axis] - midpoint[part_axis]) * direction > 0.01
 
 
 def find_candidates(
@@ -94,7 +132,7 @@ def find_candidates(
     stated_value: float | None = None,
     object_name: str = "",
 ) -> str:
-    """Enumerate recognised instances under literal and Y/Z-swapped axis readings.
+    """Enumerate recognised instances under the literal and every rotated axis reading.
 
     ``qualifiers`` is JSON with optional ``axis``, ``side`` and ``value_field``. No guess
     is made when recognition or a stated-value check fails.
@@ -152,14 +190,36 @@ def find_candidates(
                     "measured_value": value,
                     "value_matches": value_matches,
                     "axis": axis,
-                    "literal_axis_matches": _axis_matches(axis, requested_axis, False),
-                    "yz_swapped_axis_matches": _axis_matches(axis, requested_axis, True),
-                    "literal_side_matches": _side_matches(record, requested_side, False, midpoint),
-                    "yz_swapped_side_matches": _side_matches(
-                        record, requested_side, True, midpoint
+                    "literal_axis_matches": _axis_matches(axis, requested_axis, _ORIENTATIONS[0]),
+                    "literal_side_matches": _side_matches(
+                        record, requested_side, _ORIENTATIONS[0], midpoint
                     ),
+                    "_matching_orientations": [
+                        index
+                        for index, orientation in enumerate(_ORIENTATIONS)
+                        if value_matches
+                        and _axis_matches(axis, requested_axis, orientation)
+                        and _side_matches(record, requested_side, orientation, midpoint)
+                    ],
                 }
             )
+        # Group orientations by the candidate set they select, so every distinct
+        # reading is reported once without singling out any rotation.
+        groups: dict[tuple[str, ...], list[int]] = {}
+        for index in range(len(_ORIENTATIONS)):
+            refs = tuple(c["ref"] for c in candidates if index in c["_matching_orientations"])
+            if refs:
+                groups.setdefault(refs, []).append(index)
+        readings = [
+            {
+                "matches": list(refs),
+                "includes_literal": 0 in indices,
+                "orientations": [_orientation_label(_ORIENTATIONS[i]) for i in indices],
+            }
+            for refs, indices in sorted(groups.items(), key=lambda item: item[1][0])
+        ]
+        for c in candidates:
+            del c["_matching_orientations"]
         return json.dumps(
             {
                 "kind": kind,
@@ -172,13 +232,8 @@ def find_candidates(
                     and c["literal_axis_matches"]
                     and c["literal_side_matches"]
                 ],
-                "yz_swapped_matches": [
-                    c["ref"]
-                    for c in candidates
-                    if c["value_matches"]
-                    and c["yz_swapped_axis_matches"]
-                    and c["yz_swapped_side_matches"]
-                ],
+                "orientation_readings": readings,
+                "orientations_evaluated": len(_ORIENTATIONS),
                 "stated_value_unmatched": stated_value is not None
                 and not any(c["value_matches"] for c in candidates),
                 "recognition_only": True,
