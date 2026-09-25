@@ -206,7 +206,10 @@ def find_candidates(
         # Group orientations by the candidate set they select, so every distinct
         # reading is reported once without singling out any rotation.
         groups: dict[tuple[str, ...], list[int]] = {}
-        for index in range(len(_ORIENTATIONS)):
+        # Without an axis or side qualifier every orientation selects the same set,
+        # so rotated readings carry no information; report none.
+        oriented = bool(requested_axis or requested_side)
+        for index in range(len(_ORIENTATIONS) if oriented else 0):
             refs = tuple(c["ref"] for c in candidates if index in c["_matching_orientations"])
             if refs:
                 groups.setdefault(refs, []).append(index)

@@ -42,6 +42,10 @@ def test_candidates_report_literal_and_rotated_readings_and_stated_value(drilled
     assert len(reading["orientations"]) == 8
     assert all(("Y->+Z" in o or "Y->-Z" in o) for o in reading["orientations"])
 
+    unqualified = json.loads(find_candidates(drilled_plate, "hole", "{}", 6, "plate"))
+    assert len(unqualified["literal_matches"]) == 2
+    assert unqualified["orientation_readings"] == []
+
     wrong_value = json.loads(find_candidates(drilled_plate, "hole", "{}", 9, "plate"))
     assert wrong_value["stated_value_unmatched"] is True
     assert wrong_value["literal_matches"] == []
@@ -68,7 +72,9 @@ def test_orientations_are_proper_rotations_without_mirrors():
     assert _ORIENTATIONS[0] == ((0, 1), (1, 1), (2, 1))
     # The old Y/Z swap mapped Y->+Z and Z->+Y with X fixed: a mirror, now excluded.
     assert ((0, 1), (2, 1), (1, 1)) not in _ORIENTATIONS
-    assert ((0, 1), (2, 1), (1, -1)) in _ORIENTATIONS  # the proper Y-up/Z-up rotation
+    # Both proper quarter-turns about X relating Y-up and Z-up frames are present.
+    assert ((0, 1), (2, 1), (1, -1)) in _ORIENTATIONS  # Y->+Z, Z->-Y
+    assert ((0, 1), (2, -1), (1, 1)) in _ORIENTATIONS  # Y->-Z, Z->+Y
 
 
 def test_polygonal_boss_candidates_include_axis_and_across_flats():
