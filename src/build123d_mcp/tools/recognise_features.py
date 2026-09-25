@@ -32,6 +32,10 @@ _NON_TARGET_RESULT_FIELDS = frozenset(
         "gusset_rib_patterns",
     }
 )
+# Aggregate fields agents still ask for by name. They carry no per-feature
+# evidence (so no edit handles), but their records are useful context, so they
+# are returned read-only instead of rejected as unknown families.
+_READ_ONLY_RESULT_FIELDS = _NON_TARGET_RESULT_FIELDS - {"rotational", "section_recess_refusals"}
 
 
 def _json_value(value: Any) -> Any:
@@ -243,15 +247,29 @@ def recognise_features(
     result = evidence.result
     inventory = _inventory(result)
     known = set(inventory) - _NON_TARGET_RESULT_FIELDS
-    selected, unknown = _normalise_families(families, known)
+    read_only_known = set(inventory) & _READ_ONLY_RESULT_FIELDS
+    requested, unknown = _normalise_families(families, known | read_only_known)
     if unknown:
         return json.dumps(
             {
                 "error": f"Unknown targetable families: {', '.join(unknown)}",
                 "targetable_families": sorted(known),
+                "read_only_families": sorted(read_only_known),
             },
             indent=2,
         )
+    selected = [name for name in requested if name in known]
+    read_only = {}
+    for name in (n for n in requested if n in read_only_known):
+        records = list(getattr(result, name))
+        read_only[name] = {
+            "count": len(records),
+            "records": [
+                _json_value(r.to_dict() if hasattr(r, "to_dict") else r)
+                for r in records[:max_features]
+            ],
+            "truncated": len(records) > max_features,
+        }
 
     matching = [target for target in run["targets"] if target["family"] in selected]
     features = []
@@ -289,7 +307,15 @@ def recognise_features(
         "truncated": len(matching) > len(features),
         "features": features,
     }
+    if read_only:
+        response["read_only"] = read_only
+        response["read_only_note"] = (
+            "Aggregate records for context only: they have no @feature handles. "
+            "Target edits through the member families (e.g. holes) instead."
+        )
     frame = _frame(evidence)
     if frame is not None:
         response["frame"] = frame
-    return json.dumps(response, indent=2)
+    # Read-only aggregate records can embed raw B-rep objects (e.g. a Face);
+    # they are context, not edit targets, so name the type instead of failing.
+    return json.dumps(response, indent=2, default=lambda obj: f"<{type(obj).__name__}>")

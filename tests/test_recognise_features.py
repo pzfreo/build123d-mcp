@@ -151,3 +151,20 @@ show(bad, 'bad')
     assert "Recognition needs a valid solid" in report["error"]
     assert "build123d://skill/repair" in report["error"]
     assert "valid solid" in report["recogniser_detail"]
+
+
+def test_aggregate_families_are_returned_read_only(featured_session):
+    report = json.loads(
+        recognise_features(featured_session, "plate", families="holes,cylinders,hole_patterns")
+    )
+    assert "error" not in report
+    assert report["requested_families"] == ["holes"]
+    assert report["matched"] == 4
+    assert set(report["read_only"]) == {"cylinders", "hole_patterns"}
+    assert report["read_only"]["cylinders"]["count"] >= 1
+    assert all("ref" not in rec for rec in report["read_only"]["cylinders"]["records"])
+    assert "no @feature handles" in report["read_only_note"]
+
+    unknown = json.loads(recognise_features(featured_session, "plate", families="widgets"))
+    assert "cylinders" in unknown["read_only_families"]
+    assert "cylinders" not in unknown["targetable_families"]
