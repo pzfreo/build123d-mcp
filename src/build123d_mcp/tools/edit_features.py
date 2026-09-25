@@ -138,10 +138,11 @@ def find_candidates(
                 raw = record.get(field)
                 value = float(raw) if isinstance(raw, (int, float)) else None
             axis = _axis(record)
-            tolerance = max(0.1, 0.01 * stated_value) if stated_value is not None else None
-            value_matches = stated_value is None or (
-                value is not None and abs(value - stated_value) <= tolerance
-            )
+            if stated_value is None:
+                value_matches = True
+            else:
+                tolerance = max(0.1, 0.01 * stated_value)
+                value_matches = value is not None and abs(value - stated_value) <= tolerance
             candidates.append(
                 {
                     "ref": feature["ref"],
