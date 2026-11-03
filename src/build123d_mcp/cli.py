@@ -169,6 +169,44 @@ Part library file format (Python, any .py file under --library path):
         "Overrides BUILD123D_PORT env var.",
     )
     parser.add_argument(
+        "--disable-dns-rebinding-protection",
+        action="store_true",
+        default=os.environ.get("BUILD123D_DISABLE_DNS_REBINDING_PROTECTION", "").lower() in ("1", "true", "yes"),
+        help="Disable the SDK's DNS-rebinding protection (Host/Origin header validation) on "
+        "--transport http. Use when fronting the server with a reverse proxy / gateway that "
+        "terminates the real host, or when the browser Origin cannot be enumerated. Equivalent "
+        "to --allow-all. Conflicts with --allowed-hosts / --allowed-origins. Overrides "
+        "BUILD123D_DISABLE_DNS_REBINDING_PROTECTION env var.",
+    )
+    parser.add_argument(
+        "--allowed-hosts",
+        metavar="HOSTS",
+        default=os.environ.get("BUILD123D_ALLOWED_HOSTS", ""),
+        help="Comma-separated Host header values accepted on --transport http, e.g. "
+        "'cad.example.com,10.1.2.3:*' (trailing :* accepts any port on that host). Setting this "
+        "enables DNS-rebinding protection with exactly this allowlist, replacing the SDK default "
+        "(localhost only). Overrides BUILD123D_ALLOWED_HOSTS env var.",
+    )
+    parser.add_argument(
+        "--allowed-origins",
+        metavar="ORIGINS",
+        default=os.environ.get("BUILD123D_ALLOWED_ORIGINS", ""),
+        help="Comma-separated Origin header values accepted on --transport http, e.g. "
+        "'http://cad.example.com,http://10.1.2.3:*' (scheme is part of the entry; :* wildcards "
+        "the port). Only relevant to browser-based MCP clients; server-to-server clients send "
+        "no Origin header. Overrides BUILD123D_ALLOWED_ORIGINS env var.",
+    )
+    parser.add_argument(
+        "--allow-all",
+        action="store_true",
+        default=os.environ.get("BUILD123D_ALLOW_ALL", "").lower() in ("1", "true", "yes"),
+        help="Accept every Host and Origin header on --transport http — i.e. turn off the "
+        "SDK's DNS-rebinding protection (the SDK check is all-or-nothing, so 'allow all hosts "
+        "and/or origins' == off). Positive-phrased alias of "
+        "--disable-dns-rebinding-protection; use when the server sits behind a reverse proxy / "
+        "gateway that terminates the real host. Overrides BUILD123D_ALLOW_ALL env var.",
+    )
+    parser.add_argument(
         "--max-sessions",
         metavar="N",
         type=int,
@@ -264,6 +302,14 @@ Part library file format (Python, any .py file under --library path):
             f"got {args.session_idle_timeout}"
         )
 
+    if (args.disable_dns_rebinding_protection or args.allow_all) and (
+        args.allowed_hosts or args.allowed_origins
+    ):
+        parser.error(
+            "protection-off flags (--disable-dns-rebinding-protection, --allow-all) are "
+            "incompatible with --allowed-hosts/--allowed-origins"
+        )
+
     if args.viewer_socket:
         if sys.platform == "win32":
             parser.error("--viewer-socket requires a POSIX platform (AF_UNIX sockets)")
@@ -318,6 +364,15 @@ Part library file format (Python, any .py file under --library path):
 
     if args.transport == "http":
         import uvicorn
+        settings = _build_transport_security_settings(
+            args.disable_dns_rebinding_protection,
+            args.allow_all,
+            args.allowed_hosts,
+            args.allowed_origins,
+        )
+        if settings is not None:
+            server.configure_transport_security(settings)
+
 
         if args.max_sessions > 1:
             from build123d_mcp.session_registry import SessionRegistry
@@ -347,6 +402,29 @@ Part library file format (Python, any .py file under --library path):
         uvicorn.run(server.http_app(), host=args.host, port=args.port)
     else:
         server.mcp.run()
+
+
+def _build_transport_security_settings(
+    disable: bool, allow_all: bool, allowed_hosts: str, allowed_origins: str
+):
+    """Map the transport-security CLI flags to a TransportSecuritySettings
+    (or None when no flag is set — the SDK default stays in place).
+
+    ``disable`` and ``allow_all`` are both OFF switches: the SDK's protection
+    is all-or-nothing (one bool gates the Host+Origin checks; the allowlists
+    have no match-everything entry), so "accept all hosts and/or origins"
+    can only mean protection off."""
+    if not (disable or allow_all or allowed_hosts or allowed_origins):
+        return None
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    if disable or allow_all:
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[h.strip() for h in allowed_hosts.split(",") if h.strip()],
+        allowed_origins=[o.strip() for o in allowed_origins.split(",") if o.strip()],
+    )
 
 
 if __name__ == "__main__":

@@ -115,6 +115,23 @@ def configure_registry(registry) -> None:
     global _registry
     _registry = registry
 
+# mcp.server.transport_security.TransportSecuritySettings | None. Set by
+# configure_transport_security() for the HTTP transport (DNS-rebinding
+# Host/Origin validation). None = the SDK's own default: streamable_http_app()
+# auto-enables protection with a localhost-only allowlist.
+_transport_security = None
+
+
+def configure_transport_security(settings) -> None:
+    """Set TransportSecuritySettings for the next http_app().
+
+    ``settings`` is a ``mcp.server.transport_security.TransportSecuritySettings``
+    (protection on with explicit allowlists, or protection disabled). The
+    CLI never passes None — absence of a flag means "don't configure", which
+    leaves the SDK default in place."""
+    global _transport_security
+    _transport_security = settings
+
 
 # Live-session viewer publisher (build123d_mcp.viewer.ViewerPublisher), or None
 # when --viewer-socket was not given. Set by start_viewer().
@@ -353,7 +370,7 @@ def http_app():
     factory.  It stays on because CAD session identity is ours (the handle
     registry / ``_session_var``), never the protocol's — see ADR 0001 and 0003.
     """
-    app = mcp.streamable_http_app(stateless_http=True)
+    app = mcp.streamable_http_app(stateless_http=True, transport_security=_transport_security)
     if _registry is not None:
         return CadSessionMiddleware(app, _registry)
     return app
