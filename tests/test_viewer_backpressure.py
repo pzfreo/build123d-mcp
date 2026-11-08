@@ -24,6 +24,15 @@ def connection(monkeypatch):
         receiver.close()
 
 
+def _receive_exactly(receiver, size):
+    received = b""
+    while len(received) < size:
+        piece = receiver.recv(size - len(received))
+        assert piece, "viewer disconnected before the complete payload arrived"
+        received += piece
+    return received
+
+
 def test_delta_backlog_is_bounded_by_bytes(connection):
     pub, client, _ = connection
     for _ in range(10):
@@ -79,10 +88,7 @@ def test_partial_frame_retains_its_full_byte_cost_and_wire_integrity(connection,
     while client.frames:
         assert pub._flush(client) is False
     expected = head + latest
-    received = b""
-    while len(received) < len(expected):
-        received += receiver.recv(len(expected) - len(received))
-    assert received == expected
+    assert _receive_exactly(receiver, len(expected)) == expected
     assert client.queued_bytes == 0
     assert client.offset == 0
 
@@ -103,7 +109,7 @@ def test_initial_dump_bypasses_frame_count_within_byte_budget(connection, monkey
         pub._enqueue_locked(client, frame, cap=False)
     assert len(client.frames) == 3
     assert pub._flush(client) is False
-    assert receiver.recv(64) == b"hellofirstsecond"
+    assert _receive_exactly(receiver, 16) == b"hellofirstsecond"
     assert client.queued_bytes == 0
 
 
@@ -120,6 +126,6 @@ def test_overflow_does_not_disconnect_healthy_viewer(connection):
         pub._update_write_interest()
         assert pub.client_count == 1
         assert pub._flush(healthy) is False
-        assert receiver.recv(5) == b"scene"
+        assert _receive_exactly(receiver, 5) == b"scene"
     finally:
         receiver.close()
