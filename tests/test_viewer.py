@@ -395,11 +395,13 @@ def test_initial_scene_over_byte_budget_disconnects_viewer(sock_path, monkeypatc
     """Late attachment must not receive an incomplete scene to fit the byte cap."""
     from build123d_mcp import viewer
 
-    monkeypatch.setattr(viewer, "_MAX_QUEUED_BYTES", 64)
+    # HELLO plus either mesh fits; their cumulative initial dump does not.
+    monkeypatch.setattr(viewer, "_MAX_QUEUED_BYTES", len(encode_glb(_VERTS, _TRIS)) + 512)
     pub = ViewerPublisher(sock_path)
     pub.start()
     try:
-        pub.upsert("large", _VERTS, _TRIS)
+        pub.upsert("first", _VERTS, _TRIS)
+        pub.upsert("second", _VERTS, _TRIS)
         client = _connect(sock_path)
         try:
             assert client.recv(1) == b""
