@@ -353,33 +353,34 @@ the host provides per-request session middleware. Do not expose it to multiple
 users directly.
 
 HTTP mode enforces the MCP SDK's DNS-rebinding protection (Host/Origin
-header validation). With no extra flags the SDK default applies: only
-localhost Host headers (`127.0.0.1`, `localhost`, `::1`, any port) are
-accepted, regardless of `--host`. When the server is reached under a real
-hostname (reverse proxy, gateway, LAN or container bind), either allowlist
-the names:
+header validation). With no extra flags only localhost Host headers
+(`127.0.0.1`, `localhost`, `::1`, any port) are accepted, regardless of
+`--host`. When the server is reached under a real hostname (reverse proxy,
+gateway, LAN or container bind), add the names. They are added to the
+localhost defaults, not substituted for them:
 
 ```bash
 uv tool run --python 3.12 "build123d-mcp[http]@latest" \
   --transport http --host 0.0.0.0 --port 8000 \
   --allowed-hosts 'cad.example.com,cad.example.com:*' \
-  --allowed-origins 'http://cad.example.com:*'
+  --allowed-origins 'http://cad.example.com,https://cad.example.com'
 ```
 
-(`--allowed-origins` only matters for browser-based clients; a `:*` suffix
-wildcards the port.) Or, when a proxy/gateway terminates the real host and
-you trust the network layer, accept every Host and Origin — the check is
-all-or-nothing, so this is the only way to "allow all":
+`--allowed-origins` only matters for browser-based clients. A `:*` suffix
+wildcards the port but does not match the default port, so list the bare
+origin (and the `https://` form behind a TLS proxy) as well. Or, when a
+proxy/gateway terminates the real host and you trust the network layer,
+turn the check off (the SDK check is all-or-nothing):
 
 ```bash
 uv tool run --python 3.12 "build123d-mcp[http]@latest" \
   --transport http --host 0.0.0.0 --port 8000 --allow-all
 ```
 
-(`--allow-all` is a positive-phrased alias of `--disable-dns-rebinding-protection`;
-the SDK check is all-or-nothing, so "accept all" can only mean protection off.)
+`--disable-dns-rebinding-protection` is an alias of `--allow-all`;
+`--no-allow-all` overrides `BUILD123D_ALLOW_ALL=1` from the environment.
 Env vars: `BUILD123D_ALLOWED_HOSTS`, `BUILD123D_ALLOWED_ORIGINS`,
-`BUILD123D_ALLOW_ALL`, `BUILD123D_DISABLE_DNS_REBINDING_PROTECTION`.
+`BUILD123D_ALLOW_ALL`. These flags apply to `--transport http` only.
 
 Other advanced topics:
 

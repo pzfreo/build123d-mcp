@@ -115,6 +115,7 @@ def configure_registry(registry) -> None:
     global _registry
     _registry = registry
 
+
 # mcp.server.transport_security.TransportSecuritySettings | None. Set by
 # configure_transport_security() for the HTTP transport (DNS-rebinding
 # Host/Origin validation). None = the SDK's own default: streamable_http_app()

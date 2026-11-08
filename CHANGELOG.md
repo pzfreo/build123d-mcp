@@ -6,27 +6,19 @@
 
 - **DNS-rebinding (Host/Origin) transport security via CLI.** HTTP mode now
   exposes the MCP SDK's `TransportSecuritySettings` (the 421 "Invalid Host /
-  Origin header" validation). Four new CLI flags, each with a `BUILD123D_*`
-  env-var override, following the existing `--flag` / env convention:
-  - `--disable-dns-rebinding-protection`
-    (`BUILD123D_DISABLE_DNS_REBINDING_PROTECTION`)
-  - `--allow-all` (positive-phrased alias of the above — the SDK check is
-    all-or-nothing, so "accept all hosts and/or origins" can only mean
-    protection off) (`BUILD123D_ALLOW_ALL`)
-  - `--allowed-hosts` comma-separated Host values, e.g. `'cad.example.com,10.1.2.3:*'`
-    (trailing `:*` accepts any port) (`BUILD123D_ALLOWED_HOSTS`)
-  - `--allowed-origins` comma-separated Origin values, e.g.
-    `'http://cad.example.com:*'` (browser clients only) (`BUILD123D_ALLOWED_ORIGINS`)
+  Origin header" validation) through three flags, each with a `BUILD123D_*`
+  env var:
+  - `--allowed-hosts` (`BUILD123D_ALLOWED_HOSTS`): comma-separated Host values
+    added to the localhost defaults, e.g. `'cad.example.com,10.1.2.3:*'`.
+  - `--allowed-origins` (`BUILD123D_ALLOWED_ORIGINS`): comma-separated Origin
+    values added to the localhost defaults (browser clients only).
+  - `--allow-all` (alias `--disable-dns-rebinding-protection`,
+    `BUILD123D_ALLOW_ALL`): protection off. `--no-allow-all` overrides the env
+    var. Conflicts with the allowlists on `--transport http`.
 
-  With no flags the SDK's own default stays in force: protection on,
-  localhost-only allowlist — the same policy today's HTTP deployments already
-  had, regardless of `--host`. `--allowed-hosts` / `--allowed-origins`
-  (without the disable flag) switch to protection on with an operator-supplied
-  allowlist; the two off-switches are mutually exclusive with the allowlists
-  (`parser.error` before any session/uvicorn work). The flags are
-  `--transport http` only and have no effect on the stdio path. Pinned by
-  `tests/test_transport_security_cli.py`; documented in `README.md` (Advanced
-  Use).
+  With no flags the SDK default stays in force (protection on, localhost
+  only). The flags have no effect on stdio. Pinned by
+  `tests/test_transport_security_cli.py`; documented in `README.md`.
 
 ## v0.3.91
 
