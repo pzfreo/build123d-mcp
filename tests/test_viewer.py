@@ -389,3 +389,22 @@ def test_example_client_safe_filename():
     assert mod._safe_filename("../../etc/passwd") == "passwd.glb"  # cannot escape
     assert mod._safe_filename("") is None
     assert mod._safe_filename("..") is None
+
+
+def test_initial_scene_over_byte_budget_disconnects_viewer(sock_path, monkeypatch):
+    """Late attachment must not receive an incomplete scene to fit the byte cap."""
+    from build123d_mcp import viewer
+
+    monkeypatch.setattr(viewer, "_MAX_QUEUED_BYTES", 64)
+    pub = ViewerPublisher(sock_path)
+    pub.start()
+    try:
+        pub.upsert("large", _VERTS, _TRIS)
+        client = _connect(sock_path)
+        try:
+            assert client.recv(1) == b""
+            assert pub.client_count == 0
+        finally:
+            client.close()
+    finally:
+        pub.stop()

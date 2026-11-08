@@ -15,10 +15,16 @@ graphical viewer can be built on top of the same protocol.
 Start the server with a socket path:
 
 ```bash
-build123d-mcp --viewer-socket /tmp/b123d.sock
+# Prefer an owner-only runtime directory, rather than a shared /tmp path.
+build123d-mcp --viewer-socket "$XDG_RUNTIME_DIR/b123d.sock"
 # or
-BUILD123D_VIEWER_SOCKET=/tmp/b123d.sock build123d-mcp
+BUILD123D_VIEWER_SOCKET="$XDG_RUNTIME_DIR/b123d.sock" build123d-mcp
 ```
+
+If `XDG_RUNTIME_DIR` is unset, create a private directory with mode 0700 and
+use a socket path inside it. The server refuses to replace an existing file or
+live socket, so a shared world-writable directory lets another user occupy the
+chosen name first.
 
 POSIX only (uses `AF_UNIX`). When the flag is absent the feature is fully inert
 and a pure agent run pays nothing. When the flag is set, the server keeps a
@@ -29,7 +35,7 @@ full-scene dump; broadcasting to zero clients is a no-op.
 Try it with the bundled example consumer:
 
 ```bash
-python examples/live_viewer_client.py /tmp/b123d.sock
+python examples/live_viewer_client.py "$XDG_RUNTIME_DIR/b123d.sock"
 # add --save-dir DIR to also write each shape's glb to disk
 ```
 
@@ -37,7 +43,12 @@ python examples/live_viewer_client.py /tmp/b123d.sock
 
 - The publisher runs in the **server** process on a background daemon thread. It
   never blocks the agent: broadcasts append to bounded per-client buffers, and a
-  slow client has its oldest frames dropped rather than stalling the producer.
+  slow client has its oldest whole queued frames dropped rather than stalling
+  the producer. Each client's backlog is limited to 256 frames and 16 MiB of
+  retained frame bytes (including a partially sent head). The initial scene
+  bypasses the frame-count limit only: if it or one indivisible frame exceeds
+  the byte budget, that viewer is disconnected and its queue released. The
+  loop thread closes sockets; broadcasting never waits for viewer I/O.
 - After each geometry-mutating tool (`execute`, `reset`, `restore_snapshot`,
   `import_cad_file`, `load_part`), the server asks the worker for **per-shape
   deltas**. Only the shapes whose identity changed are tessellated, via the same
