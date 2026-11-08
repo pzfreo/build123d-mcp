@@ -47,33 +47,42 @@ def test_allow_all_disables_protection():
 def _run_main(monkeypatch, argv, env=None):
     import uvicorn
 
-    captured = {}
-    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: captured.update(app=app))
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: None)
+    # Keep main() from touching process-wide server state.
+    monkeypatch.setattr(server, "configure", lambda *_a, **_k: None)
+    monkeypatch.setattr(server, "apply_tool_visibility", lambda *_a, **_k: None)
+    monkeypatch.setattr(server, "configure_registry", lambda *_a, **_k: None)
+    monkeypatch.setattr(server.mcp, "run", lambda: None)
     for k in ("BUILD123D_ALLOW_ALL", "BUILD123D_ALLOWED_HOSTS", "BUILD123D_ALLOWED_ORIGINS"):
         monkeypatch.delenv(k, raising=False)
     for k, v in (env or {}).items():
         monkeypatch.setenv(k, v)
     monkeypatch.setattr("sys.argv", ["build123d-mcp", "--in-process", *argv])
-    prev = getattr(server, "_session", None)
-    try:
-        cli.main()
-    finally:
-        if prev is not None:
-            server._session = prev
-    return captured
+    cli.main()
 
 
-def test_conflict_is_an_error_for_http(monkeypatch):
+def test_conflict_is_an_error_for_http(monkeypatch, capsys):
     with pytest.raises(SystemExit):
         _run_main(
             monkeypatch,
             ["--transport", "http", "--allow-all", "--allowed-hosts", "a.example.com"],
         )
+    err = capsys.readouterr().err
+    assert "incompatible" in err and "--no-allow-all" in err
 
 
 def test_conflict_ignored_for_stdio(monkeypatch):
-    monkeypatch.setattr(server.mcp, "run", lambda: None)
     _run_main(monkeypatch, ["--allowed-hosts", "a.example.com"], {"BUILD123D_ALLOW_ALL": "1"})
+    assert server._transport_security is None
+
+
+def test_cli_clears_env_allowlist_for_allow_all(monkeypatch):
+    _run_main(
+        monkeypatch,
+        ["--transport", "http", "--allow-all", "--allowed-hosts", ""],
+        {"BUILD123D_ALLOWED_HOSTS": "a.example.com"},
+    )
+    assert server._transport_security.enable_dns_rebinding_protection is False
 
 
 def test_cli_overrides_env_allow_all(monkeypatch):
@@ -84,6 +93,75 @@ def test_cli_overrides_env_allow_all(monkeypatch):
     )
     assert server._transport_security.enable_dns_rebinding_protection is True
     assert "a.example.com" in server._transport_security.allowed_hosts
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--allowed-hosts", "*"],
+        ["--allowed-hosts", "*.example.com"],
+        ["--allowed-hosts", "*:*"],
+        ["--allowed-hosts", "::1"],
+        ["--allowed-origins", "cad.example.com"],
+        ["--allowed-origins", "https://*.example.com"],
+    ],
+)
+def test_entries_that_can_never_match_are_rejected(monkeypatch, argv):
+    with pytest.raises(SystemExit):
+        _run_main(monkeypatch, ["--transport", "http", *argv])
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--allowed-hosts", "cad.example.com,cad.example.com:*,[::1]:*"],
+        ["--allowed-origins", "https://cad.example.com,http://10.0.0.1:*"],
+    ],
+)
+def test_valid_entries_are_accepted(monkeypatch, argv):
+    _run_main(monkeypatch, ["--transport", "http", *argv])
+    assert server._transport_security is not None
+
+
+def _status(settings, host, origin=None):
+    """Status the SDK's middleware would return for a POST with these headers."""
+    import asyncio
+
+    from mcp.server.transport_security import TransportSecurityMiddleware
+    from starlette.requests import Request
+
+    headers = [(b"host", host.encode()), (b"content-type", b"application/json")]
+    if origin:
+        headers.append((b"origin", origin.encode()))
+    request = Request({"type": "http", "method": "POST", "headers": headers})
+    mw = TransportSecurityMiddleware(settings)
+    response = asyncio.run(mw.validate_request(request, is_post=True))
+    return 200 if response is None else response.status_code
+
+
+def test_requests_with_additive_allowlists():
+    s = build(hosts="cad.example.com,cad.example.com:*", origins="https://cad.example.com")
+    assert _status(s, "cad.example.com") == 200
+    assert _status(s, "cad.example.com:8000") == 200
+    assert _status(s, "127.0.0.1:8000") == 200
+    assert _status(s, "localhost:8000") == 200
+    assert _status(s, "[::1]:8000") == 200
+    assert _status(s, "evil.com") == 421
+    assert _status(s, "cad.example.com", "https://cad.example.com") == 200
+    assert _status(s, "cad.example.com", "http://localhost:3000") == 200
+    assert _status(s, "cad.example.com", "http://[::1]:3000") == 200
+    assert _status(s, "cad.example.com", "http://evil.com") == 403
+
+
+def test_origins_alone_still_accept_localhost_requests():
+    s = build(origins="https://cad.example.com")
+    assert _status(s, "127.0.0.1:8000", "http://localhost:3000") == 200
+    assert _status(s, "evil.com") == 421
+
+
+def test_allow_all_accepts_any_host_and_origin():
+    s = build(allow_all=True)
+    assert _status(s, "evil.com", "http://evil.com") == 200
 
 
 def test_setting_reaches_streamable_http_app(monkeypatch):

@@ -370,7 +370,9 @@ uv tool run --python 3.12 "build123d-mcp[http]@latest" \
 wildcards the port but does not match the default port, so list the bare
 origin (and the `https://` form behind a TLS proxy) as well. Or, when a
 proxy/gateway terminates the real host and you trust the network layer,
-turn the check off (the SDK check is all-or-nothing):
+turn the check off. This removes the only browser-origin protection on a server
+with no authentication and a code-execution tool, so use it only behind a gateway
+you trust (the SDK check is all-or-nothing):
 
 ```bash
 uv tool run --python 3.12 "build123d-mcp[http]@latest" \
@@ -378,7 +380,9 @@ uv tool run --python 3.12 "build123d-mcp[http]@latest" \
 ```
 
 `--disable-dns-rebinding-protection` is an alias of `--allow-all`;
-`--no-allow-all` overrides `BUILD123D_ALLOW_ALL=1` from the environment.
+`--no-allow-all` overrides `BUILD123D_ALLOW_ALL=1` from the environment, and
+`--allowed-hosts ''` clears an allowlist set in the environment. Entries must be
+exact (no `*.example.com`), IPv6 hosts bracketed, and origins carry a scheme.
 Env vars: `BUILD123D_ALLOWED_HOSTS`, `BUILD123D_ALLOWED_ORIGINS`,
 `BUILD123D_ALLOW_ALL`. These flags apply to `--transport http` only.
 

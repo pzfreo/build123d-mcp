@@ -293,8 +293,20 @@ Part library file format (Python, any .py file under --library path):
 
     allowed_hosts = _csv(args.allowed_hosts)
     allowed_origins = _csv(args.allowed_origins)
+    for flag, entries in (
+        ("--allowed-hosts", allowed_hosts),
+        ("--allowed-origins", allowed_origins),
+    ):
+        problem = _entry_problem(flag, entries)
+        if problem:
+            parser.error(problem)
     if args.transport == "http" and args.allow_all and (allowed_hosts or allowed_origins):
-        parser.error("--allow-all is incompatible with --allowed-hosts/--allowed-origins")
+        parser.error(
+            "--allow-all is incompatible with --allowed-hosts/--allowed-origins (the allowlists "
+            "may come from BUILD123D_ALLOWED_HOSTS/BUILD123D_ALLOWED_ORIGINS; pass "
+            "--allowed-hosts '' / --allowed-origins '' to clear them, or --no-allow-all to "
+            "clear BUILD123D_ALLOW_ALL)"
+        )
 
     if args.viewer_socket:
         if sys.platform == "win32":
@@ -390,6 +402,22 @@ Part library file format (Python, any .py file under --library path):
 def _csv(value: str) -> list[str]:
     """Split a comma-separated CLI/env value, dropping blanks."""
     return [v.strip() for v in value.split(",") if v.strip()]
+
+
+def _entry_problem(flag: str, entries: list[str]) -> str | None:
+    """Reject entries the SDK would accept but can never match (it has no globs)."""
+    for entry in entries:
+        base = entry[:-2] if entry.endswith(":*") else entry
+        if "*" in base:
+            return (
+                f"{flag}: {entry!r} can never match; the only wildcard is a trailing ':*' "
+                "(any port), e.g. 'cad.example.com:*'"
+            )
+        if flag == "--allowed-origins" and "://" not in entry:
+            return f"{flag}: {entry!r} needs a scheme, e.g. 'https://{entry}'"
+        if flag == "--allowed-hosts" and base.count(":") > 1 and not base.startswith("["):
+            return f"{flag}: IPv6 host {entry!r} must be bracketed, e.g. '[::1]:*'"
+    return None
 
 
 _LOCAL_HOSTS = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
