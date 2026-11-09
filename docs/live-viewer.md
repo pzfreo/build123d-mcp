@@ -37,7 +37,14 @@ python examples/live_viewer_client.py /tmp/b123d.sock
 
 - The publisher runs in the **server** process on a background daemon thread. It
   never blocks the agent: broadcasts append to bounded per-client buffers, and a
-  slow client has its oldest frames dropped rather than stalling the producer.
+  slow client has its oldest whole queued frames dropped rather than stalling
+  the producer. Each client's backlog is limited to 256 frames and to
+  `--viewer-max-client-bytes` (env `BUILD123D_VIEWER_MAX_CLIENT_BYTES`, default
+  256 MiB) of retained frame bytes, counting a partially sent frame in full.
+  The on-connect scene dump is exempt from the frame-count limit but not the
+  byte limit: if the dump, or any single frame, does not fit, that viewer is
+  disconnected and the server logs the reason to stderr. Raise the limit for
+  very large scenes. Only the publisher's loop thread closes viewer sockets.
 - After each geometry-mutating tool (`execute`, `reset`, `restore_snapshot`,
   `import_cad_file`, `load_part`), the server asks the worker for **per-shape
   deltas**. Only the shapes whose identity changed are tessellated, via the same

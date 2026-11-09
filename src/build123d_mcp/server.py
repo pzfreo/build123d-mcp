@@ -139,18 +139,22 @@ def configure_transport_security(settings) -> None:
 _viewer = None
 
 
-def start_viewer(socket_path: str):
+def start_viewer(socket_path: str, max_client_bytes: int | None = None):
     """Bind the live-viewer UDS and start broadcasting mesh deltas.
 
     Called by ``cli.main()`` when ``--viewer-socket`` / ``BUILD123D_VIEWER_SOCKET``
-    is set. The publisher runs on its own daemon thread in this (server) process,
+    is set. ``max_client_bytes`` caps each viewer's retained output
+    (``--viewer-max-client-bytes``); None keeps the publisher default. The publisher runs on its own daemon thread in this (server) process,
     never on the agent path. A worker restart triggers a viewer RESET so clients
     drop their now-stale scene.
     """
     global _viewer
     from build123d_mcp.viewer import ViewerPublisher
 
-    _viewer = ViewerPublisher(socket_path)
+    if max_client_bytes is None:
+        _viewer = ViewerPublisher(socket_path)
+    else:
+        _viewer = ViewerPublisher(socket_path, max_client_bytes=max_client_bytes)
     _viewer.start()
     try:
         _resolve_session().set_on_restart(_viewer.reset)

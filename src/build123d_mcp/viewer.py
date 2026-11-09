@@ -189,18 +189,28 @@ def encode_frame(header: dict, payload: bytes = b"") -> bytes:
 # Per-client backlog cap (whole frames). A client slower than the producer has
 # its OLDEST queued frames dropped; the producer never blocks. A reconnecting
 # viewer always gets a fresh full-scene dump, so dropping stale deltas is safe.
-# The cap is on frame count, not bytes: a scene of very large meshes can hold a
-# few hundred MB on a stalled client before frames start dropping.
+# Bound retained bytes as well as frame count. The initial scene must fit the
+# byte budget intact; an oversized dump/frame disconnects only that viewer, and
+# the reason is logged to stderr (stdout carries the MCP stdio protocol).
+# The byte default is generous: it is a backstop against an unbounded backlog
+# in the server process, not a scene-size policy. glb costs ~12 bytes per
+# vertex and per triangle, so 256 MiB holds a scene of roughly ten million
+# triangles; --viewer-max-client-bytes raises or lowers it.
 _MAX_QUEUED_FRAMES = 256
+DEFAULT_MAX_CLIENT_BYTES = 256 * 1024 * 1024  # retained frame objects per client, incl. the head
 
 
 class _Client:
-    __slots__ = ("sock", "frames", "offset")
+    __slots__ = ("sock", "frames", "offset", "queued_bytes", "overflow_reason")
 
     def __init__(self, sock: socket.socket) -> None:
         self.sock = sock
         self.frames: deque[bytes] = deque()  # complete frames pending send
         self.offset = 0  # bytes already sent from frames[0]
+        self.queued_bytes = 0
+        # Set when the client exceeds the byte budget. The loop thread closes it
+        # and logs this reason; a broadcaster never touches the socket.
+        self.overflow_reason: str | None = None
 
 
 class ViewerPublisher:
@@ -213,8 +223,13 @@ class ViewerPublisher:
     and wake the loop. All socket I/O happens on the loop thread.
     """
 
-    def __init__(self, socket_path: str) -> None:
+    def __init__(self, socket_path: str, max_client_bytes: int = DEFAULT_MAX_CLIENT_BYTES) -> None:
+        if isinstance(max_client_bytes, bool) or not isinstance(max_client_bytes, int):
+            raise TypeError("max_client_bytes must be an int")
+        if max_client_bytes <= 0:
+            raise ValueError(f"max_client_bytes must be positive, got {max_client_bytes}")
         self.socket_path = socket_path
+        self.max_client_bytes = max_client_bytes
         self.session_id = uuid.uuid4().hex
         self._sel = selectors.DefaultSelector()
         self._lsock: socket.socket | None = None
@@ -363,15 +378,37 @@ class ViewerPublisher:
             self._enqueue_locked(client, frame)
 
     def _enqueue_locked(self, client: _Client, frame: bytes, cap: bool = True) -> None:
+        if client.overflow_reason is not None:
+            return
+        limit = self.max_client_bytes
+        if len(frame) > limit:
+            reason = f"a single {len(frame)}-byte frame exceeds"
+        elif not cap and client.queued_bytes + len(frame) > limit:
+            reason = (
+                f"the initial scene (at least {client.queued_bytes + len(frame)} bytes) exceeds"
+            )
+        else:
+            reason = None
+        if reason is not None:
+            # A partial initial scene would be misleading. An indivisible frame
+            # cannot fit either: release the backlog and let the loop disconnect.
+            client.overflow_reason = f"{reason} the {limit}-byte per-viewer output limit"
+            client.frames.clear()
+            client.queued_bytes = 0
+            client.offset = 0
+            return
         client.frames.append(frame)
+        client.queued_bytes += len(frame)
         if not cap:
-            return  # the on-connect HELLO + full-scene dump must never be dropped
-        # Drop oldest whole frames past the cap, never the in-flight head.
-        while len(client.frames) > _MAX_QUEUED_FRAMES:
+            return  # initial scene bypasses only the frame-count cap
+        # Drop oldest whole frames past either cap, never the in-flight head.
+        while len(client.frames) > _MAX_QUEUED_FRAMES or client.queued_bytes > limit:
             if client.offset > 0 and len(client.frames) > 1:
+                removed = client.frames[1]
                 del client.frames[1]
             else:
-                client.frames.popleft()
+                removed = client.frames.popleft()
+            client.queued_bytes -= len(removed)
 
     # ---- background loop (the only thread touching sockets) -------------- #
 
@@ -421,6 +458,8 @@ class ViewerPublisher:
             # still capped.
             self._enqueue_locked(client, self._frame_locked("HELLO"), cap=False)
             for name, glb in self._cache.items():
+                if client.overflow_reason is not None:
+                    break
                 self._enqueue_locked(
                     client, self._frame_locked("UPSERT", name=name, payload=glb), cap=False
                 )
@@ -455,6 +494,8 @@ class ViewerPublisher:
         """
         while True:
             with self._lock:
+                if client.overflow_reason is not None:
+                    return True
                 if not client.frames:
                     return False
                 head = client.frames[0]
@@ -469,14 +510,21 @@ class ViewerPublisher:
                 client.offset += sent
                 if client.offset >= len(head):
                     client.frames.popleft()
+                    client.queued_bytes -= len(head)
                     client.offset = 0
                 else:
                     return False  # partial frame sent; resume on next writable event
 
     def _update_write_interest(self) -> None:
         with self._lock:
-            pending = {fo: bool(c.frames) for fo, c in self._clients.items()}
-        for fileobj, has_pending in pending.items():
+            pending = {
+                fo: (bool(c.frames), c.overflow_reason is not None)
+                for fo, c in self._clients.items()
+            }
+        for fileobj, (has_pending, overflowed) in pending.items():
+            if overflowed:
+                self._drop(fileobj)
+                continue
             want = selectors.EVENT_READ | (selectors.EVENT_WRITE if has_pending else 0)
             try:
                 if self._sel.get_key(fileobj).events != want:
@@ -492,7 +540,26 @@ class ViewerPublisher:
         with self._lock:
             client = self._clients.pop(fileobj, None)
         if client is not None:
+            if client.overflow_reason is not None:
+                # Log before closing, so the reason is on stderr by the time the
+                # viewer observes EOF.
+                self._log_overflow(client.overflow_reason)
             try:
                 client.sock.close()
             except OSError:
                 pass
+
+    @staticmethod
+    def _log_overflow(reason: str) -> None:
+        # stderr, never stdout: under the stdio transport stdout is the MCP stream.
+        # Without this line the viewer sees only EOF and may retry in a loop.
+        try:
+            print(
+                f"WARNING: live viewer disconnected: {reason}. Raise "
+                "--viewer-max-client-bytes (BUILD123D_VIEWER_MAX_CLIENT_BYTES) "
+                "to stream larger scenes.",
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:  # noqa: BLE001 - logging must never kill the publisher loop
+            pass

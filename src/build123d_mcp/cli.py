@@ -51,6 +51,7 @@ def main():
 
     from build123d_mcp import server
     from build123d_mcp.tools.install_skill import SKILLS
+    from build123d_mcp.viewer import DEFAULT_MAX_CLIENT_BYTES as DEFAULT_VIEWER_MAX_CLIENT_BYTES
     from build123d_mcp.worker import InProcessSession, WorkerSession
 
     if len(sys.argv) > 1 and sys.argv[1] == "install-skill":
@@ -269,6 +270,19 @@ Part library file format (Python, any .py file under --library path):
         "adds no cost when no viewer is attached. POSIX only. "
         "Overrides BUILD123D_VIEWER_SOCKET env var. See docs/live-viewer.md.",
     )
+    parser.add_argument(
+        "--viewer-max-client-bytes",
+        metavar="BYTES",
+        type=int,
+        # A string default goes through type=int, so a bad env value is a usage error.
+        default=os.environ.get("BUILD123D_VIEWER_MAX_CLIENT_BYTES")
+        or str(DEFAULT_VIEWER_MAX_CLIENT_BYTES),
+        help="Cap the output a single live viewer may have queued in the server, in bytes "
+        f"(default: {DEFAULT_VIEWER_MAX_CLIENT_BYTES}, i.e. 256 MiB). A slow viewer loses its "
+        "oldest updates past the cap; a viewer whose on-connect scene or single update does "
+        "not fit is disconnected and the reason is logged to stderr. Raise it for very large "
+        "scenes. Overrides BUILD123D_VIEWER_MAX_CLIENT_BYTES env var.",
+    )
     args = parser.parse_args()
 
     if args.library and not os.path.isdir(args.library):
@@ -306,6 +320,11 @@ Part library file format (Python, any .py file under --library path):
             "may come from BUILD123D_ALLOWED_HOSTS/BUILD123D_ALLOWED_ORIGINS; pass "
             "--allowed-hosts '' / --allowed-origins '' to clear them, or --no-allow-all to "
             "clear BUILD123D_ALLOW_ALL)"
+        )
+
+    if args.viewer_max_client_bytes <= 0:
+        parser.error(
+            f"--viewer-max-client-bytes must be a positive integer, got {args.viewer_max_client_bytes}"
         )
 
     if args.viewer_socket:
@@ -358,7 +377,7 @@ Part library file format (Python, any .py file under --library path):
     )
 
     if args.viewer_socket:
-        server.start_viewer(args.viewer_socket)
+        server.start_viewer(args.viewer_socket, max_client_bytes=args.viewer_max_client_bytes)
 
     if args.transport == "http":
         import uvicorn
