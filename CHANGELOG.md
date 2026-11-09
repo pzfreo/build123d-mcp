@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.3.92
+
+### Added
+
+- **DNS-rebinding (Host/Origin) transport security via CLI.** HTTP mode now
+  exposes the MCP SDK's `TransportSecuritySettings` (the 421 "Invalid Host /
+  Origin header" validation) through three flags, each with a `BUILD123D_*`
+  env var:
+  - `--allowed-hosts` (`BUILD123D_ALLOWED_HOSTS`): comma-separated Host values
+    added to the localhost defaults, e.g. `'cad.example.com,10.1.2.3:*'`.
+  - `--allowed-origins` (`BUILD123D_ALLOWED_ORIGINS`): comma-separated Origin
+    values added to the localhost defaults (browser clients only).
+  - `--allow-all` (alias `--disable-dns-rebinding-protection`,
+    `BUILD123D_ALLOW_ALL`): protection off. `--no-allow-all` overrides the env
+    var. Conflicts with the allowlists on `--transport http`.
+
+  With no flags the SDK default stays in force (protection on, localhost
+  only). The flags have no effect on stdio. Pinned by
+  `tests/test_transport_security_cli.py`; documented in `README.md`.
+
 ## v0.3.91
 
 ### Changed
