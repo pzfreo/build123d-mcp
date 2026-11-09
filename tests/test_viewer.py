@@ -391,13 +391,10 @@ def test_example_client_safe_filename():
     assert mod._safe_filename("..") is None
 
 
-def test_initial_scene_over_byte_budget_disconnects_viewer(sock_path, monkeypatch):
+def test_initial_scene_over_byte_budget_disconnects_viewer(sock_path, capsys):
     """Late attachment must not receive an incomplete scene to fit the byte cap."""
-    from build123d_mcp import viewer
-
     # HELLO plus either mesh fits; their cumulative initial dump does not.
-    monkeypatch.setattr(viewer, "_MAX_QUEUED_BYTES", len(encode_glb(_VERTS, _TRIS)) + 512)
-    pub = ViewerPublisher(sock_path)
+    pub = ViewerPublisher(sock_path, max_client_bytes=len(encode_glb(_VERTS, _TRIS)) + 512)
     pub.start()
     try:
         pub.upsert("first", _VERTS, _TRIS)
@@ -406,6 +403,30 @@ def test_initial_scene_over_byte_budget_disconnects_viewer(sock_path, monkeypatc
         try:
             assert client.recv(1) == b""
             assert pub.client_count == 0
+        finally:
+            client.close()
+    finally:
+        pub.stop()
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "WARNING: live viewer disconnected: the initial scene" in err
+
+
+def test_initial_scene_within_byte_budget_is_delivered_intact(sock_path):
+    """A budget that fits the whole dump keeps today's late-attach behaviour."""
+    glb = encode_glb(_VERTS, _TRIS)
+    pub = ViewerPublisher(sock_path, max_client_bytes=2 * len(glb) + 1024)
+    pub.start()
+    try:
+        pub.upsert("first", _VERTS, _TRIS)
+        pub.upsert("second", _VERTS, _TRIS)
+        client = _connect(sock_path)
+        try:
+            assert _read_frame(client)[0]["type"] == "HELLO"
+            for name in ("first", "second"):
+                header, payload = _read_frame(client)
+                assert header["type"] == "UPSERT" and header["name"] == name
+                assert payload == glb
         finally:
             client.close()
     finally:
