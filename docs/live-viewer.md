@@ -15,16 +15,10 @@ graphical viewer can be built on top of the same protocol.
 Start the server with a socket path:
 
 ```bash
-# Prefer an owner-only runtime directory, rather than a shared /tmp path.
-build123d-mcp --viewer-socket "$XDG_RUNTIME_DIR/b123d.sock"
+build123d-mcp --viewer-socket /tmp/b123d.sock
 # or
-BUILD123D_VIEWER_SOCKET="$XDG_RUNTIME_DIR/b123d.sock" build123d-mcp
+BUILD123D_VIEWER_SOCKET=/tmp/b123d.sock build123d-mcp
 ```
-
-If `XDG_RUNTIME_DIR` is unset, create a private directory with mode 0700 and
-use a socket path inside it. The server refuses to replace an existing file or
-live socket, so a shared world-writable directory lets another user occupy the
-chosen name first.
 
 POSIX only (uses `AF_UNIX`). When the flag is absent the feature is fully inert
 and a pure agent run pays nothing. When the flag is set, the server keeps a
@@ -35,7 +29,7 @@ full-scene dump; broadcasting to zero clients is a no-op.
 Try it with the bundled example consumer:
 
 ```bash
-python examples/live_viewer_client.py "$XDG_RUNTIME_DIR/b123d.sock"
+python examples/live_viewer_client.py /tmp/b123d.sock
 # add --save-dir DIR to also write each shape's glb to disk
 ```
 
