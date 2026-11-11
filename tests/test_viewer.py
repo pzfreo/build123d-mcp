@@ -293,6 +293,33 @@ def test_publisher_reclaims_stale_socket_and_cleans_up(sock_path):
     assert not os.path.exists(sock_path)
 
 
+def test_publisher_stop_unlinks_before_releasing_listener(sock_path, monkeypatch):
+    # A start() racing with stop() must not have its new socket removed. stop()
+    # releases the endpoint before closing the listener, so by the time the path
+    # can look stale to another publisher it is already gone.
+    first = ViewerPublisher(sock_path)
+    first.start()
+    second = ViewerPublisher(sock_path)
+    path_after_listener_closed = []
+    close_selector = first._sel.close
+
+    def start_second_after_listener_closed():
+        close_selector()
+        path_after_listener_closed.append(os.path.exists(sock_path))
+        second.start()
+
+    monkeypatch.setattr(first._sel, "close", start_second_after_listener_closed)
+    try:
+        first.stop()
+        assert path_after_listener_closed == [False]
+        with _connect(sock_path) as client:
+            hello, _ = _read_frame(client)
+            assert hello["session_id"] == second.session_id
+    finally:
+        first.stop()
+        second.stop()
+
+
 def test_publisher_refuses_non_socket_path(sock_path):
     # A real file at the configured path must not be silently clobbered.
     with open(sock_path, "w") as f:

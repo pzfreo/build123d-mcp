@@ -307,6 +307,21 @@ class ViewerPublisher:
                 c.sock.close()
             except OSError:
                 pass
+        # Unlink while the listening socket is still open. Its open fd keeps the
+        # recorded inode allocated, and a concurrent start() still sees a live
+        # listener and refuses to reclaim the path. Closing first would let that
+        # start() replace the path with a new socket that can reuse the same inode
+        # number (ext4, overlayfs), which would then pass the identity check.
+        try:
+            if self._socket_identity is not None:
+                current = os.lstat(self.socket_path)
+                if (
+                    stat.S_ISSOCK(current.st_mode)
+                    and (current.st_dev, current.st_ino) == self._socket_identity
+                ):
+                    os.unlink(self.socket_path)
+        except OSError:
+            pass
         if self._lsock is not None:
             try:
                 self._lsock.close()
@@ -323,16 +338,6 @@ class ViewerPublisher:
                 wake_sock.close()
             except OSError:
                 pass
-        try:
-            if self._socket_identity is not None:
-                current = os.lstat(self.socket_path)
-                if (
-                    stat.S_ISSOCK(current.st_mode)
-                    and (current.st_dev, current.st_ino) == self._socket_identity
-                ):
-                    os.unlink(self.socket_path)
-        except OSError:
-            pass
 
     # ---- public mutators (called from the server request thread) --------- #
 
