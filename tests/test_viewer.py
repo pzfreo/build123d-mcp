@@ -14,6 +14,7 @@ import stat
 import struct
 import sys
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -210,6 +211,86 @@ def test_publisher_stop_unlinks_socket(sock_path):
     assert not os.path.exists(sock_path)
     # stop() is idempotent.
     pub.stop()
+
+
+@pytest.mark.parametrize("try_start", [False, True])
+def test_publisher_cleanup_preserves_existing_file(sock_path, try_start):
+    path = Path(sock_path)
+    path.write_text("existing user data", encoding="utf-8")
+    pub = ViewerPublisher(sock_path)
+    try:
+        if try_start:
+            with pytest.raises(ValueError, match="not a socket"):
+                pub.start()
+        pub.stop()
+        assert path.read_text(encoding="utf-8") == "existing user data"
+    finally:
+        pub.stop()
+
+
+@pytest.mark.parametrize("try_start", [False, True])
+def test_publisher_cleanup_preserves_another_listener(sock_path, try_start):
+    first = ViewerPublisher(sock_path)
+    first.start()
+    second = ViewerPublisher(sock_path)
+    try:
+        if try_start:
+            with pytest.raises(RuntimeError, match="already listening"):
+                second.start()
+        second.stop()
+        with _connect(sock_path) as client:
+            hello, _ = _read_frame(client)
+            assert hello["session_id"] == first.session_id
+    finally:
+        second.stop()
+        first.stop()
+
+
+@pytest.mark.parametrize("replacement", ["file", "socket", "symlink"])
+def test_publisher_stop_preserves_replaced_path(sock_path, replacement):
+    pub = ViewerPublisher(sock_path)
+    pub.start()
+    os.unlink(sock_path)
+    other = None
+    path = Path(sock_path)
+    try:
+        if replacement == "socket":
+            other = ViewerPublisher(sock_path)
+            other.start()
+        elif replacement == "symlink":
+            target = path.with_name("user-data")
+            target.write_text("replacement", encoding="utf-8")
+            path.symlink_to(target)
+        else:
+            path.write_text("replacement", encoding="utf-8")
+
+        pub.stop()
+        if other is not None:
+            with _connect(sock_path) as client:
+                hello, _ = _read_frame(client)
+                assert hello["session_id"] == other.session_id
+        else:
+            assert path.read_text(encoding="utf-8") == "replacement"
+            if replacement == "symlink":
+                assert path.is_symlink()
+    finally:
+        pub.stop()
+        if other is not None:
+            other.stop()
+
+
+def test_publisher_reclaims_stale_socket_and_cleans_up(sock_path):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stale:
+        stale.bind(sock_path)
+    pub = ViewerPublisher(sock_path)
+    try:
+        pub.start()
+        with _connect(sock_path) as client:
+            hello, _ = _read_frame(client)
+            assert hello["session_id"] == pub.session_id
+    finally:
+        pub.stop()
+    assert not os.path.exists(sock_path)
 
 
 def test_publisher_refuses_non_socket_path(sock_path):
