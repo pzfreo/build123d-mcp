@@ -21,7 +21,7 @@ def test_import_warmup_not_counted_in_baseline_cap(tmp_path, monkeypatch):
         clock.advance(10)
         warmed["done"] = True
 
-    def evaluate_program(_program, cap_s):
+    def evaluate_program(_program, cap_s, early_exit=True):
         if not warmed["done"]:
             clock.advance(10)
             warmed["done"] = True
