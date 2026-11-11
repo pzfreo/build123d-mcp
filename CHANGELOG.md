@@ -32,7 +32,8 @@
 
 - **Dependency refresh.** The lockfile moves to current releases (mcp 2.3.0,
   numpy 2.5, scipy 1.18, vtk 9.7, pillow 13, resvg-py 0.5,
-  build123d-drafting-helpers 0.15.5, trimesh 5). quiddity stays on 0.3.x
+  build123d-drafting-helpers 0.15.5, trimesh 5). The lock keeps build123d on
+  0.11 (CI covers 0.10, 0.11 and 0.13). quiddity stays on 0.3.x
   (0.3.12) until feature recognition moves to quiddity 0.4's file-based API.
   Markdown is excluded from `ruff format`, which reflows code blocks in docs
   from ruff 0.17.
