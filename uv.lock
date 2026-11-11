@@ -232,7 +232,7 @@ requires-dist = [
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "mcp", specifier = ">=2,<3" },
     { name = "pillow" },
-    { name = "quiddity", specifier = ">=0.3.11,<0.4" },
+    { name = "quiddity", specifier = ">=0.4.9,<0.5" },
     { name = "resvg-py" },
     { name = "scipy" },
     { name = "uvicorn", marker = "extra == 'http'" },
@@ -2084,18 +2084,15 @@ wheels = [
 
 [[package]]
 name = "quiddity"
-version = "0.3.12"
+version = "0.4.9"
 source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "build123d" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/20/95/f0ebbf7dcde6626ed4029aac5f775873d0b8b1324fdc4b1060a161061507/quiddity-0.3.12.tar.gz", hash = "sha256:be3cb6c81abdc3475db31d7c345e12d29c1f29fba33fc2326caf08acebbd2246", size = 26694581, upload-time = "2026-10-31T12:32:17.333Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bd/b8/840225d7fa75979b9dd981dd0b997ec4a0b1aa4b8bf129cf16b7db95c21b/quiddity-0.4.9.tar.gz", hash = "sha256:d10730f923060aa9b24ee58ff7081129c5170928ed1b8091c0c6959b075a2dbb", size = 1492885, upload-time = "2026-11-07T08:30:35.713Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c4/2f/834ffba1773c5d30efc7e6e0c6e0620f340876773d9b9bdc7494e8eca6bd/quiddity-0.3.12-py3-none-any.whl", hash = "sha256:c35086e9a943a314b8024ba15073b90483de5db03f065744896df41f4ae00567", size = 586670, upload-time = "2026-10-31T12:32:15.223Z" },
+    { url = "https://files.pythonhosted.org/packages/39/ba/061c35cd3199497342c9a6a2ccb0dd8f139b3a880f91385ece90ff4a8d42/quiddity-0.4.9-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:d0dfacdf6990c08a089d17571e57ca9bba4e8cea6328ae3556bfe534762f12ab", size = 7840395, upload-time = "2026-11-07T08:30:25.799Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/5b/c6c267c5b2a72dbe0784966eaf4521f28c5bfbdff59c7708e35ac5e8ab65/quiddity-0.4.9-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:aa2057c85abe9612e40766e0413c380916724722cb95d0f813bfd74300da7be9", size = 7268947, upload-time = "2026-11-07T08:30:27.694Z" },
+    { url = "https://files.pythonhosted.org/packages/02/27/1df20072f9431ce869682f4d53daf953411d81f04f4212e7d7c922a331c2/quiddity-0.4.9-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:0d52ae9a368a623eb819c6d95c418faee03ecb11c93a9bb8d269d86f6e84fdc9", size = 7493404, upload-time = "2026-11-07T08:30:29.545Z" },
+    { url = "https://files.pythonhosted.org/packages/17/c1/9cb254334e9af3f09f09746e6690bb719c07dff7f0e9d3c1c086e4c08df5/quiddity-0.4.9-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:c11355af1ae1de7fe6372aeafed461f815840451478fe33dd54ffb0688fe1cb7", size = 8177128, upload-time = "2026-11-07T08:30:31.365Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/d2/6707df0d0ba76a136ada2e4359e5da3b39e360fa7dd0eec3a48221dcc9f8/quiddity-0.4.9-cp311-abi3-win_amd64.whl", hash = "sha256:ae38439a54ba097b578b6f08583273f16e06f3da564baed190a368c9d9df3ff1", size = 8300909, upload-time = "2026-11-07T08:30:33.393Z" },
 ]
 
 [[package]]

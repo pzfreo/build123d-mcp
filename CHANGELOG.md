@@ -30,6 +30,17 @@
 
 ### Changed
 
+- **Feature recognition runs on quiddity 0.4.** quiddity 0.4 is a Rust rewrite
+  that recognises STEP rather than live build123d objects. `recognise_features`,
+  `find_candidates`, `interface_features` and `edit_feature` now export the
+  shape once per run and read quiddity's JSON through a small adapter
+  (`tools/_recognition.py`). A face index resolves to the live face at that
+  index only after it matches quiddity's proved point on the face, so a
+  renumbered export is refused rather than misattributed. Visible differences:
+  the `cylinders` aggregate no longer exists (use `holes` / `hole_patterns`),
+  hole axes are vectors, `association` is computed from the accepted features'
+  faces and areas, and a family that fails inside quiddity is reported in a new
+  `incomplete` field instead of looking empty.
 - **Dependency refresh.** The lockfile moves to current releases (mcp 2.3.0,
   numpy 2.5, scipy 1.18, vtk 9.7, pillow 13, resvg-py 0.5,
   build123d-drafting-helpers 0.15.5, trimesh 5). The lock keeps build123d on
