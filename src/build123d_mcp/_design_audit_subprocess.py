@@ -18,6 +18,7 @@ module can import them without a heavy or circular import.
 
 import ast
 import json
+import multiprocessing
 import os
 import sys
 import time
@@ -455,8 +456,13 @@ def run_audit(
         workers = min(max_workers, len(jobs))
         executor = None
         try:
+            # spawn, not fork: this process already has the OCC kernel loaded, and
+            # forking it deadlocks the workers on Linux (the default before 3.14).
             executor = cf.ProcessPoolExecutor(
-                max_workers=workers, initializer=_worker_init, initargs=(security,)
+                max_workers=workers,
+                mp_context=multiprocessing.get_context("spawn"),
+                initializer=_worker_init,
+                initargs=(security,),
             )
             future_job = {}
             for job in jobs:
