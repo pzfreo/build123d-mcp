@@ -51,6 +51,7 @@ def main():
 
     from build123d_mcp import server
     from build123d_mcp.tools.install_skill import SKILLS
+    from build123d_mcp.viewer import DEFAULT_MAX_CLIENT_BYTES as DEFAULT_VIEWER_MAX_CLIENT_BYTES
     from build123d_mcp.worker import InProcessSession, WorkerSession
 
     if len(sys.argv) > 1 and sys.argv[1] == "install-skill":
@@ -169,6 +170,33 @@ Part library file format (Python, any .py file under --library path):
         "Overrides BUILD123D_PORT env var.",
     )
     parser.add_argument(
+        "--allow-all",
+        "--disable-dns-rebinding-protection",
+        action=argparse.BooleanOptionalAction,
+        default=os.environ.get("BUILD123D_ALLOW_ALL", "").lower() in ("1", "true", "yes"),
+        help="Accept every Host and Origin header on --transport http, i.e. turn off the "
+        "SDK's DNS-rebinding protection (the SDK check is all-or-nothing). Use when a reverse "
+        "proxy / gateway terminates the real host. Conflicts with --allowed-hosts / "
+        "--allowed-origins. --no-allow-all overrides BUILD123D_ALLOW_ALL=1.",
+    )
+    parser.add_argument(
+        "--allowed-hosts",
+        metavar="HOSTS",
+        default=os.environ.get("BUILD123D_ALLOWED_HOSTS", ""),
+        help="Comma-separated Host header values accepted on --transport http in addition to "
+        "the localhost defaults, e.g. 'cad.example.com,cad.example.com:*' (trailing :* accepts "
+        "any port). Overrides BUILD123D_ALLOWED_HOSTS env var.",
+    )
+    parser.add_argument(
+        "--allowed-origins",
+        metavar="ORIGINS",
+        default=os.environ.get("BUILD123D_ALLOWED_ORIGINS", ""),
+        help="Comma-separated Origin header values accepted on --transport http in addition to "
+        "the localhost defaults, e.g. 'https://cad.example.com,http://cad.example.com' (scheme "
+        "is part of the entry; a trailing :* accepts any port, but not the default port). Only "
+        "relevant to browser-based clients. Overrides BUILD123D_ALLOWED_ORIGINS env var.",
+    )
+    parser.add_argument(
         "--max-sessions",
         metavar="N",
         type=int,
@@ -242,6 +270,19 @@ Part library file format (Python, any .py file under --library path):
         "adds no cost when no viewer is attached. POSIX only. "
         "Overrides BUILD123D_VIEWER_SOCKET env var. See docs/live-viewer.md.",
     )
+    parser.add_argument(
+        "--viewer-max-client-bytes",
+        metavar="BYTES",
+        type=int,
+        # A string default goes through type=int, so a bad env value is a usage error.
+        default=os.environ.get("BUILD123D_VIEWER_MAX_CLIENT_BYTES")
+        or str(DEFAULT_VIEWER_MAX_CLIENT_BYTES),
+        help="Cap the output a single live viewer may have queued in the server, in bytes "
+        f"(default: {DEFAULT_VIEWER_MAX_CLIENT_BYTES}, i.e. 256 MiB). A slow viewer loses its "
+        "oldest updates past the cap; a viewer whose on-connect scene or single update does "
+        "not fit is disconnected and the reason is logged to stderr. Raise it for very large "
+        "scenes. Overrides BUILD123D_VIEWER_MAX_CLIENT_BYTES env var.",
+    )
     args = parser.parse_args()
 
     if args.library and not os.path.isdir(args.library):
@@ -262,6 +303,28 @@ Part library file format (Python, any .py file under --library path):
         parser.error(
             "--session-idle-timeout must be 0 (never reap) or a positive number of seconds, "
             f"got {args.session_idle_timeout}"
+        )
+
+    allowed_hosts = _csv(args.allowed_hosts)
+    allowed_origins = _csv(args.allowed_origins)
+    for flag, entries in (
+        ("--allowed-hosts", allowed_hosts),
+        ("--allowed-origins", allowed_origins),
+    ):
+        problem = _entry_problem(flag, entries)
+        if problem:
+            parser.error(problem)
+    if args.transport == "http" and args.allow_all and (allowed_hosts or allowed_origins):
+        parser.error(
+            "--allow-all is incompatible with --allowed-hosts/--allowed-origins (the allowlists "
+            "may come from BUILD123D_ALLOWED_HOSTS/BUILD123D_ALLOWED_ORIGINS; pass "
+            "--allowed-hosts '' / --allowed-origins '' to clear them, or --no-allow-all to "
+            "clear BUILD123D_ALLOW_ALL)"
+        )
+
+    if args.viewer_max_client_bytes <= 0:
+        parser.error(
+            f"--viewer-max-client-bytes must be a positive integer, got {args.viewer_max_client_bytes}"
         )
 
     if args.viewer_socket:
@@ -314,10 +377,16 @@ Part library file format (Python, any .py file under --library path):
     )
 
     if args.viewer_socket:
-        server.start_viewer(args.viewer_socket)
+        server.start_viewer(args.viewer_socket, max_client_bytes=args.viewer_max_client_bytes)
 
     if args.transport == "http":
         import uvicorn
+
+        settings = _build_transport_security_settings(
+            args.allow_all, allowed_hosts, allowed_origins
+        )
+        if settings is not None:
+            server.configure_transport_security(settings)
 
         if args.max_sessions > 1:
             from build123d_mcp.session_registry import SessionRegistry
@@ -347,6 +416,53 @@ Part library file format (Python, any .py file under --library path):
         uvicorn.run(server.http_app(), host=args.host, port=args.port)
     else:
         server.mcp.run()
+
+
+def _csv(value: str) -> list[str]:
+    """Split a comma-separated CLI/env value, dropping blanks."""
+    return [v.strip() for v in value.split(",") if v.strip()]
+
+
+def _entry_problem(flag: str, entries: list[str]) -> str | None:
+    """Reject entries the SDK would accept but can never match (it has no globs)."""
+    for entry in entries:
+        base = entry[:-2] if entry.endswith(":*") else entry
+        if "*" in base:
+            return (
+                f"{flag}: {entry!r} can never match; the only wildcard is a trailing ':*' "
+                "(any port), e.g. 'cad.example.com:*'"
+            )
+        if flag == "--allowed-origins" and "://" not in entry:
+            return f"{flag}: {entry!r} needs a scheme, e.g. 'https://{entry}'"
+        if flag == "--allowed-hosts" and base.count(":") > 1 and not base.startswith("["):
+            return f"{flag}: IPv6 host {entry!r} must be bracketed, e.g. '[::1]:*'"
+    return None
+
+
+_LOCAL_HOSTS = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+_LOCAL_ORIGINS = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+
+
+def _build_transport_security_settings(
+    allow_all: bool, allowed_hosts: list[str], allowed_origins: list[str]
+):
+    """Map the transport-security flags to a TransportSecuritySettings, or None
+    when nothing is set (the SDK default, localhost-only, stays in place).
+
+    Operator entries are added to the SDK's localhost defaults, never replace
+    them, so a health check on 127.0.0.1 keeps working. ``allow_all`` is protection
+    off: the SDK has no match-everything entry."""
+    if not (allow_all or allowed_hosts or allowed_origins):
+        return None
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    if allow_all:
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=_LOCAL_HOSTS + allowed_hosts,
+        allowed_origins=_LOCAL_ORIGINS + allowed_origins,
+    )
 
 
 if __name__ == "__main__":

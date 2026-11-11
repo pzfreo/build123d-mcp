@@ -14,6 +14,7 @@ import stat
 import struct
 import sys
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -212,6 +213,86 @@ def test_publisher_stop_unlinks_socket(sock_path):
     pub.stop()
 
 
+@pytest.mark.parametrize("try_start", [False, True])
+def test_publisher_cleanup_preserves_existing_file(sock_path, try_start):
+    path = Path(sock_path)
+    path.write_text("existing user data", encoding="utf-8")
+    pub = ViewerPublisher(sock_path)
+    try:
+        if try_start:
+            with pytest.raises(ValueError, match="not a socket"):
+                pub.start()
+        pub.stop()
+        assert path.read_text(encoding="utf-8") == "existing user data"
+    finally:
+        pub.stop()
+
+
+@pytest.mark.parametrize("try_start", [False, True])
+def test_publisher_cleanup_preserves_another_listener(sock_path, try_start):
+    first = ViewerPublisher(sock_path)
+    first.start()
+    second = ViewerPublisher(sock_path)
+    try:
+        if try_start:
+            with pytest.raises(RuntimeError, match="already listening"):
+                second.start()
+        second.stop()
+        with _connect(sock_path) as client:
+            hello, _ = _read_frame(client)
+            assert hello["session_id"] == first.session_id
+    finally:
+        second.stop()
+        first.stop()
+
+
+@pytest.mark.parametrize("replacement", ["file", "socket", "symlink"])
+def test_publisher_stop_preserves_replaced_path(sock_path, replacement):
+    pub = ViewerPublisher(sock_path)
+    pub.start()
+    os.unlink(sock_path)
+    other = None
+    path = Path(sock_path)
+    try:
+        if replacement == "socket":
+            other = ViewerPublisher(sock_path)
+            other.start()
+        elif replacement == "symlink":
+            target = path.with_name("user-data")
+            target.write_text("replacement", encoding="utf-8")
+            path.symlink_to(target)
+        else:
+            path.write_text("replacement", encoding="utf-8")
+
+        pub.stop()
+        if other is not None:
+            with _connect(sock_path) as client:
+                hello, _ = _read_frame(client)
+                assert hello["session_id"] == other.session_id
+        else:
+            assert path.read_text(encoding="utf-8") == "replacement"
+            if replacement == "symlink":
+                assert path.is_symlink()
+    finally:
+        pub.stop()
+        if other is not None:
+            other.stop()
+
+
+def test_publisher_reclaims_stale_socket_and_cleans_up(sock_path):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stale:
+        stale.bind(sock_path)
+    pub = ViewerPublisher(sock_path)
+    try:
+        pub.start()
+        with _connect(sock_path) as client:
+            hello, _ = _read_frame(client)
+            assert hello["session_id"] == pub.session_id
+    finally:
+        pub.stop()
+    assert not os.path.exists(sock_path)
+
+
 def test_publisher_refuses_non_socket_path(sock_path):
     # A real file at the configured path must not be silently clobbered.
     with open(sock_path, "w") as f:
@@ -389,3 +470,45 @@ def test_example_client_safe_filename():
     assert mod._safe_filename("../../etc/passwd") == "passwd.glb"  # cannot escape
     assert mod._safe_filename("") is None
     assert mod._safe_filename("..") is None
+
+
+def test_initial_scene_over_byte_budget_disconnects_viewer(sock_path, capsys):
+    """Late attachment must not receive an incomplete scene to fit the byte cap."""
+    # HELLO plus either mesh fits; their cumulative initial dump does not.
+    pub = ViewerPublisher(sock_path, max_client_bytes=len(encode_glb(_VERTS, _TRIS)) + 512)
+    pub.start()
+    try:
+        pub.upsert("first", _VERTS, _TRIS)
+        pub.upsert("second", _VERTS, _TRIS)
+        client = _connect(sock_path)
+        try:
+            assert client.recv(1) == b""
+            assert pub.client_count == 0
+        finally:
+            client.close()
+    finally:
+        pub.stop()
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "WARNING: live viewer disconnected: the initial scene" in err
+
+
+def test_initial_scene_within_byte_budget_is_delivered_intact(sock_path):
+    """A budget that fits the whole dump keeps today's late-attach behaviour."""
+    glb = encode_glb(_VERTS, _TRIS)
+    pub = ViewerPublisher(sock_path, max_client_bytes=2 * len(glb) + 1024)
+    pub.start()
+    try:
+        pub.upsert("first", _VERTS, _TRIS)
+        pub.upsert("second", _VERTS, _TRIS)
+        client = _connect(sock_path)
+        try:
+            assert _read_frame(client)[0]["type"] == "HELLO"
+            for name in ("first", "second"):
+                header, payload = _read_frame(client)
+                assert header["type"] == "UPSERT" and header["name"] == name
+                assert payload == glb
+        finally:
+            client.close()
+    finally:
+        pub.stop()

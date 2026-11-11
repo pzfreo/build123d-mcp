@@ -116,23 +116,45 @@ def configure_registry(registry) -> None:
     _registry = registry
 
 
+# mcp.server.transport_security.TransportSecuritySettings | None. Set by
+# configure_transport_security() for the HTTP transport (DNS-rebinding
+# Host/Origin validation). None = the SDK's own default: streamable_http_app()
+# auto-enables protection with a localhost-only allowlist.
+_transport_security = None
+
+
+def configure_transport_security(settings) -> None:
+    """Set TransportSecuritySettings for the next http_app().
+
+    ``settings`` is a ``mcp.server.transport_security.TransportSecuritySettings``
+    (protection on with explicit allowlists, or protection disabled). The
+    CLI never passes None — absence of a flag means "don't configure", which
+    leaves the SDK default in place."""
+    global _transport_security
+    _transport_security = settings
+
+
 # Live-session viewer publisher (build123d_mcp.viewer.ViewerPublisher), or None
 # when --viewer-socket was not given. Set by start_viewer().
 _viewer = None
 
 
-def start_viewer(socket_path: str):
+def start_viewer(socket_path: str, max_client_bytes: int | None = None):
     """Bind the live-viewer UDS and start broadcasting mesh deltas.
 
     Called by ``cli.main()`` when ``--viewer-socket`` / ``BUILD123D_VIEWER_SOCKET``
-    is set. The publisher runs on its own daemon thread in this (server) process,
+    is set. ``max_client_bytes`` caps each viewer's retained output
+    (``--viewer-max-client-bytes``); None keeps the publisher default. The publisher runs on its own daemon thread in this (server) process,
     never on the agent path. A worker restart triggers a viewer RESET so clients
     drop their now-stale scene.
     """
     global _viewer
     from build123d_mcp.viewer import ViewerPublisher
 
-    _viewer = ViewerPublisher(socket_path)
+    if max_client_bytes is None:
+        _viewer = ViewerPublisher(socket_path)
+    else:
+        _viewer = ViewerPublisher(socket_path, max_client_bytes=max_client_bytes)
     _viewer.start()
     try:
         _resolve_session().set_on_restart(_viewer.reset)
@@ -353,7 +375,7 @@ def http_app():
     factory.  It stays on because CAD session identity is ours (the handle
     registry / ``_session_var``), never the protocol's — see ADR 0001 and 0003.
     """
-    app = mcp.streamable_http_app(stateless_http=True)
+    app = mcp.streamable_http_app(stateless_http=True, transport_security=_transport_security)
     if _registry is not None:
         return CadSessionMiddleware(app, _registry)
     return app
