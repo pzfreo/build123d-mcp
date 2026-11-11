@@ -233,6 +233,7 @@ class ViewerPublisher:
         self.session_id = uuid.uuid4().hex
         self._sel = selectors.DefaultSelector()
         self._lsock: socket.socket | None = None
+        self._socket_identity: tuple[int, int] | None = None
         self._clients: dict[socket.socket, _Client] = {}
         self._cache: dict[str, bytes] = {}  # name -> glb bytes (insertion-ordered)
         self._seq = 0
@@ -277,6 +278,8 @@ class ViewerPublisher:
         old_umask = os.umask(0o077)
         try:
             lsock.bind(self.socket_path)
+            bound = os.lstat(self.socket_path)
+            self._socket_identity = (bound.st_dev, bound.st_ino)
         finally:
             os.umask(old_umask)
         os.chmod(self.socket_path, 0o600)
@@ -321,8 +324,13 @@ class ViewerPublisher:
             except OSError:
                 pass
         try:
-            if os.path.exists(self.socket_path):
-                os.unlink(self.socket_path)
+            if self._socket_identity is not None:
+                current = os.lstat(self.socket_path)
+                if (
+                    stat.S_ISSOCK(current.st_mode)
+                    and (current.st_dev, current.st_ino) == self._socket_identity
+                ):
+                    os.unlink(self.socket_path)
         except OSError:
             pass
 
