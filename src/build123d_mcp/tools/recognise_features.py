@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from dataclasses import fields, is_dataclass
 from enum import Enum
 from typing import Any
 
@@ -18,12 +17,10 @@ from build123d_mcp.tools.measure import _resolve_shape
 from build123d_mcp.tools.resolve import _describe
 
 _MAX_FEATURES = 100
-# Result fields that are not published as feature families: aggregates,
-# patterns, and SectionRecess refusals (published under ``section_recesses``).
+# Result fields that are not published as feature families: pattern aggregates
+# and SectionRecess refusals (published under ``section_recesses``).
 _NON_TARGET_RESULT_FIELDS = frozenset(
     {
-        "cylinders",
-        "rotational",
         "hole_patterns",
         "slot_patterns",
         "oriented_slot_patterns",
@@ -45,7 +42,7 @@ def _is_non_target(name: str) -> bool:
 # evidence (so no edit handles), but their records are useful context, so they
 # are returned read-only instead of rejected as unknown families.
 def _is_read_only(name: str) -> bool:
-    return _is_non_target(name) and name != "rotational" and not name.endswith("_refusals")
+    return _is_non_target(name) and not name.endswith("_refusals")
 
 
 _INVALID_SOLID_GUIDANCE = (
@@ -92,8 +89,6 @@ def _json_value(value: Any) -> Any:
         return round(value, 6)
     if isinstance(value, Enum):
         return value.value
-    if is_dataclass(value) and not isinstance(value, type):
-        return {field.name: _json_value(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, dict):
         return {str(key): _json_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -101,12 +96,8 @@ def _json_value(value: Any) -> Any:
     return value
 
 
-def _inventory(result: Any) -> dict[str, Any]:
-    counts: dict[str, Any] = {}
-    for field in fields(result):
-        value = getattr(result, field.name)
-        counts[field.name] = value if isinstance(value, bool) else len(value)
-    return counts
+def _inventory(result: dict[str, list]) -> dict[str, int]:
+    return {name: len(records) for name, records in sorted(result.items())}
 
 
 def _normalise_families(requested: str, known: set[str]) -> tuple[list[str], list[str]]:
@@ -130,47 +121,18 @@ def _normalise_families(requested: str, known: set[str]) -> tuple[list[str], lis
     return selected, unknown
 
 
-def _association(evidence: Any) -> dict[str, Any]:
-    association = evidence.association
-    return {
-        "faces": {
-            "total": association.face_count.total,
-            "associated": association.face_count.associated,
-            "unassociated": association.face_count.unassociated,
-            "ratio": _json_value(association.face_count.ratio),
-        },
-        "surface_area": {
-            "total": _json_value(association.surface_area.total),
-            "associated": _json_value(association.surface_area.associated),
-            "unassociated": _json_value(association.surface_area.unassociated),
-            "ratio": _json_value(association.surface_area.ratio),
-        },
-    }
-
-
 def _frame(evidence: Any) -> dict[str, Any] | None:
-    frame = getattr(evidence, "frame", None)
+    frame = evidence.frame
     if frame is None:
         return None
-    return {
-        "origin": _json_value(frame.origin),
-        "x": _json_value(frame.x),
-        "y": _json_value(frame.y),
-        "z": _json_value(frame.z),
-        "gauge": frame.gauge.value,
-    }
-
-
-def _source_face(evidence: Any, reference: Any) -> Any:
-    caller_face = getattr(evidence, "caller_face", None)
-    return caller_face(reference) if caller_face is not None else evidence.face(reference)
+    return {key: _json_value(frame[key]) for key in ("origin", "x", "y", "z", "gauge")}
 
 
 def _face_rows(source: Any, evidence: Any, references: Any) -> list[dict[str, Any]]:
     source_faces = tuple(source.faces())
     rows: list[tuple[int, dict[str, Any]]] = []
     for reference in references:
-        face = _source_face(evidence, reference)
+        face = evidence.face(reference)
         matches = [
             index
             for index, candidate in enumerate(source_faces)
@@ -191,16 +153,9 @@ def _discard_run(session: Any, run: dict[str, Any]) -> None:
 
 
 def _build_run(session: Any, source: Any, source_name: str, coordinate_frame: str):
-    from quiddity import RefusedFramedEvidence, build_framed_recognition_evidence
-    from quiddity.evidence import build_recognition_evidence
+    from build123d_mcp.tools._recognition import build_evidence
 
-    evidence: Any
-    if coordinate_frame == "caller":
-        evidence = build_recognition_evidence(source)
-    else:
-        evidence = build_framed_recognition_evidence(source)
-        if isinstance(evidence, RefusedFramedEvidence):
-            raise ValueError(f"part-relative evidence refused: {evidence.reason.value}")
+    evidence = build_evidence(source, framed=coordinate_frame == "part")
 
     run_number = session._recognition_next_run
     session._recognition_next_run += 1
@@ -299,7 +254,12 @@ def recognise_features(
         )
     result = evidence.result
     inventory = _inventory(result)
-    known = {name for name in inventory if not _is_non_target(name)}
+    # Targetable families are the ones evidence publishes per occurrence. A family
+    # recognition counts but evidence folds into another (pockets -> section_recesses)
+    # is not; one with no records this run stays askable, and matches nothing.
+    known = {evidence.family(f) for f in evidence.features if not evidence.is_aggregate(f)} | {
+        name for name, records in result.items() if not records and not _is_non_target(name)
+    }
     read_only_known = {name for name in inventory if _is_read_only(name)}
     requested, unknown = _normalise_families(families, known | read_only_known)
     if unknown:
@@ -314,7 +274,7 @@ def recognise_features(
     selected = [name for name in requested if name in known]
     read_only = {}
     for name in (n for n in requested if n in read_only_known):
-        records = _read_only_records(getattr(result, name))
+        records = _read_only_records(result[name])
         read_only[name] = {
             "count": len(records),
             "records": [_compact_record(r) for r in records[:max_features]],
@@ -332,7 +292,7 @@ def recognise_features(
             "ref": target["reference"],
             "family": target["family"],
             "index": target["index"],
-            "record_type": type(record).__name__,
+            "record_type": record.kind,
             "record": _json_value(record.to_dict()),
             "defining_face_count": len(defining),
             "constituent_face_count": len(constituent),
@@ -355,7 +315,7 @@ def recognise_features(
         "targetable": dict(
             sorted(Counter(t["family"] for t in run["targets"] if t["family"] in known).items())
         ),
-        "association": _association(evidence),
+        "association": evidence.association(),
         "requested_families": selected,
         "matched": len(matching),
         "returned": len(features),
@@ -372,6 +332,12 @@ def recognise_features(
         response["warning"] = (
             "The shape fails the B-rep validity check; these features were proven only on "
             "its sound regions. " + _INVALID_SOLID_GUIDANCE
+        )
+    if not evidence.complete:
+        failed = sorted({entry.get("family", "?") for entry in evidence.failures})
+        response["incomplete"] = (
+            f"Recognition of {', '.join(failed)} failed inside quiddity; records of those "
+            "families are missing, not absent."
         )
     frame = _frame(evidence)
     if frame is not None:

@@ -256,10 +256,9 @@ class Session:
                 refs = evidence.defining_faces(feature)
             else:
                 raise ValueError("recognition face role must be 'constituent' or 'defining'")
-            resolver = getattr(evidence, "caller_face", evidence.face)
             from build123d import ShapeList
 
-            return ShapeList([resolver(face_ref) for face_ref in refs])
+            return ShapeList([evidence.face(face_ref) for face_ref in refs])
 
         self.namespace["recognition_faces"] = recognition_faces
 
