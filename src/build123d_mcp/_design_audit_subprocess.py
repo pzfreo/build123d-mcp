@@ -18,6 +18,7 @@ module can import them without a heavy or circular import.
 
 import ast
 import json
+import multiprocessing
 import os
 import sys
 import time
@@ -229,7 +230,7 @@ def _param_verdict(results: list) -> str:
     return "robust"
 
 
-def evaluate_program(program: str, cap_s: int) -> dict:
+def evaluate_program(program: str, cap_s: int, early_exit: bool = True) -> dict:
     """Rebuild ``program`` in a fresh Session and gate the result.
 
     Returns ``{rebuilt: False, error}`` or
@@ -245,7 +246,7 @@ def evaluate_program(program: str, cap_s: int) -> dict:
     if sess.current_shape is None:
         return {"rebuilt": False, "error": "program ran but produced no shape/solid"}
     try:
-        report = _gate_report(sess.current_shape)
+        report = _gate_report(sess.current_shape, early_exit=early_exit)
     except Exception as exc:  # gate crashed on this shape — inconclusive, not fragility
         return {
             "rebuilt": True,
@@ -264,8 +265,92 @@ def evaluate_program(program: str, cap_s: int) -> dict:
     }
 
 
+def _worker_init(security_cfg: dict | None) -> None:
+    """Initialize a pool worker: apply security settings and warm the import."""
+    if security_cfg:
+        _apply_security(security_cfg)
+    _warm_build123d_import()
+
+
+def _eval_worker_task(args: tuple) -> tuple:
+    """Pool task: ``(p_idx, pert_idx, program, cap_s)`` -> ``(p_idx, pert_idx, result)``."""
+    p_idx, pert_idx, program, cap_s = args
+    return p_idx, pert_idx, evaluate_program(program, cap_s, early_exit=True)
+
+
+# Each pool worker loads the OCC kernel and builds a full model, so the count is
+# capped well below the core count; BUILD123D_AUDIT_WORKERS overrides it (1 = sequential).
+_MAX_AUDIT_WORKERS = 4
+
+
+def _default_workers() -> int:
+    env = os.environ.get("BUILD123D_AUDIT_WORKERS", "")
+    if env.isdigit() and int(env) >= 1:
+        return int(env)
+    return max(1, min(os.cpu_count() or 1, _MAX_AUDIT_WORKERS))
+
+
+def _pool_worthwhile(n_jobs: int, base_time: float, warm_s: float, workers: int) -> bool:
+    """True when farming ``n_jobs`` rebuilds to ``workers`` processes should beat
+    running them in this one.
+
+    Each worker pays roughly the kernel import (``warm_s``, measured in this
+    process) before its first build, so the pool only wins when the sequential
+    time it saves clearly exceeds that startup cost."""
+    if workers < 2 or n_jobs < 2:
+        return False
+    saved = n_jobs * base_time * (1 - 1 / workers)
+    return saved > 2 * warm_s
+
+
+def _stop_pool(executor) -> None:
+    """Cancel queued work and kill running workers so a spent budget is not
+    overrun by in-flight builds (``shutdown`` alone waits for them)."""
+    # shutdown() clears the executor's process table, so take the workers first.
+    procs = list((getattr(executor, "_processes", None) or {}).values())
+    executor.shutdown(wait=False, cancel_futures=True)
+    for proc in procs:
+        try:
+            proc.terminate()
+        except Exception:  # noqa: BLE001 - already gone
+            pass
+
+
+def _perturbation_entry(pert: dict, g: dict, base_vol) -> dict:
+    """Build the per-perturbation report entry from a rebuild result ``g``."""
+    entry = {"delta_pct": pert["delta_pct"], "new_value": pert["new_value"]}
+    if pert["discrete"]:
+        entry["discrete_step"] = True
+    if not g.get("rebuilt"):
+        # A failed rebuild is NOT automatically brittle — classify the cause (#341).
+        entry["rebuilt"] = False
+        entry["cause"] = _classify_error(g.get("error", ""))
+        entry["error"] = g.get("error")
+        return entry
+    entry["rebuilt"] = True
+    entry["passes_gate"] = g["passes_gate"]
+    entry["n_solids"] = g["n_solids"]
+    entry["volume"] = g["volume"]
+    if base_vol:
+        entry["volume_delta_pct"] = round((g["volume"] - base_vol) / base_vol * 100, 1)
+    if g.get("gate_error"):
+        entry["cause"] = "gate_error"  # gate crashed → inconclusive, not brittle
+        entry["reasons"] = g["reasons"]
+    elif not g["passes_gate"]:
+        entry["cause"] = "gate_fail"
+        entry["reasons"] = g["reasons"]
+    return entry
+
+
 def run_audit(
-    program: str, params: list, epsilon: float, budget_s: float, per_run_cap: int, out_path: str
+    program: str,
+    params: list,
+    epsilon: float,
+    budget_s: float,
+    per_run_cap: int,
+    out_path: str,
+    security: dict | None = None,
+    max_workers: int = 1,
 ) -> dict:
     """Baseline + per-parameter perturbation audit, persisted incrementally.
 
@@ -290,12 +375,14 @@ def run_audit(
             json.dump(state, f)
         os.replace(tmp, out_path)
 
+    t_warm = time.monotonic()
     _warm_build123d_import()
+    warm_s = time.monotonic() - t_warm
 
     # Baseline gets the full per-run budget (it may be the heaviest single build);
     # time it so perturbations can be capped relative to it.
     t_base = time.monotonic()
-    state["baseline"] = evaluate_program(program, cap(per_run_cap))
+    state["baseline"] = evaluate_program(program, cap(per_run_cap), early_exit=False)
     base_time = time.monotonic() - t_base
     state["baseline_ok"] = bool(
         state["baseline"].get("rebuilt") and state["baseline"].get("passes_gate")
@@ -309,66 +396,119 @@ def run_audit(
     base_vol = state["baseline"]["volume"]
     perturb_limit = max(_MIN_PERTURB_S, min(per_run_cap, int(base_time * _BASELINE_CAP_FACTOR) + 2))
 
-    for p in params:
-        if remaining() <= _STOP_THRESHOLD_S:
-            break
+    reassigned_map = {}
+    jobs = []
+    param_expected_counts = {}
+
+    for p_idx, p in enumerate(params):
         if p.get("reassigned"):
             # The later top-level assignment overwrites the one we rewrite, so the
             # rebuild is a guaranteed no-op — skip it (reclaim budget) and mark the
             # parameter inconclusive rather than counting it as robust.
-            state["audit"].append(
-                {
-                    **p,
-                    "perturbations": [],
-                    "verdict": "inconclusive",
-                    "brittle": False,
-                    "reason": "reassigned at top level — perturbing the first assignment is "
-                    "overwritten by the later one; audit inconclusive",
-                }
-            )
-            flush()
+            reassigned_map[p_idx] = {
+                **p,
+                "perturbations": [],
+                "verdict": "inconclusive",
+                "brittle": False,
+                "reason": "reassigned at top level — perturbing the first assignment is "
+                "overwritten by the later one; audit inconclusive",
+            }
             continue
-        results: list = []
-        for pert in _perturbations(p["value"], p["type"] == "int", epsilon):
-            if remaining() <= _STOP_THRESHOLD_S:
-                break
-            g = evaluate_program(
-                _rewrite(program, p["name"], pert["new_value"]), cap(perturb_limit)
-            )
-            entry = {"delta_pct": pert["delta_pct"], "new_value": pert["new_value"]}
-            if pert["discrete"]:
-                entry["discrete_step"] = True
-            if not g.get("rebuilt"):
-                # A failed rebuild is NOT automatically brittle — classify the cause (#341).
-                entry["rebuilt"] = False
-                entry["cause"] = _classify_error(g.get("error", ""))
-                entry["error"] = g.get("error")
-                results.append(entry)
-                continue
-            entry["rebuilt"] = True
-            entry["passes_gate"] = g["passes_gate"]
-            entry["n_solids"] = g["n_solids"]
-            entry["volume"] = g["volume"]
-            if base_vol:
-                entry["volume_delta_pct"] = round((g["volume"] - base_vol) / base_vol * 100, 1)
-            if g.get("gate_error"):
-                entry["cause"] = "gate_error"  # gate crashed → inconclusive, not brittle
-                entry["reasons"] = g["reasons"]
-            elif not g["passes_gate"]:
-                entry["cause"] = "gate_fail"
-                entry["reasons"] = g["reasons"]
-            results.append(entry)
-        verdict = _param_verdict(results)
-        state["audit"].append(
-            {
+
+        perts = _perturbations(p["value"], p["type"] == "int", epsilon)
+        param_expected_counts[p_idx] = len(perts)
+        for pert_idx, pert in enumerate(perts):
+            rewritten = _rewrite(program, p["name"], pert["new_value"])
+            jobs.append((p_idx, pert_idx, rewritten, pert))
+
+    param_results: dict[int, dict[int, dict]] = {p_idx: {} for p_idx in range(len(params))}
+    completed_params: dict[int, dict] = {}
+
+    def _finalize_param(p_idx: int) -> None:
+        p = params[p_idx]
+        if p_idx in reassigned_map:
+            completed_params[p_idx] = reassigned_map[p_idx]
+        else:
+            res = param_results[p_idx]
+            results = [res[k] for k in sorted(res)]
+            verdict = _param_verdict(results)
+            completed_params[p_idx] = {
                 **p,
                 "perturbations": results,
                 "verdict": verdict,
                 "brittle": verdict == "brittle",  # back-compat flag
                 "reason": _VERDICT_REASON[verdict],
             }
-        )
+        state["audit"] = [completed_params[i] for i in sorted(completed_params)]
         flush()
+
+    def _record(p_idx: int, pert_idx: int, pert: dict, g: dict) -> None:
+        param_results[p_idx][pert_idx] = _perturbation_entry(pert, g, base_vol)
+        if len(param_results[p_idx]) == param_expected_counts.get(p_idx, 0):
+            _finalize_param(p_idx)
+
+    for p_idx in reassigned_map:
+        _finalize_param(p_idx)
+
+    if _pool_worthwhile(len(jobs), base_time, warm_s, max_workers):
+        import concurrent.futures as cf
+
+        workers = min(max_workers, len(jobs))
+        executor = None
+        try:
+            # spawn, not fork: this process already has the OCC kernel loaded, and
+            # forking it deadlocks the workers on Linux (the default before 3.14).
+            executor = cf.ProcessPoolExecutor(
+                max_workers=workers,
+                mp_context=multiprocessing.get_context("spawn"),
+                initializer=_worker_init,
+                initargs=(security,),
+            )
+            future_job = {}
+            for job in jobs:
+                p_idx, pert_idx, rewritten, _pert = job
+                f = executor.submit(
+                    _eval_worker_task, (p_idx, pert_idx, rewritten, cap(perturb_limit))
+                )
+                future_job[f] = job
+            pending = set(future_job)
+            while pending and remaining() > _STOP_THRESHOLD_S:
+                done, pending = cf.wait(
+                    pending,
+                    timeout=max(0.1, remaining() - _STOP_THRESHOLD_S),
+                    return_when=cf.FIRST_COMPLETED,
+                )
+                for f in done:
+                    p_idx, pert_idx, pert = future_job[f][0], future_job[f][1], future_job[f][3]
+                    try:
+                        g = f.result()[2]
+                    except Exception as exc:  # worker crashed: an inconclusive rebuild failure
+                        g = {"rebuilt": False, "error": f"audit worker failed: {exc!r}"[:200]}
+                    _record(p_idx, pert_idx, pert, g)
+        except Exception as exc:  # noqa: BLE001 - e.g. the host refuses to start workers
+            print(
+                f"design_audit: process pool failed ({exc!r}); finishing sequentially",
+                file=sys.stderr,
+            )
+        finally:
+            if executor is not None:
+                _stop_pool(executor)
+
+    # Sequential path: the whole audit when no pool was used, or whatever the pool
+    # did not finish (pool failure). Stops on the soft budget as before.
+    for p_idx, pert_idx, rewritten, pert in jobs:
+        if pert_idx in param_results[p_idx] or p_idx in completed_params:
+            continue
+        if remaining() <= _STOP_THRESHOLD_S:
+            break
+        g = evaluate_program(rewritten, cap(perturb_limit), early_exit=True)
+        _record(p_idx, pert_idx, pert, g)
+
+    # A parameter with only some perturbations done when the budget ran out is
+    # still reported, from what finished.
+    for p_idx in range(len(params)):
+        if p_idx not in completed_params and param_results[p_idx]:
+            _finalize_param(p_idx)
 
     # completed only if every parameter was audited — a soft-budget break leaves
     # it False so the parent labels the partial report "time budget exhausted".
@@ -394,9 +534,17 @@ def _apply_security(sec: dict) -> None:
 def main(in_json: str, out_json: str) -> None:
     with open(in_json) as f:
         cfg = json.load(f)
-    _apply_security(cfg.get("security") or {})
+    sec = cfg.get("security") or {}
+    _apply_security(sec)
     run_audit(
-        cfg["program"], cfg["params"], cfg["epsilon"], cfg["budget_s"], cfg["per_run_cap"], out_json
+        cfg["program"],
+        cfg["params"],
+        cfg["epsilon"],
+        cfg["budget_s"],
+        cfg["per_run_cap"],
+        out_json,
+        security=sec,
+        max_workers=_default_workers(),
     )
 
 

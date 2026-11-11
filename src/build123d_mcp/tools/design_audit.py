@@ -145,7 +145,15 @@ def design_audit(session, epsilon: float = 0.1, max_params: int = 8) -> str:
         except OSError:
             # Host blocks child-process creation (#143 / InProcessSession): no
             # subprocess and no worker op-timeout, so run in-process (degraded).
-            run_audit(program, audited, epsilon, budget_s, budget, out_json)
+            run_audit(
+                program,
+                audited,
+                epsilon,
+                budget_s,
+                budget,
+                out_json,
+                security=_security_config(),
+            )
 
         state = _read_state(out_json)
         if state is None or state.get("baseline") is None:

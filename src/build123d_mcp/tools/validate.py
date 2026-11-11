@@ -349,7 +349,12 @@ def _solid_overlaps(
     return overlaps, True
 
 
-def _gate_report(shape, exact: bool = False, mesh_override: MeshGateResult | None = None) -> dict:
+def _gate_report(
+    shape,
+    exact: bool = False,
+    mesh_override: MeshGateResult | None = None,
+    early_exit: bool = False,
+) -> dict:
     """Return the validity-gate verdict for a shape as a plain dict.
 
     Reused by the export tool so a 3D export can warn when the written solid
@@ -359,6 +364,11 @@ def _gate_report(shape, exact: bool = False, mesh_override: MeshGateResult | Non
     (_mesh_defects, sub-second, the in-worker validate() fallback) or the accurate
     topology-stitch (_mesh_defects_exact, slower, used at export and by validate()'s
     out-of-process mesh gate where shipping an invalid solid actually costs).
+
+    ``early_exit`` enables fast-failing without executing mesh tessellation or
+    overlap checks if the underlying B-rep topology is already degenerate (e.g.
+    non-manifold, open shell, or invalid BRepCheck). Useful for automated batch
+    audits such as design_audit.
 
     The fast fallback is **structurally blind to open edges** — it only counts
     non-manifold edges and pins ``mesh_open_edges`` to 0 (#381). So a ``mesh_check ==
@@ -377,13 +387,7 @@ def _gate_report(shape, exact: bool = False, mesh_override: MeshGateResult | Non
         volume = round(float(shape.volume), 4)
     except Exception:
         volume = 0.0
-    # Run before the mesh gate so a cheap, useful answer exists even when the mesh
-    # analysis later spends its whole budget. `volume` above SUMS the solids, so
-    # whether they overlap decides whether that number double-counts (#453).
-    overlaps, overlap_checked = _solid_overlaps(
-        shape, deadline=time.monotonic() + _OVERLAP_BUDGET_S
-    )
-    pairwise_overlap_volume = round(float(sum(v for _a, _b, v, _k in overlaps)), 4)
+
     # build123d's `is_manifold` false-negates on closed solids imported from STEP
     # (verified on NIST CAD models — a single closed shell with zero open edges
     # still reports is_manifold=False), so it is NOT a reliable gate. The
@@ -397,6 +401,60 @@ def _gate_report(shape, exact: bool = False, mesh_override: MeshGateResult | Non
         brep_valid = bool(BRepCheck_Analyzer(shape.wrapped).IsValid())
     except Exception:
         brep_valid = False
+
+    # Early exit if requested and the B-rep itself is already non-viable:
+    # avoid expensive mesh tessellation / stitching and pairwise overlap sweeps
+    # when the solid is already guaranteed to fail the gate.
+    if early_exit and (
+        not brep_valid or volume <= _EPS or open_edges > 0 or nonmanifold_edges > 0 or n_solids == 0
+    ):
+        early_reasons: list[str] = []
+        if not brep_valid:
+            early_reasons.append("B-rep is not well-formed (BRepCheck failed)")
+        if volume <= _EPS:
+            early_reasons.append("zero/degenerate volume")
+        if open_edges:
+            early_reasons.append(
+                f"{open_edges} open edge(s) — not watertight (open shell or unsewn faces)"
+            )
+        if nonmanifold_edges:
+            early_reasons.append(
+                f"{nonmanifold_edges} non-manifold edge(s) — edges shared by 3+ faces"
+            )
+        if n_solids == 0 and not open_edges and not nonmanifold_edges:
+            early_reasons.append(
+                "closed surface but no solid body — wrap the faces in Solid() before export"
+            )
+        elif n_solids == 0:
+            early_reasons.append(
+                "no solid body — the current shape is 2D/open geometry, not a solid"
+            )
+        return {
+            "passes_gate": False,
+            "n_solids": n_solids,
+            "volume": volume,
+            "watertight_manifold": watertight_manifold,
+            "open_edges": open_edges,
+            "nonmanifold_edges": nonmanifold_edges,
+            "mesh_nonmanifold_edges": 0,
+            "mesh_open_edges": 0,
+            "mesh_untriangulated_faces": 0,
+            "mesh_refined_untriangulated_faces": 0,
+            "mesh_check": "skipped",
+            "brep_valid": brep_valid,
+            "solid_overlaps": [],
+            "pairwise_overlap_volume": 0.0,
+            "reasons": early_reasons,
+            "warnings": [],
+        }
+
+    # Run before the mesh gate so a cheap, useful answer exists even when the mesh
+    # analysis later spends its whole budget. `volume` above SUMS the solids, so
+    # whether they overlap decides whether that number double-counts (#453).
+    overlaps, overlap_checked = _solid_overlaps(
+        shape, deadline=time.monotonic() + _OVERLAP_BUDGET_S
+    )
+    pairwise_overlap_volume = round(float(sum(v for _a, _b, v, _k in overlaps)), 4)
     # Mesh-level non-manifold check, mirroring how strict mesh consumers validate
     # (tessellate → check the mesh is manifold). Catches self-touching /
     # coincident-face defects that are valid B-reps the edge-face map above does
