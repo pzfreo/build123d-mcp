@@ -74,11 +74,13 @@ def test_pool_failure_is_logged_and_finishes_sequentially(tmp_path, monkeypatch,
 
 def test_stop_pool_kills_running_workers_without_waiting():
     executor = concurrent.futures.ProcessPoolExecutor(max_workers=2)
-    futures = [executor.submit(time.sleep, 60) for _ in range(4)]
+    for _ in range(4):
+        executor.submit(time.sleep, 60)
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline and len(executor._processes) < 2:
         time.sleep(0.05)
     procs = list(executor._processes.values())
+    manager = executor._executor_manager_thread
     time.sleep(0.5)  # let the workers pick up their tasks
     start = time.monotonic()
     mod._stop_pool(executor)
@@ -86,7 +88,10 @@ def test_stop_pool_kills_running_workers_without_waiting():
         proc.join(timeout=10)
     assert time.monotonic() - start < 10
     assert not any(proc.is_alive() for proc in procs)
-    assert all(f.cancelled() or f.done() for f in futures[2:])
+    # The audit subprocess must be able to exit: a live non-daemon manager thread
+    # would hold interpreter shutdown until the parent hard-kills it.
+    manager.join(timeout=10)
+    assert not manager.is_alive()
 
 
 def test_early_exit_gate_agrees_with_full_gate():
