@@ -20,6 +20,24 @@
   only). The flags have no effect on stdio. Pinned by
   `tests/test_transport_security_cli.py`; documented in `README.md`.
 
+### Fixed
+
+- **Tool errors reach the client again under mcp 2.3.** The SDK now treats any
+  exception other than `ToolError` as a crash and sends only `Error executing
+  tool <name>`, which hid messages such as "No shape in session" and the
+  worker's timeout and restart reports. Every registered tool now re-raises its
+  exception as a `ToolError` carrying the original text.
+
+### Changed
+
+- **Dependency refresh.** The lockfile moves to current releases (mcp 2.3.0,
+  numpy 2.5, scipy 1.18, vtk 9.7, pillow 13, resvg-py 0.5,
+  build123d-drafting-helpers 0.15.5, trimesh 5). The lock keeps build123d on
+  0.11 (CI covers 0.10, 0.11 and 0.13). quiddity stays on 0.3.x
+  (0.3.12) until feature recognition moves to quiddity 0.4's file-based API.
+  Markdown is excluded from `ruff format`, which reflows code blocks in docs
+  from ruff 0.17.
+
 ## v0.3.91
 
 ### Changed

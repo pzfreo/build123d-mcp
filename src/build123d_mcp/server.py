@@ -6,6 +6,8 @@ import sys
 import anyio
 import anyio.to_thread
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.shared.exceptions import MCPError
 from mcp.types import PromptMessage, TextContent, ToolAnnotations
 
 from build123d_mcp.session_registry import MAX_HANDLE_LENGTH
@@ -71,7 +73,34 @@ def _server_version() -> str:
         return "unknown"
 
 
-mcp = MCPServer("build123d-mcp", instructions=_INSTRUCTIONS, version=_server_version())
+def _report_failures(fn):
+    """Re-raise a tool's exception as ``ToolError`` so the client sees its text.
+
+    mcp 2.x treats any exception other than ``ToolError`` as a crash and sends the
+    client only ``Error executing tool <name>``. Our tools' exceptions are written for
+    the model — "No shape in session", the worker's timeout and restart reports, a
+    closed session — so withholding them leaves it nothing to act on.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except (ToolError, MCPError):
+            raise
+        except Exception as exc:
+            raise ToolError(str(exc) or type(exc).__name__) from exc
+
+    return wrapper
+
+
+class _BuildServer(MCPServer):
+    def add_tool(self, fn, *args, **kwargs):
+        # Every registration path (@mcp.tool, register_experimental_tools) lands here.
+        return super().add_tool(_report_failures(fn), *args, **kwargs)
+
+
+mcp = _BuildServer("build123d-mcp", instructions=_INSTRUCTIONS, version=_server_version())
 _session: WorkerSession
 _session_var: contextvars.ContextVar[WorkerSession | None] = contextvars.ContextVar(
     "b123d_session", default=None
