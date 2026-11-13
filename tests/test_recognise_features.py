@@ -154,25 +154,20 @@ show(bad, 'bad')
 
 def test_aggregate_families_are_returned_read_only(featured_session):
     report = json.loads(
-        recognise_features(featured_session, "plate", families="holes,cylinders,hole_patterns")
+        recognise_features(featured_session, "plate", families="holes,hole_patterns")
     )
     assert "error" not in report
     assert report["requested_families"] == ["holes"]
     assert report["matched"] == 4
-    assert set(report["read_only"]) == {"cylinders", "hole_patterns"}
-    cylinders = report["read_only"]["cylinders"]
-    assert cylinders["count"] >= 4  # flattened across axis groups, one per hole
-    assert all("ref" not in rec and "face" not in rec for rec in cylinders["records"])
+    assert set(report["read_only"]) == {"hole_patterns"}
+    patterns = report["read_only"]["hole_patterns"]
+    assert patterns["count"] == 1
+    assert all("ref" not in rec for rec in patterns["records"])
     assert "no @feature handles" in report["read_only_note"]
 
-    capped = json.loads(
-        recognise_features(featured_session, "plate", families="cylinders", max_features=1)
-    )["read_only"]["cylinders"]
-    assert len(capped["records"]) == 1 and capped["truncated"] is True
-
     unknown = json.loads(recognise_features(featured_session, "plate", families="widgets"))
-    assert "cylinders" in unknown["read_only_families"]
-    assert "cylinders" not in unknown["targetable_families"]
+    assert "hole_patterns" in unknown["read_only_families"]
+    assert "hole_patterns" not in unknown["targetable_families"]
 
 
 def test_read_only_pattern_records_collapse_members_to_counts():

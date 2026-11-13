@@ -452,7 +452,8 @@ def edit_feature(
             raise ValueError("new diameter equals the current diameter")
 
         from build123d import Align, Cylinder, Plane
-        from quiddity.evidence import build_recognition_evidence
+
+        from build123d_mcp.tools._recognition import build_evidence
 
         axis = record["axis"]
         opening = record["location"]
@@ -467,8 +468,7 @@ def edit_feature(
 
             remover = BRepAlgoAPI_Defeaturing()
             remover.SetShape(source.wrapped)
-            resolver = getattr(evidence, "caller_face", evidence.face)
-            remover.AddFaceToRemove(resolver(next(iter(faces))).wrapped)
+            remover.AddFaceToRemove(evidence.face(next(iter(faces))).wrapped)
             remover.Build()
             if not remover.IsDone():
                 raise ValueError("defeaturing the old bore failed")
@@ -507,7 +507,7 @@ def edit_feature(
             raise ValueError("changed region differs from the predicted hole annulus")
         if any(abs(a - b) > 0.01 for a, b in zip(_bounds(source), _bounds(candidate))):
             raise ValueError("outer envelope moved during hole edit")
-        after = build_recognition_evidence(candidate)
+        after = build_evidence(candidate)
         before_holes = _hole_records(evidence)
         before_holes.remove(record)
         after_holes = _hole_records(after)
