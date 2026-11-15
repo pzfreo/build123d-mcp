@@ -156,14 +156,30 @@ def inspect_features(
                 if f["family"] in requested
             ]
         returned = _bounded_rows(rows, max_features)
-        return json.dumps(
-            {
-                "features": returned,
-                "matched": len(rows),
-                "returned": len(returned),
-                "truncated": len(returned) < len(rows),
-            },
-            separators=(",", ":"),
-        )
+        result = {
+            "features": returned,
+            "matched": len(rows),
+            "returned": len(returned),
+            "truncated": len(returned) < len(rows),
+        }
+        if feature_ids and returned:
+            # Keep the executable example out of the compact inventory's 2 KB budget.
+            name = target if target in session.objects else None
+            if not target:
+                name = next(
+                    (
+                        name
+                        for name, shape in session.objects.items()
+                        if shape is session.current_shape
+                    ),
+                    None,
+                )
+            expression = session.object_access(name)["execute_example"] if name else "part"
+            result["execute_example"] = (
+                f"select_faces({expression}, faces={returned[0]['faces']!r})"
+            )
+            if name is None:
+                result["execute_note"] = "Use your live shape as part; import a STEP path first."
+        return json.dumps(result, separators=(",", ":"))
     except Exception as exc:
         return json.dumps({"error": str(exc)[:1500]})

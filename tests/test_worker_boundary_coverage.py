@@ -184,6 +184,12 @@ def _find_hole_patterns(ws, tmp_path):
 def _inspect_features(ws, tmp_path):
     r = json.loads(ws.inspect_features("a"))
     assert "error" not in r and r["measures"]["faces"] == 6
+    # Helpers live with exec in the worker, not on the parent proxy (#286/#500).
+    output = ws.execute(
+        "assert a is get_object('a')\n"
+        "assert len(select_faces(a, kind='plane', direction=(0,0,1))) == 1"
+    )
+    assert not output.startswith(("Error:", "Constraint failed")), output
 
 
 def _diff_step(ws, tmp_path):
@@ -355,7 +361,7 @@ SESSION_STATEFUL_TOOLS = {
 # to SESSION_STATEFUL_TOOLS or here (see test_every_dispatch_op_is_classified).
 NON_SMOKED_OPS = {
     "edit_feature": "requires a current hole id and changes geometry; covered by test_edit_features",
-    "execute": "the seeding mechanism itself; exercised by every WorkerSession test",
+    "execute": "seeding plus injected get_object/select_faces; covered by test_execute_ergonomics",
     "execute_file": "requires an external Python source file; covered by test_execute_file",
     "reset": "session-lifecycle op; smoke-testing it would clear the seeded worker state",
     "search_library": "reads the worker library index, not Session geometry",

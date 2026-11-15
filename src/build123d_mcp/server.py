@@ -954,8 +954,8 @@ def save_snapshot(name: str) -> str:
 @mcp.tool(annotations=_IDEMPOTENT)
 def restore_snapshot(name: str) -> str:
     """Restore geometric state from a previously saved snapshot (current_shape and the show() registry).
-    The Python variable namespace is NOT restored — execute() calls made after the snapshot are still in scope,
-    but current_shape and all show() objects revert to what they were at snapshot time.
+    Registered object variables are rebound to the restored objects, and departed object bindings are removed.
+    Other Python variables/imports remain in scope; aliases to old shapes are not rewritten.
     Raises an error if the snapshot name does not exist."""
     result = _resolve_session().restore_snapshot(name)
     _publish_deltas()
@@ -1084,7 +1084,7 @@ def find_countersinks(object_name: str = "") -> str:
 def inspect_features(
     target: str = "", families: str = "", feature_ids: str = "", max_features: int = 50
 ) -> str:
-    """Inspect a STEP path or registered session object (default: current shape). No filters returns compact measures and family counts/dimension ranges. families is comma-separated (e.g. 'holes,bosses,fillets') and returns caller-frame feature records with ids, location, axis and dimensions, without raw face arrays. feature_ids selects analytic face descriptors for those features. max_features bounds expansion to 1..100 records; matched counts remain exact. IDs include a content digest; stale or unbound ids are refused. A registered object name takes precedence over an identical path string."""
+    """Inspect a STEP path or registered session object (default: current shape). No filters returns compact measures and family counts/dimension ranges. families is comma-separated (e.g. 'holes,bosses,fillets') and returns caller-frame feature records with ids, location, axis and dimensions, without raw face arrays. feature_ids selects caller-frame analytic face descriptors and an executable select_faces(shape, faces=...) example; the helper is injected inside execute() and requires a unique match per descriptor. max_features bounds expansion to 1..100 records; matched counts remain exact. IDs include a content digest; stale or unbound ids are refused. A registered object name takes precedence over an identical path string."""
     return _resolve_session().inspect_features(target, families, feature_ids, max_features)
 
 
@@ -1128,7 +1128,7 @@ def script(save_to: str = "") -> str:
 
 @mcp.tool(annotations=_MUTATING)
 def import_cad_file(path: str, name: str = "") -> str:
-    """Import a STEP (.step/.stp), STL (.stl), or 3MF (.3mf) file as a named object in the session. path: absolute or relative path to the file. name: name to register the shape under (defaults to the filename stem). The shape becomes both the named object and the current_shape. A multi-object 3MF registers an aggregate under name plus each member as name_1, name_2, etc.; the result includes per-member topology summaries. After importing, use render_view() to visualise the shape, measure() for geometry queries, or diff_step(old='imported', new='model') to diff against a show() object. Note: STL imports produce a shell (volume=0) rather than a solid. 3MF commonly yields editable solids when its meshes are closed, but callers must check the returned solids and volume fields rather than assuming every mesh is valid. If you have both the original built shape and an imported copy in session.objects, render the imported one by name (e.g. objects='mypart') to avoid Z-fighting artifacts from two co-located shapes."""
+    """Import a STEP (.step/.stp), STL (.stl), or 3MF (.3mf) file as a named object in the session. path: absolute or relative path to the file. name: name to register the shape under (defaults to the filename stem). The shape becomes both the named object and the current_shape. A multi-object 3MF registers an aggregate under name plus each member as name_1, name_2, etc.; the result includes per-member topology summaries. After importing, use render_view() to visualise the shape, measure() for geometry queries, or diff_step(old='imported', new='model') to diff against a show() object. Note: STL imports produce a shell (volume=0) rather than a solid. 3MF commonly yields editable solids when its meshes are closed, but callers must check the returned solids and volume fields rather than assuming every mesh is valid. Safe names are bound directly inside execute() (e.g. part after importing as name="part"); the response gives execute_name/execute_example. Keywords, builtins, helpers and user import names are not overwritten: use the injected get_object(name) to fetch any registered name. Replacements and snapshot restore rebind named objects. Render a specific registered name (objects="mypart") to avoid co-located geometry artifacts."""
     result = _resolve_session().import_cad_file(path, name)
     _publish_deltas()
     return result

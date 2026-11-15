@@ -45,6 +45,9 @@ def read_source(path: str) -> tuple[str, str, str]:
 def _active_state(session: Any) -> dict[str, Any]:
     return {
         "namespace": session.namespace,
+        "bound_objects": session._bound_objects,
+        "imported_names": session._imported_names,
+        "star_imports": session._star_imports,
         "current_shape": session.current_shape,
         "objects": session.objects,
         "object_groups": session.object_groups,
@@ -58,6 +61,9 @@ def _active_state(session: Any) -> dict[str, Any]:
 
 def _restore_active_state(session: Any, state: dict[str, Any]) -> None:
     session.namespace = state["namespace"]
+    session._bound_objects = state["bound_objects"]
+    session._imported_names = state["imported_names"]
+    session._star_imports = state["star_imports"]
     session.current_shape = state["current_shape"]
     session.objects = state["objects"]
     session.object_groups = state["object_groups"]
@@ -94,6 +100,9 @@ def execute_file_code(
     history_before = list(session.execute_history)
 
     session.namespace = {}
+    session._bound_objects = {}
+    session._imported_names = set()
+    session._star_imports = set()
     session.current_shape = None
     session.objects = {}
     session.object_groups = {}
@@ -144,8 +153,7 @@ def execute_file_code(
                 },
                 indent=2,
             )
-        session.release_object_name(result_name)
-        session.objects[result_name] = candidate
+        session.register_object(result_name, candidate)
         session.current_shape = candidate
 
     if session.current_shape is None:
@@ -180,6 +188,7 @@ def execute_file_code(
             "source_path": source_path,
             "source_sha256": source_sha256,
             "result_name": session.source_provenance["result_name"],
+            "execute_objects": {name: session.object_access(name) for name in session.objects},
             "snapshot": snapshot or None,
             "output": output,
         },

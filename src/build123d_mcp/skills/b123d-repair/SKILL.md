@@ -172,6 +172,14 @@ pre-heal volume every time regardless — whichever wrapper you use, a wrapping
 bug or a genuinely bad heal both show up the same way (a wrong or zero
 volume), so the check is what actually tells them apart.
 
+Imports and `show(candidate, "repaired")` bind the exact registered result as
+`repaired` in `execute()` when the name is safe; otherwise use
+`get_object("repaired")` as reported by the response. Replacing a name rebinds it
+to the repair result. `restore_snapshot()` rebinds restored registered names;
+other variables and aliases to old geometry remain in scope. `bank_candidate()`
+exports/gates the selected object and optionally saves a snapshot; it does not
+register a different shape.
+
 Because build123d-mcp's `execute()` namespace persists across calls, a rung
 whose attempt raises does **not** clear a previous rung's `healed` — reassign
 `healed = None` before each attempt and check `healed is not None` before

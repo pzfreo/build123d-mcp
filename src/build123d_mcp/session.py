@@ -1,6 +1,10 @@
+import ast
+import builtins
 import copy
 import io
+import keyword
 import signal
+import sys
 import time
 from contextlib import redirect_stderr, redirect_stdout
 from typing import Any
@@ -17,6 +21,8 @@ _INJECTED = frozenset(
     {
         "__builtins__",
         "show",
+        "get_object",
+        "select_faces",
         "named_face",
         "find_edges",
         "annotate",
@@ -66,6 +72,9 @@ class Session:
         self.namespace: dict[str, Any] = {}
         self.current_shape: Any = None
         self.objects: dict[str, Any] = {}
+        self._bound_objects: dict[str, Any] = {}
+        self._imported_names: set[str] = set()
+        self._star_imports: set[str] = set()
         # Aggregate object name -> member object names. Multi-object imports expose
         # members for explicit selection while default render/viewer paths show only
         # the aggregate, avoiding duplicate co-located geometry.
@@ -86,10 +95,76 @@ class Session:
         self._shape_explicitly_set = False
         self._inject_builtins()
 
+    def _binding_reason(self, name: str) -> str | None:
+        if not name.isidentifier() or keyword.iskeyword(name):
+            return "not a Python identifier (or is a keyword)"
+        if name in vars(builtins) or name in _INJECTED:
+            return "reserved builtin or session helper"
+        if name in self._imported_names or any(
+            name in getattr(sys.modules.get(module), "__all__", ())
+            or (
+                module in sys.modules
+                and not hasattr(sys.modules[module], "__all__")
+                and not name.startswith("_")
+                and name in vars(sys.modules[module])
+            )
+            for module in self._star_imports
+        ):
+            return "name is reserved by a user import"
+        return None
+
+    def object_access(self, name: str) -> dict:
+        """Describe the exact registered object's execute() access path."""
+        reason = self._binding_reason(name)
+        result = {
+            "execute_name": None if reason else name,
+            "execute_example": f"get_object({name!r})" if reason else name,
+        }
+        if reason:
+            result["binding_warning"] = (
+                f"{name!r} was not bound: {reason}; use get_object({name!r})"
+            )
+        return result
+
+    def _bind_object(self, name: str) -> None:
+        if self._binding_reason(name) is None:
+            self.namespace[name] = self.objects[name]
+            self._bound_objects[name] = self.objects[name]
+        else:
+            previous = self._bound_objects.pop(name, None)
+            if previous is not None and self.namespace.get(name) is previous:
+                self.namespace.pop(name, None)
+
+    def register_object(self, name: str, shape: Any) -> dict:
+        """Register and bind in the same Session that owns exec's namespace."""
+        self.release_object_name(name)
+        self.objects[name] = shape
+        self._bind_object(name)
+        return self.object_access(name)
+
+    def remove_object(self, name: str) -> None:
+        self.objects.pop(name, None)
+        previous = self._bound_objects.pop(name, None)
+        if previous is not None and self.namespace.get(name) is previous:
+            self.namespace.pop(name, None)
+
+    def _remember_imports(self, code: str) -> None:
+        # Reserve explicit import spellings, including aliases of scalar values.
+        # Star exports are read only from already loaded modules; no new imports.
+        for node in ast.walk(ast.parse(code)):
+            if isinstance(node, ast.Import):
+                self._imported_names.update(a.asname or a.name.split(".")[0] for a in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "*":
+                        self._star_imports.add(node.module)
+                    else:
+                        self._imported_names.add(alias.asname or alias.name)
+
     def release_object_name(self, name: str) -> None:
         """Detach a name from import-group ownership before explicitly replacing it."""
         for member in self.object_groups.pop(name, ()):
-            self.objects.pop(member, None)
+            self.remove_object(member)
         for aggregate, members in list(self.object_groups.items()):
             if name not in members:
                 continue
@@ -101,7 +176,6 @@ class Session:
 
     def _inject_builtins(self) -> None:
         self.namespace["__builtins__"] = make_restricted_builtins()
-        objects = self.objects
 
         session_ref = self
         drawing_annotations = self.drawing_annotations
@@ -195,29 +269,40 @@ class Session:
                 except Exception:
                     pass
             drawing_annotations[name] = meta
-            session_ref.release_object_name(name)
-            objects[name] = shape
+            access = session_ref.register_object(name, shape)
             session_ref.current_shape = shape
             session_ref._shape_explicitly_set = True
-            print(f"Annotated '{name}': {meta.get('label_str', '')}")
+            print(f"Annotated '{name}': {meta.get('label_str', '')}; {access}")
 
         session_ref.namespace["annotate"] = annotate
 
         def show(shape: Any, name: str | None = None) -> None:
             if name is None:
                 name = "shape"
-            session_ref.release_object_name(name)
-            objects[name] = shape
+            access = session_ref.register_object(name, shape)
             session_ref.current_shape = shape
             session_ref._shape_explicitly_set = True
             try:
                 vol = shape.volume
                 faces = len(shape.faces())
-                print(f"Registered '{name}': volume={vol:.4g} mm³, faces={faces}")
+                print(f"Registered '{name}': volume={vol:.4g} mm³, faces={faces}; {access}")
             except Exception:
-                print(f"Registered '{name}'")
+                print(f"Registered '{name}'; {access}")
 
         self.namespace["show"] = show
+
+        def get_object(name: str) -> Any:
+            try:
+                return self.objects[name]
+            except KeyError:
+                raise ValueError(
+                    f"get_object: unknown object {name!r}; available names: {sorted(self.objects)}"
+                ) from None
+
+        from build123d_mcp.selection import select_faces
+
+        self.namespace["get_object"] = get_object
+        self.namespace["select_faces"] = select_faces
 
         def set_page(width: float, height: float, margin: float = 5.0) -> None:
             """Register the drawing page extent for lint_drawing bounds checking.
@@ -262,11 +347,10 @@ class Session:
             if name is None:
                 name = "centerline"
             drawing_annotations[name] = {"type": "centerline"}
-            session_ref.release_object_name(name)
-            objects[name] = shape
+            access = session_ref.register_object(name, shape)
             session_ref.current_shape = shape
             session_ref._shape_explicitly_set = True
-            print(f"Registered centerline '{name}'")
+            print(f"Registered centerline '{name}'; {access}")
 
         self.namespace["register_centerline"] = register_centerline
 
@@ -722,6 +806,9 @@ class Session:
             }
             return f"Error: SyntaxError: {e}"
 
+        imports_before = (set(self._imported_names), set(self._star_imports))
+        bindings_before = dict(self._bound_objects)
+        self._remember_imports(code)
         values_before = {
             k: v.copy() if isinstance(v, (list, dict, set)) else v
             for k, v in self.namespace.items()
@@ -765,6 +852,8 @@ class Session:
                 signal.alarm(0)
         except ExecutionTimeout as e:
             self._rollback_namespace(values_before)
+            self._imported_names, self._star_imports = imports_before
+            self._bound_objects = bindings_before
             self.current_shape = shape_before
             self.objects.clear()
             self.objects.update(objects_before)
@@ -781,6 +870,8 @@ class Session:
             return f"Error: ExecutionTimeout: {e}"
         except AssertionError as e:
             self._rollback_namespace(values_before)
+            self._imported_names, self._star_imports = imports_before
+            self._bound_objects = bindings_before
             self.current_shape = shape_before
             self.objects.clear()
             self.objects.update(objects_before)
@@ -947,8 +1038,12 @@ class Session:
             raise KeyError(f"No snapshot named '{name}'. Available: {list(self.snapshots.keys())}")
         snap = self.snapshots[name]
         self.current_shape = snap["current_shape"]
+        for object_name in list(self._bound_objects):
+            self.remove_object(object_name)
         self.objects.clear()
         self.objects.update(snap["objects"])
+        for object_name in self.objects:
+            self._bind_object(object_name)
         self.object_groups.clear()
         self.object_groups.update(snap.get("object_groups", {}))
         self.source_provenance = copy.deepcopy(snap.get("source_provenance"))
@@ -986,6 +1081,9 @@ class Session:
 
     def reset(self) -> None:
         self.namespace.clear()
+        self._bound_objects.clear()
+        self._imported_names.clear()
+        self._star_imports.clear()
         self.current_shape = None
         self.objects.clear()
         self.object_groups.clear()

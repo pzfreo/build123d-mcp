@@ -77,11 +77,13 @@ def import_cad_file(session, path: str, name: str = "") -> str:
         )
 
     for old_member in owned_before:
-        session.objects.pop(old_member, None)
-    session.objects[obj_name] = shape
+        session.remove_object(old_member)
+    result.update(session.register_object(obj_name, shape))
     # Single-object imports have empty member_names; multi-object imports pair 1:1.
     for member_name, member in zip(member_names, shapes, strict=False):
-        session.objects[member_name] = member
+        session.register_object(member_name, member)
+    for row in result.get("members", []):
+        row.update(session.object_access(row["name"]))
     if member_names:
         session.object_groups[obj_name] = member_names
     else:

@@ -30,6 +30,16 @@ All tool calls share a single Python namespace. Variables and shapes you create 
 
 **Analysis composes in code.** `measure`, `clearance`, `cross_sections`, `find_holes`, `find_bosses`, `find_countersinks`, `find_hole_patterns`, and `align_check` are callable *inside* `execute` and return real Python objects (dicts / recogniser records), so you compute over results — `measure(part)["volume"]`, `[h for h in find_holes(part) if h.location[0] < 5]`, `clearance(a, b)["clearance"]` — instead of reading numbers out of one JSON tool result and re-typing them into the next call. They take a shape (default: `current_shape`); the standalone MCP tools of the same name remain for one-shot queries.
 
+`import_cad_file`, `show`, `annotate`, `register_centerline`, `load_part`,
+`edit_feature` and `execute_file` result promotion bind registered objects in
+this same namespace. A safe Python identifier gets `execute_name` in the
+response. Keywords, builtins, session helpers and names reserved by user imports
+(including aliases and star imports) are not overwritten; responses report the
+collision and show `get_object("name")`, available without an import. It returns
+the exact registered object and lists available names on an unknown name.
+Replacements rebind the variable. Assigning an edited shape to a variable alone
+does not register it: use `show(edited, "part")` to replace the registry entry.
+
 ### Multi-object sessions
 
 Use `show(shape, name)` inside `execute` to register named objects. Calling `show()` also sets `current_shape`, so subsequent `measure()`/`export()`/`render_view()` calls work immediately without an explicit `result` assignment. All tools that accept `object_name` operate on a named object instead of the implicit `current_shape`. This is essential for assemblies where you need to inspect, measure, or export individual parts.
@@ -304,7 +314,20 @@ Inspect a STEP path or registered object (default current shape). A registered
 name wins over an identical path string. With no filters, returns measures plus
 family counts and dimension ranges in under 2 KB. `families="holes,bosses"`
 returns bounded caller-frame feature records; `feature_ids` selects analytic
-face descriptors. `max_features` is 1..100; counts remain exact.
+face descriptors, with an executable `select_faces` example. `max_features`
+is 1..100; counts remain exact.
+
+Inside `execute()`, `select_faces(part, faces=<one descriptor or list>)` returns
+live build123d `ShapeList` faces by analytic geometry in the caller frame.
+Descriptor ids are metadata, never indices into `part.faces()`. Every descriptor
+must match exactly one face; zero or multiple matches raise a diagnostic.
+Keyword mode returns every match, e.g.
+`select_faces(part, kind="plane", direction=(0, 0, 1), area=100)`.
+Filters: `kind`, `centroid`, `area`, `direction`, `radius`. Plane direction is an
+outward normal; curved axes are sign independent. Default tolerances: length
+`max(1e-5 mm, bbox diagonal * 1e-7)`, area `max(1e-5 mm², face area * 1e-7)`,
+direction distance/angle `1e-6`. `tol` overrides each absolute tolerance in its
+respective units. Ambiguity always fails in descriptor mode, even with `tol`.
 
 Copy returned ids verbatim, e.g. `holes:7@<digest>`: the suffix binds the id to
 STEP content. Re-inspect after any change; unbound/stale ids are refused.
@@ -341,7 +364,11 @@ Import a STEP or STL file as a named object in the session.
 - `path` (string) — absolute or relative path to the file (`.step`, `.stp`, or `.stl`)
 - `name` (string, default `""`) — name to register under; defaults to the filename stem
 
-**Returns:** volume, topology, and bounding box of the imported shape. The shape becomes both the named object and `current_shape`.
+**Returns:** volume, topology, bounding box, `execute_name` and `execute_example`
+(or a binding warning). The shape becomes both the named object and
+`current_shape`. After importing as `part`, use `part` directly in `execute()`;
+`get_object("part")` always retrieves the exact registered object. Multi-object
+3MF imports also bind each generated member name when safe.
 
 Use `inspect_features` to inspect the imported part, and `diff_step(old="reference.step", new="model")` to verify revisions.
 
@@ -412,7 +439,10 @@ Save a named checkpoint of the current geometric state.
 **Returns:** confirmation listing what was captured
 
 **What is saved:** `current_shape` and the `show()` object registry.
-**What is NOT saved:** the Python variable namespace. After a restore, any intermediate Python variables created after the snapshot are still in scope — but `current_shape` and all `show()` objects revert to the snapshot state.
+**Namespace behavior:** restored registered names are rebound to the restored
+objects; object bindings absent from the snapshot are removed. Other Python
+variables and imports remain in scope. Aliases to previous geometry are not
+rewritten; use the registered name or `get_object(name)` after restoring.
 
 ---
 

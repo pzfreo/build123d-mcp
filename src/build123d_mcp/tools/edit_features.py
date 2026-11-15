@@ -228,6 +228,7 @@ def edit_feature(
         return json.dumps(
             {
                 "result_name": name,
+                **session.object_access(name),
                 "feature_id": feature_id,
                 "predicted": {
                     "added_volume": round(expected_added, 6),

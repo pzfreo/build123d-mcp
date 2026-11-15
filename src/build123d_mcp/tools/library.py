@@ -164,13 +164,12 @@ def load_part(session, index: _LibraryIndex, name: str, params: str = "") -> str
 
     shape = namespace["make"](**final_params)
 
-    session.release_object_name(name)
-    session.objects[name] = shape
+    access = session.register_object(name, shape)
     session.current_shape = shape
 
     try:
         vol = shape.volume
         faces = len(shape.faces())
-        return f"Loaded '{name}': volume={vol:.4g} mm³, faces={faces}. Parameters: {final_params}"
+        return f"Loaded '{name}': volume={vol:.4g} mm³, faces={faces}. Parameters: {final_params}; {access}"
     except Exception:
-        return f"Loaded '{name}'. Parameters: {final_params}"
+        return f"Loaded '{name}'. Parameters: {final_params}; {access}"

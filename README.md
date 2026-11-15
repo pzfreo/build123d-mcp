@@ -180,10 +180,22 @@ script, and try the next smaller step.
 
 ### Editing an imported part
 
+`import_cad_file("input.step", "part")` binds the exact imported object as `part`
+inside `execute()`. Named registrations and replacements through `show`,
+`edit_feature`, library loading and drawing helpers also bind safe identifiers.
+Responses provide `execute_name`; names colliding with builtins, helpers or
+imports remain accessible with `get_object("name")`. Snapshot restore rebinds
+registered objects; reset clears them.
+
 After importing a STEP and establishing a valid baseline, call
 `inspect_features(target="part")` for measures and a compact feature inventory.
 Expand `families="holes,bosses,fillets"`, or request analytic face descriptors
-with `feature_ids="holes:12@<digest>"`. Coordinates match the input model. For a plain
+with `feature_ids="holes:12@<digest>"`. Coordinates match the input model.
+Paste the returned face descriptors into `select_faces(part, faces=...)` inside
+`execute()` to get live build123d faces; each descriptor must match exactly one
+face. Keyword filters such as `select_faces(part, kind="cylinder", radius=4)`
+return all matches. No helper import is needed. Register edits with
+`show(edited, "part")` to replace the object and its binding. For a plain
 through hole, `edit_feature(feature_id="holes:12@<digest>", diameter=8, object_name="part",
 protected_refs='["holes:13@<digest>"]')` verifies predicted material change, other holes
 and the envelope before registering the result. Complex hole stacks are refused.

@@ -276,8 +276,8 @@ Field-proven decision rules:
 ## Step 4 — Experiments and recovery
 
 - `save_snapshot("before_fillet")` before any operation you might want to undo;
-  `restore_snapshot()` brings the geometry back (Python variables are NOT
-  restored — re-run assignments).
+  `restore_snapshot()` brings geometry and registered object bindings back;
+  other Python variables/imports remain in scope.
 - For "what if?" questions, use the loop: snapshot → mutate → measure/render →
   restore. It is cheaper and more accurate than rebuilding.
 - If an `execute()` times out, only that one step is dropped: the worker restarts
@@ -412,7 +412,9 @@ high-face-count boolean) still can't fit, drop out of the session for that one o
 
 1. Probe the API in-session with small `execute()` calls.
 2. Write the build as a script and run it with your shell tool.
-3. `import_cad_file("part.step", "part")` to bring the result back in.
+3. `import_cad_file("part.step", "part")` brings the result back and binds `part`
+   inside `execute()`. Use `get_object("part")` for any registered name, including
+   names whose collision warning prevented direct binding.
 4. Verify as usual: `measure("part")`, `render_view(objects="part")`.
 
 ## Step 6 — Finish

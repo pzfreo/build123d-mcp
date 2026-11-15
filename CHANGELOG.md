@@ -4,6 +4,15 @@
 
 ### Added
 
+- `select_faces` inside `execute()` matches inspection descriptors to live faces
+  by caller-frame analytic geometry, with unique-match errors and configurable
+  tolerances. Keyword filters return all matches; selected inspection responses
+  include an executable example without expanding the compact inventory.
+- Named geometry registrations bind safe identifiers in the worker's execute
+  namespace. Responses report access paths and collisions; injected
+  `get_object(name)` retrieves any registered name. Replacements and snapshot
+  restore rebind objects, and reset clears bindings (#286, #500 part 3).
+
 - **DNS-rebinding (Host/Origin) transport security via CLI.** HTTP mode now
   exposes the MCP SDK's `TransportSecuritySettings` (the 421 "Invalid Host /
   Origin header" validation) through three flags, each with a `BUILD123D_*`

@@ -98,8 +98,19 @@ construction.
 For an imported B-rep, call `inspect_features(target="part")` for a compact
 inventory, then expand likely families with `families="holes,bosses,fillets"`.
 Records and selected face descriptors use the imported model's coordinates.
-Request descriptors with `feature_ids="holes:12@<digest>"`; verify kind, centroid and
-area against live faces before editing. IDs describe the current STEP bytes:
+Importing as `name="part"` binds the exact registered object as `part` inside
+`execute()`. Responses show `execute_name` or a `get_object("part")` fallback
+for naming collisions. A repair/edit registered with `show(candidate, "part")`
+rebinds `part` to that result; snapshot restore rebinds registered objects too.
+
+Request descriptors with `feature_ids="holes:12@<digest>"`; paste the returned
+face dict/list into `select_faces(part, faces=...)` in `execute()`. This returns
+live `ShapeList` faces by analytic geometry, without trusting STEP indices.
+Every descriptor must uniquely match or raises a clear error. Keyword filters
+return all matches, e.g. `select_faces(part, kind="cylinder", radius=4)`.
+Default length tolerance is max(1e-5 mm, bbox diagonal * 1e-7), area tolerance
+max(1e-5 mm², face area * 1e-7), direction/angle 1e-6; `tol` overrides them.
+IDs describe the current STEP bytes:
 inspect again after changing geometry. Empty recognition is not permission to
 substitute a nearby feature. Check axis, location and starting dimensions
 against the request, and identify mating interfaces explicitly.
