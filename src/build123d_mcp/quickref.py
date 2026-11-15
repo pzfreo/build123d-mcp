@@ -461,9 +461,18 @@ def _section_enabled(s: Section) -> bool:
 
 def build_quickref_text() -> str:
     sections = (s.text for s in SECTIONS if _section_enabled(s))
-    return _build123d_version_banner() + "\n\n" + "\n\n".join(sections)
+    return _build123d_version_banner() + "\n\n" + "\n\n".join(sections) + STEP_INSPECTION
 
 
 RUNNABLE_EXAMPLES: list[tuple[str, str]] = [
     (s.label, s.text) for s in SECTIONS if s.label is not None and _section_enabled(s)
 ]
+
+
+STEP_INSPECTION = """
+Inspect STEP paths or registered session objects with inspect_features(target="part").
+Use families="holes,bosses,fillets" for bounded caller-frame feature records, or
+feature_ids="holes:12" for analytic face descriptors. Re-inspect after edits.
+Compare revisions with diff_step(old="input.step", new="edited", render=True).
+Use compare(kind="fit"|"align"|"snapshot") for other comparisons.
+"""

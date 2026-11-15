@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Replace direct quiddity recognition with specify-core 0.1.15 (Python 3.12+).
+  `inspect_features` provides compact inventories, bounded caller-frame family
+  records and selected analytic face descriptors from STEP paths or session
+  objects. Loaded parts and analysis use an eight-entry content-addressed LRU.
+- Add `diff_step` for feature revision changes and index-independent analytic
+  face changes, including bare planar offsets and tangential moves. Strip PMI
+  verdicts; optional overlays use specify-core’s shipped CLI.
+- Remove the previous recognition/candidate/interface tools and stateful feature
+  handles. `edit_feature` accepts current feature ids and verifies live face
+  mapping before mutation. `compare(kind="shape")` now directs callers to
+  `diff_step`; fit, align and snapshot comparisons remain.
+
 ## v0.3.92
 
 ### Added

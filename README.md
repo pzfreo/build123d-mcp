@@ -64,7 +64,7 @@ command: uv
 args:    ["tool", "run", "--python", "3.12", "build123d-mcp@latest"]
 ```
 
-> Python 3.11, 3.12, 3.13, and 3.14 are supported. The examples use 3.12 because
+> Python 3.12, 3.13, and 3.14 are supported. The examples use 3.12 because
 > it is a conservative default, and uv can download it if you do not already
 > have it installed.
 
@@ -180,18 +180,17 @@ script, and try the next smaller step.
 
 ### Editing an imported part
 
-After importing a STEP and establishing a valid baseline, use
-`find_candidates(kind="hole", qualifiers='{"axis":"Z","side":"+X"}',
-stated_value=6)` to list every recognised candidate and check both the part's
-literal axes and every proper rotation of the request frame (grouped by the
-candidates each selects). `interface_features()` suggests flat
-faces carrying holes; choose which hole handles to protect. For a plain through
-hole, `edit_feature(handle, diameter=8, protected_refs='["@feature[...]"]')`
-resizes it and reports predicted and measured added or removed volume. It
-registers the result only when the hole, other recognised holes, and the outer
-envelope pass its checks. Holes with counterbores, spotfaces, countersinks or
-multiple constituent faces are refused; edit those in `execute()` and verify
-them with `compare(kind="shape")` and the STEP export gate.
+After importing a STEP and establishing a valid baseline, call
+`inspect_features(target="part")` for measures and a compact feature inventory.
+Expand `families="holes,bosses,fillets"`, or request analytic face descriptors
+with `feature_ids="holes:12"`. Coordinates match the input model. For a plain
+through hole, `edit_feature(feature_id="holes:12", diameter=8, object_name="part",
+protected_refs='["holes:13"]')` verifies predicted material change, other holes
+and the envelope before registering the result. Complex hole stacks are refused.
+Inspect again after edits. Verify revisions with
+`diff_step(old="input.step", new="part", render=True)` and the STEP export gate.
+The diff reports feature changes and bare analytic face changes; its descriptors
+do not prove trim-contour equality. specify-core requires Python 3.12 or later.
 
 Good prompts usually ask the assistant to use the MCP tools explicitly and to
 verify the result before exporting. For example:

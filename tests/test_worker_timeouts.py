@@ -145,13 +145,14 @@ def test_compare_routes_to_underlying_timeout_tiers():
     record = []
     ws = _proxy_session(record, exec_timeout=300)
 
-    ws.compare("a", "b", kind="shape")
+    assert "diff_step" in ws.compare("a", "b", kind="shape")
+    ws.diff_step("a", "b")
     ws.compare("a", "b", kind="fit")
     ws.compare("a", "b", kind="align")
     ws.compare("snap", kind="snapshot")
 
     assert record == [
-        ("shape_compare", 300),
+        ("diff_step", 300),
         ("clearance", 300),
         ("align_check", _GEOMETRY_TIMEOUT),
         ("diff_snapshot", _GEOMETRY_TIMEOUT),

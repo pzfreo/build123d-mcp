@@ -1062,7 +1062,7 @@ class WorkerSession:
         self,
         a: str,
         b: str = "",
-        kind: str = "shape",
+        kind: str = "fit",
         axis: str = "Z",
         mode: str = "flush",
         format: str = "text",
@@ -1075,9 +1075,9 @@ class WorkerSession:
         """
         kind_norm = kind.strip().lower()
         if kind_norm == "shape":
-            if not b:
-                return json.dumps({"error": "compare(kind='shape') requires b."}, indent=2)
-            return self.shape_compare(a, b)
+            return json.dumps(
+                {"error": "compare(kind='shape') was removed; use diff_step(old, new)."}
+            )
         if kind_norm == "fit":
             if not b:
                 return json.dumps({"error": "compare(kind='fit') requires b."}, indent=2)
@@ -1089,7 +1089,7 @@ class WorkerSession:
         if kind_norm == "snapshot":
             return self.diff_snapshot(a, b, format=format)
         return json.dumps(
-            {"error": (f"Unknown compare kind '{kind}'. Use one of: shape, fit, align, snapshot.")},
+            {"error": (f"Unknown compare kind '{kind}'. Use one of: fit, align, snapshot.")},
             indent=2,
         )
 
@@ -1151,36 +1151,22 @@ class WorkerSession:
     def find_hole_patterns(self, object_name: str = "") -> str:
         raise NotImplementedError
 
-    @_op(_tool(f"{_T}.recognise_features:recognise_features"), _exec_budget)
-    def recognise_features(
-        self,
-        object_name: str = "",
-        families: str = "",
-        coordinate_frame: str = "caller",
-        include_faces: bool = False,
-        max_features: int = 50,
+    @_op(_tool(f"{_T}.inspect_features:inspect_features"), _exec_budget)
+    def inspect_features(
+        self, target: str = "", families: str = "", feature_ids: str = "", max_features: int = 50
     ) -> str:
         raise NotImplementedError
 
-    @_op(_tool(f"{_T}.edit_features:find_candidates"), _exec_budget)
-    def find_candidates(
-        self,
-        kind: str,
-        qualifiers: str = "{}",
-        stated_value: float | None = None,
-        object_name: str = "",
-    ) -> str:
-        raise NotImplementedError
-
-    @_op(_tool(f"{_T}.edit_features:interface_features"), _exec_budget)
-    def interface_features(self, object_name: str = "") -> str:
+    @_op(_tool(f"{_T}.diff_step:diff_step"), _exec_budget)
+    def diff_step(self, old: str, new: str, render: bool = False) -> str | dict:
         raise NotImplementedError
 
     @_op(_tool(f"{_T}.edit_features:edit_feature"), _exec_budget)
     def edit_feature(
         self,
-        handle: str,
+        feature_id: str,
         diameter: float,
+        object_name: str = "",
         result_name: str = "",
         protected_refs: str = "[]",
     ) -> str:

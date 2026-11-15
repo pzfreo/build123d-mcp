@@ -95,32 +95,20 @@ the feature in code. For spatial edits, render with labels or use
 `render_view(highlights=...)` to confirm the face/edge index before changing
 construction.
 
-For an imported B-rep with no feature history, call `recognise_features()`
-without `families` once for the compact shared inventory, then request only the
-likely family, for example `families="holes"` or `families="blends"`. Each
-returned `@feature[...]` handle can be resolved inside `execute()` with
-`recognition_faces(handle)` for all constituent faces, or
-`recognition_faces(handle, role="defining")` for the minimum recognition
-evidence. The default caller-coordinate records agree with the imported model;
-use `coordinate_frame="part"` only when a part-relative frame is useful. Handles
-are run-local and deliberately fail after their named source geometry is
-replaced, so recognise again after an edit. Empty families are explicit misses,
-not permission to substitute a nearby feature. Pockets, channels, blind slots and
-passages are all reported as `section_recesses`; a record whose `record_type`
-is `SectionRecessRefusal` means a recess was detected but its geometry was not
-proved, so do not reconstruct from it.
+For an imported B-rep, call `inspect_features(target="part")` for a compact
+inventory, then expand likely families with `families="holes,bosses,fillets"`.
+Records and selected face descriptors use the imported model's coordinates.
+Request descriptors with `feature_ids="holes:12"`; verify kind, centroid and
+area against live faces before editing. IDs describe the current STEP bytes:
+inspect again after changing geometry. Empty recognition is not permission to
+substitute a nearby feature. Check axis, location and starting dimensions
+against the request, and identify mating interfaces explicitly.
 
-For an edit described by kind, axis, side or starting size, use
-`find_candidates(kind="hole", qualifiers='{"axis":"Z","side":"+X"}',
-stated_value=6)` before selecting a handle. It reports all recognised instances
-under the literal axes and every proper rotation of the request frame
-(grouped by the candidates each selects) and flags an unmatched stated
-value. `interface_features()` suggests flat faces with hole openings and their
-handles; identify the actual mating interface before editing. For a plain
-through hole with one cylindrical wall, `edit_feature(handle, diameter=8,
-protected_refs='[...]')` predicts and measures its change and rejects an edit
-that moves another recognised hole or the outer envelope. It refuses complex
-hole stacks; use the manual workflow below for those.
+For a plain through hole with one cylindrical wall, use
+`edit_feature(feature_id="holes:12", diameter=8, object_name="part",
+protected_refs='["holes:13"]')`. It checks predicted material change, all other
+holes and the envelope, and refuses dependent hole stacks or face mismatches.
+For other features, use the manual workflow below and verify with `diff_step`.
 
 ## Step 3 - Make One Explicit Edit
 
@@ -179,17 +167,13 @@ Then choose the evidence that matches the edit:
   `compare(a="a", b="b", kind="align", axis="Z", mode="flush")`
 - source-level edit may be brittle: run `design_audit()`
 - shape should otherwise match a baseline: run
-  `compare(a="before", b="edited", kind="shape")`
+  `diff_step(old="before", new="edited")`
 
-For imported B-reps, `compare(kind="shape")` can have noisy mesh localisation
-after a valid defeature or analytic face extension. Do not throw away a clean
-validated candidate solely because compare reports spread regions. First prove
-the exact delta directly: no added material when only removal was requested, the
-delta bounding box sits on the intended feature, the target faces are gone or
-changed as requested, and protected feature counts/dimensions are unchanged. If
-that evidence is clean, keep the validated defeatured result instead of replacing
-it with a raw boolean that preserves old face partitioning but creates extra
-seam faces.
+For imported B-reps, use `diff_step(old="baseline", new="edited", render=True)`
+to inspect adapted, orphaned and new features and unclaimed analytic face changes.
+Verify the requested dimensions and protected interfaces explicitly; the diff's
+analytic descriptors do not prove that every trim contour is unchanged. Retain
+the validity/export gate and exact material checks where required.
 
 For mesh-derived solids imported from 3MF or reconstructed from tessellated data,
 add these checks to the loop:
@@ -295,7 +279,7 @@ solids, ask the MCP for a recipe before trying variants:
 repair_advice(
   error_text="<validate/export failure text>",
   goal="lengthen the flanged boss and its through bore by 8mm",
-  context="<locate_gate_defects or compare(a='before', b='candidate', kind='shape') notes>"
+  context="<locate_gate_defects or diff_step(old='before', new='candidate') notes>"
 )
 ```
 

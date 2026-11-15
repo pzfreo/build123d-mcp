@@ -24,7 +24,7 @@ def test_bank_candidate_promotes_and_snapshots_only_after_gate_pass(tmp_path, mo
     assert result["snapshot_saved"] is True
     assert "floor" in session.snapshots
     assert (tmp_path / "output.step").exists()
-    assert "recognise_features" in result["next_tool_call"]
+    assert "inspect_features" in result["next_tool_call"]
     assert not list(tmp_path.glob("bank-candidate-*"))
 
 

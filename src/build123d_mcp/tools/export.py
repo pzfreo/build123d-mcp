@@ -735,7 +735,7 @@ def bank_candidate(
             "replaced_existing_output": existed,
             "snapshot_saved": saved,
             "snapshot_name": snapshot_name or None,
-            "next_tool_call": f"recognise_features(object_name={target!r})",
+            "next_tool_call": f"inspect_features(target={target!r})",
             "note": (
                 "The written STEP passed the gate and is now the safe floor. For an imported "
                 "B-rep edit, run compact then targeted recognition before manual topology walking."

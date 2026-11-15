@@ -1,4 +1,4 @@
-"""quiddity 0.4 adapter: face indices map to live faces only when proven."""
+"""specify-core adapter: face indices map to live faces only when proven."""
 
 import pytest
 from build123d import Box, Cylinder, Pos, Rot
@@ -28,14 +28,16 @@ def test_out_of_range_face_index_is_refused(evidence):
         evidence.face(len(evidence._faces))
 
 
-def test_hole_record_and_association(evidence):
+def test_hole_record_and_descriptors(evidence):
     (hole,) = [f for f in evidence.features if evidence.family(f) == "holes"]
     record = evidence.record(hole)
     assert record.kind == "Hole"
     assert record.to_dict()["diameter"] == pytest.approx(8.0)
-    association = evidence.association()
-    assert association["faces"]["total"] == len(evidence._faces)
-    assert 0 < association["faces"]["associated"] <= association["faces"]["total"]
+    for index in evidence.constituent_faces(hole):
+        descriptor = evidence._descriptors[index]
+        assert descriptor["kind"] == "cylinder"
+        assert descriptor["radius"] == pytest.approx(4)
+        evidence.face(index)
 
 
 @pytest.mark.parametrize(
