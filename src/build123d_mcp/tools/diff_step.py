@@ -85,7 +85,7 @@ def face_diff(
     omits feature context indices, and cannot distinguish tangential trim motion
     from a moving host boundary. These are existing tool output semantics.
     """
-    same_source = old["binding"] == new["binding"]
+    same_source = old is new
     buckets = defaultdict(list)
     for face in () if same_source else new["faces"]:
         buckets[_signature(face)].append(face)

@@ -166,11 +166,11 @@ def test_path_and_object_have_same_inventory(featured_session, tmp_path):
     )
 
 
-def test_cache_is_bounded_and_temp_paths_cleaned(featured_session):
+def test_cache_is_bounded_and_retains_memory_handles(featured_session):
     for i in range(_CACHE_SIZE + 1):
         featured_session.objects["p"] = Box(10 + i, 8, 6)
         entry = resolve_analysis(featured_session, "p")
-        assert not entry.loaded.path.exists()
+        assert entry.loaded.path.name == "model.step"
     assert len(featured_session._step_analysis_cache) == _CACHE_SIZE
 
 

@@ -5,7 +5,7 @@ import json
 import math
 
 import pytest
-from build123d import Align, Axis, Box, Cylinder, GeomType, Pos, export_step, fillet
+from build123d import Align, Axis, Box, Cylinder, GeomType, Pos, Sphere, export_step, fillet
 
 from build123d_mcp.session import Session
 from build123d_mcp.tools._recognition import resolve_analysis
@@ -366,3 +366,27 @@ def test_overlay_reuses_the_single_comparison_and_loaded_handles(monkeypatch):
     result = diff_step(session, "old", "new", render=True)
     assert result["png"].startswith(b"\x89PNG\r\n\x1a\n")
     assert calls == [{"image_width": 1024}]
+
+
+def test_unclaimed_sphere_resize_uses_native_face_report(monkeypatch):
+    from specify_core import api
+
+    original = api.diff
+    native = {}
+
+    def capture(*args, **kwargs):
+        out = original(*args, **kwargs)
+        native.update(out["report"])
+        return out
+
+    monkeypatch.setattr(api, "diff", capture)
+    report = json.loads(diff_step(pair(Sphere(10), Sphere(11)), "old", "new"))
+    assert report["features"] == []
+    assert len(native["other_faces"]) == 1
+    change = native["other_faces"][0]
+    assert change["class"] == "adapted"
+    unclaimed = report["unclaimed_face_changes"]
+    assert unclaimed["removed_count"] == unclaimed["added_count"] == 1
+    assert unclaimed["removed"][0]["radius"] == 10
+    assert unclaimed["added"][0]["radius"] == 11
+    assert [unclaimed[side][0]["area"] for side in ("removed", "added")] == change["area"]
