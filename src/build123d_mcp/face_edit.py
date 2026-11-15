@@ -10,10 +10,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
-# A real module-level dependency also keeps this server-internal module out of
-# security.py's transitively-safe user import set. OCP imports stay restricted.
-from OCP.BRepOffset import BRepOffset_MakeOffset
-
 # Execution-local state never enters the user namespace. ContextVar keeps parallel
 # in-process sessions isolated and the context manager restores it on every error.
 _gate_session: ContextVar[Any] = ContextVar("face_edit_gate_session", default=None)
@@ -316,7 +312,7 @@ def offset_faces(shape, faces, distance):
     from build123d import GeomType
     from OCP.BRep import BRep_Tool
     from OCP.BRepAdaptor import BRepAdaptor_Surface
-    from OCP.BRepOffset import BRepOffset, BRepOffset_Good, BRepOffset_Skin
+    from OCP.BRepOffset import BRepOffset, BRepOffset_Good, BRepOffset_MakeOffset, BRepOffset_Skin
     from OCP.GeomAbs import GeomAbs_Intersection
     from OCP.GeomAdaptor import GeomAdaptor_Surface
     from OCP.TopAbs import TopAbs_REVERSED

@@ -297,12 +297,14 @@ inside `execute()`, not automatic editing tools. Establish a valid baseline firs
 1. Call `inspect_features("part", families="bosses,fillets")`, then request the
    selected content-bound feature IDs to obtain face descriptors. Check the
    starting height, axis and fillet radius.
-2. Use `select_faces` with those descriptors to identify the cap and its top
-   fillet. For example, for an R3 top-filleted boss ending at Z=23:
+2. Copy the returned face arrays for the cap and its top fillet into
+   `cap_descriptors` and `top_blend_descriptors` inside `execute()`. Select with
+   those descriptors; do not replace them with broader keyword filters:
+
 
    ```python
-   cap = select_faces(part, kind="plane", centroid=(0, 0, 23))
-   top_blend = select_faces(part, kind="torus", radius=3)
+   cap = select_faces(part, faces=cap_descriptors)
+   top_blend = select_faces(part, faces=top_blend_descriptors)
    assert len(cap) == 1 and len(top_blend) == 1
    edited = translate_faces(part, cap + top_blend, (0, 0, -5))
    ```

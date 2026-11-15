@@ -220,6 +220,12 @@ def _is_transitively_safe(dotted_name: str, _visiting: frozenset[str] = frozense
     # Explicitly allowed — fast path, no I/O.
     if _is_root_allowed(root):
         return True
+    # Server implementation modules are not user libraries. Only vetted helpers
+    # injected by Session belong in execute(); do not infer trust from today's
+    # imports (or allow an empty parent package to expose loaded internals).
+    # Explicit trusted --allow-imports / --no-sandbox overrides still apply.
+    if root == "build123d_mcp":
+        return False
     if root == "OCP":
         # Mirror _check_module/_safe_import: only allowed OCP sub-modules are safe.
         ocp_parts = dotted_name.split(".")

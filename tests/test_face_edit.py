@@ -22,6 +22,19 @@ def ok(proxy, code):
     return text
 
 
+def refused(proxy, code, reason):
+    output = proxy.execute(code)
+    prefix = "Error: ValueError: "
+    assert output.startswith(prefix), output
+    helper, separator, detail = output.removeprefix(prefix).partition(": ")
+    assert helper in {"translate_faces", "offset_faces", "split_face_chord"} and separator, output
+    # A reason must match the diagnostic body, never just the ubiquitous helper
+    # prefix (e.g. "split" in "split_face_chord:"). Guard future cases too.
+    assert reason not in helper, (helper, reason)
+    assert reason in detail, output
+    return output
+
+
 BUILDERS = """
 from build123d import *
 
@@ -265,9 +278,8 @@ def test_specific_offset_failure_without_internal_prefix(proxy, case):
         ),
     }[case]
     ok(proxy, BUILDERS + setup + "\nbefore = signature(part)")
-    output = proxy.execute(operation)
+    output = refused(proxy, operation, reason)
     assert output.startswith("Error: ValueError: offset_faces: "), output
-    assert reason in output, output
     assert "translate_faces:" not in output, output
     assert "Null TopoDS" not in output, output
     ok(proxy, "assert signature(part) == before")
@@ -310,9 +322,7 @@ def test_specific_offset_failure_without_internal_prefix(proxy, case):
 )
 def test_refusals_preserve_input(proxy, setup, operation, reason):
     ok(proxy, BUILDERS + setup + "\nbefore = signature(part)")
-    output = proxy.execute(operation)
-    assert output.startswith("Error: ValueError:"), output
-    assert reason in output, output
+    refused(proxy, operation, reason)
     ok(proxy, "assert signature(part) == before")
 
 
@@ -352,16 +362,16 @@ reference = Solid(Shell(reference_faces))
         ("Box(20,30,10)", (-10, 0, 6), (10, 0, 5), "endpoint is not on"),
         ("Box(20,30,10)-Cylinder(3,12)", (-10, 0, 5), (10, 0, 5), "chord leaves"),
         ("Box(20,30,10)", (0, 0, 5), (10, 0, 5), "face boundary"),
-        ("Box(20,30,10)", (-10, -15, 5), (10, -15, 5), "split"),
+        ("Box(20,30,10)", (-10, -15, 5), (10, -15, 5), "topology change"),
     ],
 )
 def test_split_refuses_bad_chord(proxy, setup, p0, p1, reason):
     ok(proxy, BUILDERS + f"part = {setup}\nbefore = signature(part)")
-    output = proxy.execute(
-        f"split_face_chord(part, select_faces(part, kind='plane', direction=(0,0,1))[0], {p0!r}, {p1!r})"
+    refused(
+        proxy,
+        f"split_face_chord(part, select_faces(part, kind='plane', direction=(0,0,1))[0], {p0!r}, {p1!r})",
+        reason,
     )
-    assert output.startswith("Error: ValueError:"), output
-    assert reason in output, output
     ok(proxy, "assert signature(part) == before")
 
 
@@ -380,8 +390,13 @@ assert not hasattr(candidate, 'builder')
 """,
     )
     assert "available names: []" in proxy.execute("get_object('candidate')")
+    # Internal helpers are injected, never imported as a module. Protect both
+    # direct and parent-package imports, independent of implementation imports.
     for attack in [
+        "import build123d_mcp",
+        "from build123d_mcp import face_edit",
         "import build123d_mcp.face_edit",
+        "from build123d_mcp.face_edit import translate_faces",
         "from OCP.BRepOffset import BRepOffset_MakeOffset",
         "translate_faces.__globals__",
         "offset_faces.__globals__",
@@ -425,9 +440,7 @@ def test_foreign_empty_duplicate_and_nonfinite_selections(proxy):
         ("translate_faces(part, part.faces()[:1], (0,0,float('nan')))", "finite"),
         ("offset_faces(part, part.faces()[:1], float('inf'))", "finite"),
     ]:
-        output = proxy.execute(expression)
-        assert output.startswith("Error: ValueError:"), output
-        assert reason in output, output
+        refused(proxy, expression, reason)
         ok(proxy, "assert signature(part) == before")
 
 
