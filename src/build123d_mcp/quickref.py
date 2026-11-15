@@ -401,7 +401,12 @@ show(result, "constrained_arc")""",
 - Reassigning a bound variable warns; call show(edited, "name") to register the edit
 - select_faces(shape, faces=<descriptor or nonempty list>) uniquely matches distinct live faces from inspect_features; no STEP indices
 - select_faces(shape, kind="plane", direction=(0,0,1)) returns every keyword match; do not combine filters with faces=
-- get_object/select_faces are injected helpers; no import required
+- translate_faces(shape, faces, vector): rigid local face-set move; select tangent cap/fillet faces together
+- offset_faces(shape, faces, distance): analytic face offset along outward normals; positive adds material
+- split_face_chord(shape, face, p0, p1): straight interior boundary-to-boundary chord; no volume drift
+- Face edits return a new gated Solid, preserve the input, and refuse unsupported neighbours/topology changes/self-intersections
+- These helpers do not register/show/bank; check diff_step then show() explicitly
+- get_object/select_faces/translate_faces/offset_faces/split_face_chord are injected helpers; no import required
 - named_face(shape, "top") returns the highest-Z face; also: bottom/front/back/left/right
 - find_edges(shape, geom="circle", radius=4.25, at_z=10.2) filters edges for fillet/chamfer; prints count + radii + Z levels""",
     ),

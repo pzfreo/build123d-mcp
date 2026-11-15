@@ -322,6 +322,31 @@ returns bounded caller-frame feature records; `feature_ids` selects analytic
 face descriptors, with an executable `select_faces` example. `max_features`
 is 1..100; counts remain exact.
 
+Inside `execute()`, three explicit face-edit primitives need no import:
+
+- `translate_faces(shape, faces, vector)` moves a selected set rigidly, trimming
+  or extending adjacent planes/cylinders on their existing supports. Select a
+  cap and its tangent top fillet together to shorten a boss without losing the
+  fillet. For a pocket wall, select the wall and its corner fillets together.
+- `offset_faces(shape, faces, distance)` offsets analytic faces along outward
+  normals; positive distance adds material (shrinks holes). OCCT per-face
+  intersection offsets are checked against every requested/unchanged support;
+  tangent propagation is refused.
+- `split_face_chord(shape, face, p0, p1)` wraps OCCT face splitting with a straight
+  boundary-to-boundary interior chord, useful for an explicitly diagnosed mesh
+  cusp. Both endpoints and the whole chord must lie on the face within 1e-7 mm.
+  Volume drift must be at most 1e-9 relative (floating-point quadrature).
+
+Each returns a new Solid and leaves the input untouched. Each uses the existing
+validity gate and checks self-intersection; unsupported non-analytic neighbours,
+non-line connecting edges, face collapse and shell/topology changes are refused.
+Rigid translations of boundaries on cone/sphere/torus neighbours are refused
+when those supports cannot contain the moved boundary. No automatic selection,
+registration, display or banking occurs. Inspect with `diff_step`, then `show()`
+explicitly; exported deliverables still need the written STEP export gate.
+These are agent-authored operations, not an automatic repair tool. See
+`build123d://skill/edit` and `build123d://skill/repair` for recipes.
+
 Inside `execute()`, `select_faces(part, faces=<one descriptor or list>)` returns
 live build123d `ShapeList` faces by analytic geometry in the caller frame.
 Descriptor ids are metadata, never indices into `part.faces()`. Every descriptor

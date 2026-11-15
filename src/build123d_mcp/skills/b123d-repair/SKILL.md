@@ -451,6 +451,35 @@ tessellation.
 
 ---
 
+### Explicit interior-chord split for a diagnosed mesh cusp
+
+When the gate localizes a coarse-mesh self-intersection to one otherwise valid
+planar/analytic face, an interior seam can change tessellation without moving
+material. Use the injected `split_face_chord` in your own `execute()` code;
+this is an explicit repair primitive, not an automatic healer. Diagnose and
+choose the face/chord first, and save a rollback snapshot.
+
+```python
+# Example coordinates for a centered 20 x 30 x 10 block; use the diagnosed face
+# and measured boundary points on the actual part.
+top = select_faces(part, kind="plane", direction=(0, 0, 1))[0]
+repaired = split_face_chord(part, top, (-10, 0, 5), (10, 0, 5))
+print(part.volume, repaired.volume, len(part.faces()), len(repaired.faces()))
+show(repaired, "repair_candidate")
+```
+
+The helper wraps `BRepFeat_SplitShape`, requires boundary endpoints within
+1e-7 mm of the face, checks that the whole straight chord stays inside the face
+(no crossing holes), and refuses volume drift above 1e-9 relative, topology
+loss, or a failing validity gate. A straight chord generally leaves a curved
+surface; use an actual straight generator or choose another ladder rung.
+It returns a new Solid and never registers, banks or displays it. Call
+`diff_step(old="part", new="repair_candidate")`, inspect the new seam and volume,
+then verify the written STEP with the export gate (Step 2). A successful split
+does not by itself prove the diagnosed mesh defect was repaired.
+
+---
+
 ## Step 2 — Verify every heal with the export gate
 
 - **The export gate is authoritative.** An in-memory heal can be fake:

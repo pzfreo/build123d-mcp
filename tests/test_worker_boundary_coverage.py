@@ -187,7 +187,8 @@ def _inspect_features(ws, tmp_path):
     # Helpers live with exec in the worker, not on the parent proxy (#286/#500).
     output = ws.execute(
         "assert a is get_object('a')\n"
-        "assert len(select_faces(a, kind='plane', direction=(0,0,1))) == 1"
+        "assert len(select_faces(a, kind='plane', direction=(0,0,1))) == 1\n"
+        "assert callable(translate_faces) and callable(offset_faces) and callable(split_face_chord)"
     )
     assert not output.startswith(("Error:", "Constraint failed")), output
 
@@ -361,7 +362,7 @@ SESSION_STATEFUL_TOOLS = {
 # to SESSION_STATEFUL_TOOLS or here (see test_every_dispatch_op_is_classified).
 NON_SMOKED_OPS = {
     "edit_feature": "requires a current hole id and changes geometry; covered by test_edit_features",
-    "execute": "seeding plus injected get_object/select_faces; covered by test_execute_ergonomics",
+    "execute": "seeding plus injected selection/face edits; covered by test_execute_ergonomics and test_face_edit",
     "execute_file": "requires an external Python source file; covered by test_execute_file",
     "reset": "session-lifecycle op; smoke-testing it would clear the seeded worker state",
     "search_library": "reads the worker library index, not Session geometry",

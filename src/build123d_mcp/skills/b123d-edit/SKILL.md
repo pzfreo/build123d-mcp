@@ -288,6 +288,41 @@ to a topology-preserving cutter that leaves extra cylindrical bands or seam face
 Accept the defeature only after the written export gate passes and the delta
 proof shows the removed material is localized to the requested fillet/chamfer.
 
+### Move an Imported Face Set Locally
+
+Use this when there is no editable source feature and a broad cut would damage
+other blends or a closed interior cavity. The helpers are explicit operations
+inside `execute()`, not automatic editing tools. Establish a valid baseline first.
+
+1. Call `inspect_features("part", families="bosses,fillets")`, then request the
+   selected content-bound feature IDs to obtain face descriptors. Check the
+   starting height, axis and fillet radius.
+2. Use `select_faces` with those descriptors to identify the cap and its top
+   fillet. For example, for an R3 top-filleted boss ending at Z=23:
+
+   ```python
+   cap = select_faces(part, kind="plane", centroid=(0, 0, 23))
+   top_blend = select_faces(part, kind="torus", radius=3)
+   assert len(cap) == 1 and len(top_blend) == 1
+   edited = translate_faces(part, cap + top_blend, (0, 0, -5))
+   ```
+
+3. Register a review candidate with `show(edited, "candidate")`; call
+   `diff_step(old="part", new="candidate")` and verify the intended boss height,
+   retained R3 blend and unchanged interior cavity/features. After accepting the
+   delta, call `show(edited, "part")`, then bank/export through the written gate.
+
+`translate_faces` preserves the rigidly moved patches and extends/trims adjacent
+planes/cylinders. Select tangent blends together with a moving wall/cap; a pocket
+wall and its two corner fillets can move together without changing their radii.
+`offset_faces(part, selected, 2)` instead applies an outward-normal offset (e.g.
+a cylindrical wall changes radius). Both return a new gated Solid, register
+nothing and preserve their input. They refuse unsupported neighbours/connecting
+curves, face collapse, tangent offset propagation and self-intersection. A cone,
+sphere or torus neighbour is refused if its unchanged support cannot contain the
+translated boundary. Restore the baseline and change the source construction
+when the explicit local operation is refused; do not accept collateral edits.
+
 ### Topology-Sensitive Edits
 
 For edits that often create open shells, duplicate internal faces, or disjoint

@@ -4,6 +4,13 @@
 
 ### Added
 
+- Explicit `translate_faces`, `offset_faces` and `split_face_chord` primitives
+  inside `execute()` (#500 part 4). Local analytic face edits preserve selected
+  rigid blends and unrelated cavity shells; chord splits preserve volume. Each
+  returns a new Solid through the existing validity gate, refusing unsupported
+  extensions, topology changes, tangent propagation and self-intersections.
+  No new MCP tool or implicit registration; edit/repair skills include recipes.
+
 - `select_faces` inside `execute()` matches inspection descriptors to live faces
   by caller-frame analytic geometry, with unique-match errors and configurable
   tolerances. Keyword filters return all matches; selected inspection responses

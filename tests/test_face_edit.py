@@ -103,8 +103,9 @@ reference = pocket(18)
     )
     old = json.loads(proxy.inspect_features("baseline", families="fillets,blends"))
     new = json.loads(proxy.inspect_features("edited", families="fillets,blends"))
-    assert old["features"], old
-    assert len(old["features"]) == len(new["features"])
+    assert len(old["features"]) == len(new["features"]) == 4
+    assert [f["radius"] for f in old["features"]] == [2.0] * 4
+    assert [f["radius"] for f in new["features"]] == [2.0] * 4
     # Recognition records preserve the actual blend dimensions, independent of ids/location.
     for key in ("radius", "sizes"):
         assert sorted(str(f.get(key)) for f in old["features"]) == sorted(
