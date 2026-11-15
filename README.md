@@ -64,7 +64,7 @@ command: uv
 args:    ["tool", "run", "--python", "3.12", "build123d-mcp@latest"]
 ```
 
-> Python 3.12, 3.13, and 3.14 are supported. The examples use 3.12 because
+> Python 3.11, 3.12, 3.13, and 3.14 are supported. The examples use 3.12 because
 > it is a conservative default, and uv can download it if you do not already
 > have it installed.
 
@@ -204,7 +204,7 @@ and the envelope before registering the result. Complex hole stacks are refused.
 Inspect again after edits. Verify revisions with
 `diff_step(old="input.step", new="part", render=True)` and the STEP export gate.
 The diff reports feature changes and bare analytic face changes; its descriptors
-do not prove trim-contour equality. specify-core requires Python 3.12 or later.
+do not prove trim-contour equality. Python 3.11 or later is supported.
 
 Good prompts usually ask the assistant to use the MCP tools explicitly and to
 verify the result before exporting. For example:

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import os
 import re
 import tempfile
 from collections import OrderedDict
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Any
 
 from build123d_mcp.tools._paths import check_input_size, safe_input_path
@@ -263,6 +263,52 @@ def _caller_geometry(value, placement):
     return out
 
 
+def _instance_geometry(data: bytes):
+    """Read one STEP instance in memory, retaining its product-to-caller frame."""
+    from build123d import Location, Solid
+    from OCP.IFSelect import IFSelect_RetDone
+    from OCP.STEPCAFControl import STEPCAFControl_Reader
+    from OCP.TCollection import TCollection_ExtendedString
+    from OCP.TDF import TDF_Label, TDF_LabelSequence
+    from OCP.TDocStd import TDocStd_Document
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.XCAFDoc import XCAFDoc_DocumentTool
+
+    doc = TDocStd_Document(TCollection_ExtendedString("XCAF"))
+    reader = STEPCAFControl_Reader()
+    if reader.ReadStream("model.step", BytesIO(data)) != IFSelect_RetDone or not reader.Transfer(
+        doc
+    ):
+        raise ValueError("Could not import STEP geometry")
+    tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    leaves = []
+
+    def instances(label, parent):
+        location = parent.Multiplied(tool.GetLocation_s(label))
+        product = label
+        if tool.IsReference_s(label):
+            product = TDF_Label()
+            tool.GetReferredShape_s(label, product)
+        if tool.IsAssembly_s(product):
+            children = TDF_LabelSequence()
+            tool.GetComponents_s(product, children)
+            for i in range(1, children.Length() + 1):
+                instances(children.Value(i), location)
+        else:
+            leaves.append((tool.GetShape_s(product), location))
+
+    roots = TDF_LabelSequence()
+    tool.GetFreeShapes(roots)
+    for i in range(1, roots.Length() + 1):
+        instances(roots.Value(i), TopLoc_Location())
+    if len(leaves) != 1:
+        raise ValueError("inspection requires one unambiguous STEP instance")
+    wrapped, location = leaves[0]
+    transform = location.Transformation()
+    placement = [[transform.Value(i, j) for j in range(1, 5)] for i in range(1, 4)]
+    return Solid.cast(wrapped).moved(Location(location)), placement
+
+
 def analysis_from_bytes(data: bytes, cache: OrderedDict | None = None) -> Analysis:
     from specify_core import api
 
@@ -270,28 +316,15 @@ def analysis_from_bytes(data: bytes, cache: OrderedDict | None = None) -> Analys
     if cache is not None and digest in cache:
         cache.move_to_end(digest)
         return cache[digest]
-    with tempfile.TemporaryDirectory(prefix="build123d_inspect_") as directory:
-        path = os.path.join(directory, "model.step")
-        with open(path, "wb") as stream:
-            stream.write(data)
-        loaded = api.load(path)
-        document = api.analyse(loaded)
-        # The engine analyses a product in its local frame; STEP instance
-        # placement is separate, including for a single translated live solid.
-        part = api.parts(path)[loaded.binding.part]
-        if len(part["placements"]) != 1:
-            raise ValueError("inspection requires one unambiguous STEP instance")
-        placement = part["placements"][0]
-        # S1: cached OCCT geometry supplies measures without asking the Rust
-        # engine to recognise both sides of a self-diff. It also supplies exact
-        # shared-edge adjacency for feature host-boundary classification.
-        from build123d_mcp.tools.import_step import _load_step
-
-        shape = _load_step(path)
-        measures = _shape_measures(shape)
-        document = copy.deepcopy(document)
-        for key in ("features", "faces"):
-            document[key] = _caller_geometry(document[key], placement)
+    loaded = api.load(data, name="model.step")
+    document = api.analyse(loaded)
+    # The byte API keeps recognition on this handle. OCCT is used only for
+    # caller placement, exact measures and shared-edge/trim evidence, which the
+    # public LoadedPart does not expose.
+    shape, placement = _instance_geometry(data)
+    measures = _shape_measures(shape)
+    for key in ("features", "faces"):
+        document[key] = _caller_geometry(document[key], placement)
     if document["binding"]["source_sha256"] != digest:
         raise ValueError("STEP analysis binding does not match source_sha256")
     result = Analysis(data, loaded, document, placement, shape, measures)

@@ -380,9 +380,10 @@ contour equality. `render=True` includes specify-core's native diff overlay.
 
 Use this for revision verification. The former shape comparison route now
 returns an error directing callers here, including a bare `compare(a, b)`.
-`compare(kind="fit"|"align"|"snapshot")` remains available. Native diff analysis
-cost remains upstream in specify-core#180 item 1; the local content cache cannot
-prevent that engine work.
+`compare(kind="fit"|"align"|"snapshot")` remains available. An eight-entry
+content cache retains loaded parts and their recognition: inspecting a baseline
+before diffing it reuses the same recognition. Overlay rendering uses that same
+comparison through the Python API.
 
 ### `edit_feature`
 Resize one plain through hole by its content-bound `feature_id` and `diameter`.

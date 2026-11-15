@@ -5,7 +5,7 @@ import json
 import math
 
 import pytest
-from build123d import Align, Axis, Box, Cylinder, Pos, export_step, fillet
+from build123d import Align, Axis, Box, Cylinder, GeomType, Pos, export_step, fillet
 
 from build123d_mcp.session import Session
 from build123d_mcp.tools._recognition import resolve_analysis
@@ -126,14 +126,18 @@ def test_identical_reindexed_tables_match_all_faces():
     reindexed["faces"].reverse()
     for i, face in enumerate(reindexed["faces"]):
         face["id"] = i + 100
-    report = face_diff(document, reindexed, {"features": []})
+    report = face_diff(
+        document,
+        reindexed,
+        {"features": [], "other_faces": [], "unchanged_faces": len(document["faces"])},
+    )
     assert report["unchanged_faces"] == len(document["faces"])
     assert report["planar_deltas"] == []
     assert report["unclaimed_face_changes"]["removed_count"] == 0
     assert report["unclaimed_face_changes"]["added_count"] == 0
 
 
-def test_real_cli_overlay_returns_png_and_bounded_report():
+def test_real_api_overlay_returns_png_and_bounded_report():
     s = pair(Box(30, 30, 10) - Cylinder(3, 12), Box(30, 30, 10) - Cylinder(4, 12))
     result = diff_step(s, "old", "new", render=True)
     assert result["png"].startswith(b"\x89PNG\r\n\x1a\n")
@@ -141,14 +145,17 @@ def test_real_cli_overlay_returns_png_and_bounded_report():
 
 
 def test_render_failure_is_clear_and_no_fabricated_image(monkeypatch):
-    def unavailable(*args, **kwargs):
-        raise ValueError("rendering blocked on specify-core#180 item 4")
+    from specify_core import api
 
-    monkeypatch.setattr("build123d_mcp.tools.diff_step._render_overlay", unavailable)
+    def unavailable(*args, **kwargs):
+        assert kwargs["image_width"] == 1024
+        raise ValueError("native image rendering unavailable")
+
+    monkeypatch.setattr(api, "diff", unavailable)
     s = pair(Box(10, 10, 10), Box(11, 10, 10))
     result = diff_step(s, "old", "new", render=True)
     assert "png" not in result
-    assert "specify-core#180 item 4" in json.loads(result["report"])["error"]
+    assert "native image rendering unavailable" in json.loads(result["report"])["error"]
 
 
 def test_compare_shape_error_names_replacement():
@@ -326,3 +333,36 @@ def test_bare_compare_keeps_shape_default_and_never_calls_fit(monkeypatch):
     assert inspect.signature(server.compare).parameters["kind"].default == "shape"
     monkeypatch.setattr(server, "_resolve_session", lambda: proxy)
     assert "diff_step" in json.loads(server.compare("old", "new"))["error"]
+
+
+@pytest.mark.xfail(strict=True, reason="needs specify-core built on quiddity >=0.5.3 (#181)")
+def test_shortened_top_filleted_boss_reports_full_height():
+    def boss(height):
+        base = Box(120, 120, 10, align=(Align.CENTER, Align.CENTER, Align.MIN))
+        post = Pos(0, 0, 10) * Cylinder(32.5, height, align=(Align.CENTER, Align.CENTER, Align.MIN))
+        body = base + post
+        return fillet(body.edges().filter_by(GeomType.CIRCLE).sort_by(Axis.Z)[-1:], 3)
+
+    report = json.loads(diff_step(pair(boss(13), boss(8)), "old", "new"))
+    (boss_change,) = [f for f in report["features"] if f["family"] == "bosses"]
+    assert boss_change["changes"]["sizes.height"] == {"old": 13, "new": 8}
+
+
+def test_overlay_reuses_the_single_comparison_and_loaded_handles(monkeypatch):
+    from specify_core import api
+
+    session = pair(Box(30, 30, 10) - Cylinder(3, 12), Box(30, 30, 10) - Cylinder(4, 12))
+    before = resolve_analysis(session, "old")
+    after = resolve_analysis(session, "new")
+    original = api.diff
+    calls = []
+
+    def counted(old, new, **kwargs):
+        assert old is before.loaded and new is after.loaded
+        calls.append(kwargs)
+        return original(old, new, **kwargs)
+
+    monkeypatch.setattr(api, "diff", counted)
+    result = diff_step(session, "old", "new", render=True)
+    assert result["png"].startswith(b"\x89PNG\r\n\x1a\n")
+    assert calls == [{"image_width": 1024}]

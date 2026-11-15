@@ -54,16 +54,18 @@
 
 ### Changed
 
-- Replace direct quiddity recognition with specify-core 0.1.15. Python 3.11 support
-  is dropped because specify-core requires Python 3.12+.
+- Replace direct quiddity recognition with specify-core 0.1.16, supporting
+  Python 3.11–3.14. STEP bytes load in memory; cached loaded parts recognise
+  features once across inspection, comparisons and overlay rendering.
   `inspect_features` provides compact inventories, bounded caller-frame family
   records and selected analytic face descriptors from STEP paths or session
   objects. Loaded parts and analysis use an eight-entry content-addressed LRU.
 - Add `diff_step` for feature revision changes and index-independent analytic
   face changes, including bare planar offsets and tangential moves. Strip PMI
-  verdicts; optional overlays use specify-core’s shipped CLI. Host-face boundary
-  changes are separated from plane motion. The remaining native re-analysis
-  cost is upstream (specify-core#180 item 1).
+  verdicts; optional overlays use the Python diff API's same comparison.
+  Upstream supplies unclaimed non-planar face changes. Caller-frame unchanged
+  counts, planar motion and verified host-face boundary changes remain local
+  because upstream aligns rigid motion and omits individual context faces.
 - Remove the previous recognition/candidate/interface tools and stateful feature
   handles. `edit_feature` accepts content-bound feature ids and verifies live face
   mapping before mutation. `compare(kind="shape")` now directs callers to

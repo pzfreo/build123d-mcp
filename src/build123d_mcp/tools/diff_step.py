@@ -4,11 +4,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
-import subprocess
-import sys
-import tempfile
-import time
 from collections import defaultdict
 
 from build123d_mcp.tools._recognition import resolve_analysis, transform_vector
@@ -85,15 +80,18 @@ def face_diff(
 ) -> dict:
     """Match multisets of analytic signatures before pairing changed planes.
 
-    This is analytic descriptor evidence, not an assertion of B-rep equality:
-    surfaces with identical descriptors can still have different trim contours.
+    Upstream owns unclaimed non-planar correspondence. Retain caller-frame
+    signature counts and planar evidence: upstream aligns whole-part motion,
+    omits feature context indices, and cannot distinguish tangential trim motion
+    from a moving host boundary. These are existing tool output semantics.
     """
+    same_source = old["binding"] == new["binding"]
     buckets = defaultdict(list)
-    for face in new["faces"]:
+    for face in () if same_source else new["faces"]:
         buckets[_signature(face)].append(face)
     unmatched_old = []
-    unchanged = 0
-    for face in old["faces"]:
+    unchanged = report["unchanged_faces"] if same_source else 0
+    for face in () if same_source else old["faces"]:
         matches = buckets[_signature(face)]
         if matches:
             matches.pop()
@@ -105,12 +103,10 @@ def face_diff(
     for side, document in (("old", old), ("new", new)):
         ids = {f.get(side) for f in report.get("features", [])}
         claimed.append({i for f in document["features"] if f["id"] in ids for i in f["faces"]})
-    before = [f for f in unmatched_old if f["id"] not in claimed[0]]
-    after = [f for f in unmatched_new if f["id"] not in claimed[1]]
+    before = [f for f in unmatched_old if f["kind"] == "plane" and f["id"] not in claimed[0]]
+    after = [f for f in unmatched_new if f["kind"] == "plane" and f["id"] not in claimed[1]]
 
     def distance(a, b):
-        if a["kind"] != "plane" or b["kind"] != "plane":
-            return math.inf
         if sum(x * y for x, y in zip(a["direction"], b["direction"])) < 1 - 1e-8:
             return math.inf
         return math.dist(a["centroid"], b["centroid"]) + abs(
@@ -129,9 +125,17 @@ def face_diff(
     new_hosts = _feature_hosts(after_geometry, report, "new")
     paired_old, paired_new, planar = set(), set(), []
     boundary_changes, modified = [], []
+    native_pairs = {c["old"]: c["new"] for c in report["other_faces"] if "old" in c and "new" in c}
+    new_indices = {f["id"]: i for i, f in enumerate(after)}
     for i, face in enumerate(before):
-        j = nearest(face, after)
-        if j is None or nearest(after[j], before) != i:
+        j = new_indices.get(native_pairs.get(face["id"]))
+        if j is None or not math.isfinite(distance(face, after[j])):
+            # Native context faces are counted but not indexed, and aligned
+            # rigid motion can omit caller-frame moves. Pair only those gaps.
+            j = nearest(face, after)
+            if j is None or nearest(after[j], before) != i:
+                continue
+        if j in paired_new:
             continue
         other = after[j]
         delta = [b - a for a, b in zip(face["centroid"], other["centroid"])]
@@ -178,6 +182,15 @@ def face_diff(
         paired_new.add(j)
     removed = [compact(f) for i, f in enumerate(before) if i not in paired_old]
     added = [compact(f) for i, f in enumerate(after) if i not in paired_new]
+    # Keep the established removed/added descriptor representation for changed
+    # non-planar surfaces, using upstream's feature/context exclusion and pairing.
+    for side, document, rows in (("old", old, removed), ("new", new, added)):
+        faces = {f["id"]: f for f in document["faces"]}
+        rows.extend(
+            compact(faces[change[side]])
+            for change in report["other_faces"]
+            if side in change and faces[change[side]]["kind"] != "plane"
+        )
     return {
         "unchanged_faces": unchanged,
         "planar_deltas": planar[:_MAX_ROWS],
@@ -289,53 +302,21 @@ def _bind_references(value, before, after, side="new"):
     return value
 
 
-def _render_overlay(old: bytes, new: bytes, timeout: float) -> bytes:
-    # 0.1.15 has no Python diff renderer. Use its own shipped CLI, which owns
-    # the orange/green/red overlay. Do not substitute our render_view renderer.
-    with tempfile.TemporaryDirectory(prefix="build123d_diff_") as directory:
-        for name, data in (("old", old), ("new", new)):
-            with open(os.path.join(directory, name + ".step"), "wb") as stream:
-                stream.write(data)
-        output = os.path.join(directory, "overlay")
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "specify_core",
-                "diff",
-                os.path.join(directory, "old.step"),
-                os.path.join(directory, "new.step"),
-                "-o",
-                output,
-            ],
-            capture_output=True,
-            timeout=timeout,
-        )
-        image = os.path.join(output, "model.png")
-        if not os.path.isfile(image):
-            raise ValueError(
-                "specify-core diff produced no model.png; rendering blocked on "
-                "specify-core#180 item 4: " + result.stderr.decode(errors="replace")[-500:]
-            )
-        with open(image, "rb") as stream:
-            return stream.read()
-
-
 def diff_step(session, old: str, new: str, render: bool = False) -> str | dict:
     """Compare STEP paths or session objects with specify-core and analytic faces.
 
     Reports adapted/orphaned/new features plus bare plane offsets and tangential
     moves. Counts are exact; expanded lists are bounded. render=True includes
-    specify-core's model.png overlay, via its CLI in 0.1.15. A registered name
+    specify-core's overlay from the same comparison. A registered name
     wins over an identical path string. Feature ids include their STEP digest.
     """
     try:
         from specify_core import api
 
-        deadline = time.monotonic() + session.exec_timeout
         before = resolve_analysis(session, old)
         after = resolve_analysis(session, new)
-        report = api.diff(before.loaded, after.loaded)["report"]
+        comparison = api.diff(before.loaded, after.loaded, image_width=1024 if render else None)
+        report = comparison["report"]
         report["measures"] = {"old": before.measures, "new": after.measures}
         for feature in report.get("features", []):
             if "changes" in feature:
@@ -377,12 +358,7 @@ def diff_step(session, old: str, new: str, render: bool = False) -> str | dict:
         result.update(face_diff(before.document, after.document, report, before, after))
         text = json.dumps(result, separators=(",", ":"))
         if render:
-            return {
-                "report": text,
-                "png": _render_overlay(
-                    before.step, after.step, max(0.1, deadline - time.monotonic() - 1)
-                ),
-            }
+            return {"report": text, "png": comparison["image"]}
         return text
     except Exception as exc:
         error = json.dumps({"error": str(exc)[:1500]})

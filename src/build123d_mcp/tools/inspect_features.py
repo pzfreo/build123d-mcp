@@ -79,7 +79,8 @@ def inspect_features(
     caller-frame records without face arrays; feature_ids selects analytic face
     descriptors. IDs include a 16-hex STEP digest; stale/unbound ids are refused.
     A registered name wins over an identical path string. Expanded records are
-    bounded to 1..100, with exact counts.
+    bounded to 1..100, with exact counts. Loaded parts retain recognition for
+    later diffs in the eight-entry content cache.
     """
     try:
         if (
