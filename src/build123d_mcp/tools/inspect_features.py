@@ -164,23 +164,25 @@ def inspect_features(
         }
         if feature_ids and returned:
             # Keep the executable example out of the compact inventory's 2 KB budget.
-            name = target if target in session.objects else None
+            example_name: str | None = target if target in session.objects else None
             if not target:
-                name = next(
+                example_name = next(
                     (
-                        name
-                        for name, shape in session.objects.items()
+                        registered
+                        for registered, shape in session.objects.items()
                         if shape is session.current_shape
                     ),
                     None,
                 )
-            expression = session.object_access(name)["execute_example"] if name else "part"
+            expression = (
+                session.object_access(example_name)["execute_example"] if example_name else "part"
+            )
             # Keep feature selections separate: two features may legitimately
             # share a face, while one descriptor list must resolve to distinct faces.
             result["execute_example"] = "; ".join(
                 f"select_faces({expression}, faces={row['faces']!r})" for row in returned
             )
-            if name is None:
+            if example_name is None:
                 result["execute_note"] = "Use your live shape as part; import a STEP path first."
         return json.dumps(result, separators=(",", ":"))
     except Exception as exc:
