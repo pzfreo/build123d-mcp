@@ -184,12 +184,14 @@ def face_diff(
     added = [compact(f) for i, f in enumerate(after) if i not in paired_new]
     # Keep the established removed/added descriptor representation for changed
     # non-planar surfaces, using upstream's feature/context exclusion and pairing.
-    for side, document, rows in (("old", old, removed), ("new", new, added)):
-        faces = {f["id"]: f for f in document["faces"]}
+    for side, rows, unmatched in (("old", removed, unmatched_old), ("new", added, unmatched_new)):
+        faces = {f["id"]: f for f in unmatched}
         rows.extend(
             compact(faces[change[side]])
             for change in report["other_faces"]
-            if side in change and faces[change[side]]["kind"] != "plane"
+            # Native "other" surfaces may be adapted despite identical
+            # analytic descriptors (e.g. an offset sphere versus a fresh one).
+            if change.get(side) in faces and faces[change[side]]["kind"] != "plane"
         )
     return {
         "unchanged_faces": unchanged,

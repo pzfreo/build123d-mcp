@@ -38,7 +38,6 @@ def _step_bytes(shape: Any) -> bytes:
 
 @dataclass
 class Analysis:
-    step: bytes
     loaded: Any
     document: dict
     placement: list
@@ -327,7 +326,7 @@ def analysis_from_bytes(data: bytes, cache: OrderedDict | None = None) -> Analys
         document[key] = _caller_geometry(document[key], placement)
     if document["binding"]["source_sha256"] != digest:
         raise ValueError("STEP analysis binding does not match source_sha256")
-    result = Analysis(data, loaded, document, placement, shape, measures)
+    result = Analysis(loaded, document, placement, shape, measures)
     if cache is not None:
         cache[digest] = result
         while len(cache) > _CACHE_SIZE:
