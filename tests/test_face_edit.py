@@ -215,6 +215,64 @@ reference = Sphere(12)
     compare(proxy, code)
 
 
+@pytest.mark.parametrize("kind", ["chamfer", "draft"])
+def test_planar_offset_with_noninvariant_neighbours(proxy, kind):
+    code = {
+        "chamfer": """
+part = Box(20,20,10)
+edge = [e for e in part.edges().filter_by(Axis.Y) if e.center().X>0 and e.center().Z>0]
+part = chamfer(edge, 3)
+before = signature(part)
+selected = [f for f in part.faces() if f.normal_at().X>0.5 and f.normal_at().Z>0.5]
+assert len(selected) == 1
+edited = offset_faces(part, selected, 1)
+reference = Box(20,20,10)
+reference_edge = [e for e in reference.edges().filter_by(Axis.Y) if e.center().X>0 and e.center().Z>0]
+reference = chamfer(reference_edge, 3-2**0.5)
+assert abs(edited.volume - (4000-(3-2**0.5)**2/2*20)) < 1e-8
+""",
+        "draft": """
+part = extrude(Plane.XZ*Polygon((-10,-5),(10,-5),(8,5),(-10,5),align=None),amount=20).translate((0,10,0))
+before = signature(part)
+selected = [f for f in part.faces() if f.normal_at().X>0.9]
+assert len(selected) == 1
+edited = offset_faces(part, selected, 1)
+# Offset x+0.2*z=9 by 1 along its unit outward normal. Caps stay at z=+/-5.
+shift = (1+0.2**2)**0.5
+reference = extrude(Plane.XZ*Polygon((-10,-5),(10+shift,-5),(8+shift,5),(-10,5),align=None),amount=20).translate((0,10,0))
+""",
+    }[kind]
+    compare(proxy, code)
+
+
+@pytest.mark.parametrize("case", ["merging_holes", "side_breakthrough", "shortcut_collapse"])
+def test_specific_offset_failure_without_internal_prefix(proxy, case):
+    setup, operation, reason = {
+        "merging_holes": (
+            "part = Box(40,30,10)-Pos(-6,0,0)*Cylinder(3,20)-Pos(6,0,0)*Cylinder(3,20)",
+            "offset_faces(part, [f for f in select_faces(part, kind='cylinder') if f.center().X<0], -7)",
+            "offset failed: self-intersection or face collapse",
+        ),
+        "side_breakthrough": (
+            "part = Box(20,20,10)-Pos(5,0,0)*Cylinder(2,20)",
+            "offset_faces(part, select_faces(part, kind='cylinder'), -4)",
+            "offset failed: self-intersection or face collapse",
+        ),
+        "shortcut_collapse": (
+            "part = Box(20,30,10)",
+            "offset_faces(part, select_faces(part, kind='plane', direction=(1,0,0)), -20)",
+            "topology change: move collapses or inverts",
+        ),
+    }[case]
+    ok(proxy, BUILDERS + setup + "\nbefore = signature(part)")
+    output = proxy.execute(operation)
+    assert output.startswith("Error: ValueError: offset_faces: "), output
+    assert reason in output, output
+    assert "translate_faces:" not in output, output
+    assert "Null TopoDS" not in output, output
+    ok(proxy, "assert signature(part) == before")
+
+
 @pytest.mark.parametrize(
     "setup,operation,reason",
     [

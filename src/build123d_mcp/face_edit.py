@@ -100,6 +100,19 @@ def _invariant_support(face, vector, tol):
     return vector.length <= tol
 
 
+def _neighbours_contain_vector(shape, selected, vector):
+    """The rigid-translation shortcut requires invariant neighbour supports."""
+    edges = {edge for face in selected for edge in face.edges()}
+    try:
+        return all(
+            _invariant_support(face, vector, 1e-7)
+            for face in shape.faces()
+            if face not in selected and any(edge in edges for edge in face.edges())
+        )
+    except ValueError:
+        return False
+
+
 def translate_faces(shape, faces, vector):
     """Rigidly translate explicitly selected faces; return a new, gated Solid.
 
@@ -298,8 +311,15 @@ def offset_faces(shape, faces, distance):
         source, selected = _copy_selection(shape, faces)
         if all(f.geom_type == GeomType.PLANE for f in selected):
             vectors = [f.normal_at() * distance for f in selected]
-            if all((v - vectors[0]).length < 1e-9 for v in vectors):
-                return translate_faces(shape, faces, vectors[0])
+            if all((v - vectors[0]).length < 1e-9 for v in vectors) and _neighbours_contain_vector(
+                source, selected, vectors[0]
+            ):
+                try:
+                    return translate_faces(shape, faces, vectors[0])
+                except ValueError as exc:
+                    # Keep the public offset error about the geometry, rather than
+                    # leaking the name of this internal implementation shortcut.
+                    raise ValueError(str(exc).removeprefix("translate_faces: ")) from None
         expected = []
         offset = BRepOffset_MakeOffset()
         offset.Initialize(
@@ -329,8 +349,15 @@ def offset_faces(shape, faces, distance):
             expected.append(GeomAdaptor_Surface(surface))
         offset.MakeOffsetShape()
         if not offset.IsDone():
-            raise ValueError(f"OCCT intersection offset failed: {offset.Error().name}")
-        result = _solid_from_shells(offset.Shape(), len(source.shells()))
+            raise ValueError(
+                f"offset failed: self-intersection or face collapse ({offset.Error().name})"
+            )
+        raw = offset.Shape()
+        if raw.IsNull():
+            raise ValueError(
+                "offset failed: self-intersection or face collapse (OCCT returned a null shape)"
+            )
+        result = _solid_from_shells(raw, len(source.shells()))
         remaining = list(result.faces())
         for support in expected:
             matches = [
