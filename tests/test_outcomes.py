@@ -1148,8 +1148,8 @@ def test_mcp_volume_and_compare_fit():
 
 
 @_skip_mcp_on_win
-def test_mcp_compare_shape():
-    """shape comparison round-trips through the unified MCP compare tool."""
+def test_mcp_diff_step():
+    """Revision evidence round-trips through MCP; the removed route names its replacement."""
 
     async def run(mcp):
         await mcp.call_tool(
@@ -1158,13 +1158,16 @@ def test_mcp_compare_shape():
                 "code": "from build123d import *\nshow(Box(10, 10, 10), 'small')\nshow(Box(20, 20, 20), 'large')"
             },
         )
-        result = await mcp.call_tool("compare", {"a": "small", "b": "large", "kind": "shape"})
+        result = await mcp.call_tool("diff_step", {"old": "small", "new": "large"})
+        removed = await mcp.call_tool("compare", {"a": "small", "b": "large", "kind": "shape"})
+        assert "diff_step" in json.loads(removed.content[0].text)["error"]
         return result.content[0].text
 
     data = json.loads(asyncio.run(_mcp_session(run)))
-    assert abs(data["a"]["volume"] - 1000) < 1
-    assert abs(data["b"]["volume"] - 8000) < 1
-    assert abs(data["delta"]["volume"] - 7000) < 1
+    assert abs(data["measures"]["old"]["volume"] - 1000) < 1
+    assert abs(data["measures"]["new"]["volume"] - 8000) < 1
+    assert abs(data["measures"]["new"]["volume"] - data["measures"]["old"]["volume"] - 7000) < 1
+    assert data["planar_deltas_count"] == 6
 
 
 @_skip_mcp_on_win

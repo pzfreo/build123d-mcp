@@ -30,7 +30,7 @@ def _step_bytes(shape: Any) -> bytes:
     # OCCT writes a clock timestamp even for identical geometry. Canonicalise
     # only this header metadata, also on build123d versions without timestamp=.
     return re.sub(
-        rb"(FILE_NAME\s*\(\s*'[^']*'\s*,\s*)'[^']*'",
+        rb"(FILE_NAME\s*\(\s*'(?:[^']|'')*'\s*,\s*)'(?:[^']|'')*'",
         rb"\1'2000-01-01T00:00:00'",
         data,
         count=1,

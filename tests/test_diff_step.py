@@ -155,3 +155,26 @@ def test_compare_shape_error_names_replacement():
 
     proxy = WorkerSession.__new__(WorkerSession)
     assert "diff_step" in json.loads(proxy.compare("old", "new", kind="shape"))["error"]
+
+
+def test_server_overlay_uses_render_view_image_delivery(monkeypatch):
+    import os
+
+    from build123d_mcp import server
+
+    class Proxy:
+        def diff_step(self, old, new, render=False):
+            assert (old, new, render) == ("old", "new", True)
+            return {"report": '{"features":[]}', "png": b"\x89PNG\r\n\x1a\n"}
+
+    monkeypatch.setattr(server, "_resolve_session", lambda: Proxy())
+    contents = server.diff_step("old", "new", render=True)
+    assert json.loads(contents[0].text) == {"features": []}
+    assert contents[1].type == "image" and contents[1].mime_type == "image/png"
+    marker = contents[2].text
+    assert marker.startswith("[SEND: ")
+    path = marker[len("[SEND: ") : -1]
+    try:
+        assert os.path.isfile(path)
+    finally:
+        os.unlink(path)
