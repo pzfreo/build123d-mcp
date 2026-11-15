@@ -6,6 +6,7 @@ import pytest
 from build123d import (
     Box,
     Compound,
+    Cone,
     Cylinder,
     GeomType,
     Pos,
@@ -61,11 +62,15 @@ def test_mcp_import_inspect_select_edit_and_stale_id(proxy, tmp_path, monkeypatc
         "before = part\n"
         "part = fillet(selected[0].edges(), radius=0.5)\n"
         "assert part is not before\n"
-        "show(part, 'part')\n"
-        "assert part is get_object('part')\n"
     )
     output = server.execute(code)
     assert not output.startswith("Error:"), output
+    assert "`part` was reassigned but the registered object 'part' is unchanged" in output
+    assert "call show(part, 'part')" in output
+    still_registered = json.loads(server.inspect_features("part", feature_ids=hole["id"]))
+    assert "error" not in still_registered
+    output = ok(proxy, "show(part, 'part')\nassert part is get_object('part')")
+    assert "was reassigned" not in output
     stale = json.loads(server.inspect_features("part", feature_ids=hole["id"]))
     assert "stale" in stale["error"]
 
@@ -127,7 +132,7 @@ def test_show_binding_and_collision_in_same_call(proxy):
         proxy,
         "from build123d import *\nshow(Box(1,2,3), 'part')\nassert part is get_object('part')",
     )
-    assert "execute_name" in out and "part" in out
+    assert "available in execute() as `part`" in out
     out = ok(
         proxy,
         "show(Box(1,1,1), 'Box')\nassert callable(Box)\nassert abs(get_object('Box').volume - 1) < 1e-9",
@@ -213,3 +218,116 @@ def test_drawing_helpers_bind_and_rollback_keeps_registry_consistent():
     assert output.startswith("Constraint failed")
     assert session.namespace["note"] is session.objects["note"]
     assert "new" not in session.namespace and "new" not in session.objects
+
+
+@pytest.mark.parametrize("value", ["5", "None", "'notes'"])
+def test_non_shape_reassignment_warns_without_registering(proxy, value):
+    ok(proxy, "from build123d import *\nshow(Box(10,10,10), 'part')")
+    output = ok(proxy, f"part = {value}")
+    assert "`part` was reassigned to a non-Shape value" in output
+    assert "registered object 'part' is unchanged" in output
+    assert json.loads(proxy.measure("part"))["volume"] == pytest.approx(1000)
+
+
+def test_user_variable_collision_on_import(proxy, tmp_path):
+    path = tmp_path / "box.step"
+    export_step(Box(10, 10, 10), path)
+    ok(proxy, "my_notes = 'keep'")
+    response = json.loads(proxy.import_cad_file(str(path), "my_notes"))
+    assert response["execute_name"] is None
+    assert "user variable" in response["binding_warning"]
+    assert response["execute_example"] == "get_object('my_notes')"
+    ok(proxy, "assert my_notes == 'keep'\nassert abs(get_object('my_notes').volume-1000) < 1e-9")
+
+
+def test_default_show_preserves_user_variable_and_reshow_rebinds(proxy):
+    output = ok(proxy, "from build123d import *\nshape = 'keep'\nshow(Box(1,2,3))")
+    assert "user variable" in output and "get_object('shape')" in output
+    assert "{'execute_name'" not in output
+    ok(proxy, "assert shape == 'keep'\nassert abs(get_object('shape').volume-6) < 1e-9")
+    ok(proxy, "show(Box(1,2,3), 'part')\noriginal = part")
+    output = ok(
+        proxy,
+        "show(Box(3,4,5), 'part')\nassert part is get_object('part')\nassert part is not original",
+    )
+    assert "available in execute() as `part`" in output
+    assert "was reassigned" not in output
+
+
+def test_partial_failure_still_warns_about_reassignment(proxy):
+    ok(proxy, "from build123d import *\nshow(Box(2,2,2), 'part')")
+    output = proxy.execute("part = Box(1,1,1)\nraise ValueError('partial')")
+    assert output.startswith("Error: ValueError: partial")
+    assert "`part` was reassigned" in output
+
+
+@pytest.mark.parametrize("case", ["mixed", "empty", "duplicate"])
+def test_descriptor_mode_rejects_silent_selection_loss(case):
+    shape = Box(40, 30, 10) - Cylinder(4, 12)
+    session = Session()
+    session.register_object("part", shape)
+    rows = resolve_analysis(session, "part").document["faces"]
+    cylinder = next(row for row in rows if row["kind"] == "cylinder")
+    plane = next(row for row in rows if row["kind"] == "plane")
+    if case == "mixed":
+        with pytest.raises(ValueError, match="keyword filters cannot be combined with faces="):
+            select_faces(shape, faces=[cylinder, plane], kind="plane")
+    elif case == "empty":
+        with pytest.raises(ValueError, match="at least one descriptor"):
+            select_faces(shape, faces=[])
+    else:
+        with pytest.raises(ValueError, match="descriptor 1 .*same face as descriptor 0"):
+            select_faces(shape, faces=[cylinder, {**cylinder, "id": 10000}])
+
+
+def test_length_tolerance_never_relaxes_direction():
+    shape = Box(10, 10, 10)
+    selected = select_faces(shape, kind="plane", direction=[0, 0, 1], tol=1.5)
+    assert len(selected) == 1
+    assert selected[0].normal_at().Z == pytest.approx(1)
+    # A direction rounded to six decimals remains safely inside the fixed 1e-5 tolerance.
+    direction = [0.577350, 0.577350, 0.577350]
+    transformed = Rot(0, 0, 45) * shape
+    assert len(select_faces(transformed, kind="plane", direction=[0.707107, 0.707107, 0])) == 1
+    assert len(select_faces(shape, kind="plane", direction=direction, tol=1.5)) == 0
+    # Area tolerance has mm² dimensions and is derived from the length tolerance.
+    assert len(select_faces(shape, kind="plane", area=102, tol=0.1)) == 6
+    assert len(select_faces(shape, kind="plane", area=102, tol=0.01)) == 0
+
+
+def test_radius_means_cone_reference_radius_and_torus_minor_radius():
+    cone = Cone(7, 3, 10)
+    assert len(select_faces(cone, kind="cone", radius=7)) == 1
+    assert len(select_faces(cone, kind="cone", radius=3)) == 0
+    torus = Torus(10, 2)
+    assert len(select_faces(torus, kind="torus", radius=2)) == 1
+    assert len(select_faces(torus, kind="torus", radius=10)) == 0
+
+
+def test_rotated_translated_selection_in_worker(proxy):
+    ok(
+        proxy,
+        "from build123d import *\nshow(Pos(17,-9,31)*Rot(17,32,51)*(Box(40,30,10)-Cylinder(4,12)), 'part')",
+    )
+    hole = json.loads(proxy.inspect_features("part", families="holes"))["features"][0]
+    report = json.loads(proxy.inspect_features("part", feature_ids=hole["id"]))
+    ok(
+        proxy,
+        f"chosen = {report['execute_example']}\nassert len(chosen) == 1\nassert any(chosen[0].is_same(face) for face in part.faces())",
+    )
+
+
+def test_multiple_features_example_selects_every_returned_feature(proxy):
+    ok(
+        proxy,
+        "from build123d import *\nshow(Box(60,40,10)-Pos(-15,0,0)*Cylinder(3,12)-Pos(15,0,0)*Cylinder(4,12), 'part')",
+    )
+    holes = json.loads(proxy.inspect_features("part", families="holes"))["features"]
+    report = json.loads(
+        proxy.inspect_features("part", feature_ids=",".join(h["id"] for h in holes))
+    )
+    assert len(report["features"]) == 2
+    assert report["execute_example"].count("select_faces(") == 2
+    for expression in report["execute_example"].split("; "):
+        ok(proxy, f"chosen = {expression}\nassert len(chosen) == 1")
+    ok(proxy, report["execute_example"])

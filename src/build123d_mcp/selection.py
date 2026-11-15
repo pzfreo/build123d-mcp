@@ -38,19 +38,22 @@ def select_faces(
     All supplied geometric fields are checked; descriptor id is metadata only.
     Plane directions are outward normals; curved-surface axes are sign independent.
     Origins on cylinder/cone axes match by distance to the axis (STEP may move
-    the axis origin along itself).
+    the axis origin along itself). Radius is the reference radius on cones
+    (dependent on the surface parameter frame), and the minor radius on tori.
 
     Defaults: length max(1e-5 mm, bbox diagonal * 1e-7), area
-    max(1e-5 mm², face area * 1e-7), unit direction/angle 1e-6.
-    A finite nonnegative tol overrides all three absolute tolerances (mm,
-    mm², and unit-vector distance/radians respectively).
+    max(1e-5 mm², face area * 1e-7), unit direction/angle 1e-5.
+    A finite nonnegative tol overrides length tolerance in mm only; the area
+    tolerance becomes 2*sqrt(face area)*tol + tol² (mm²). Direction/angle
+    tolerance stays fixed. Descriptor mode rejects keyword filters, empty
+    lists and repeated resolutions to the same face.
     """
     from build123d import ShapeList
 
     if tol is not None and (not math.isfinite(tol) or tol < 0):
         raise ValueError("select_faces: tol must be finite and nonnegative")
     length_tol = tol if tol is not None else max(1e-5, shape.bounding_box().diagonal * 1e-7)
-    direction_tol = tol if tol is not None else 1e-6
+    direction_tol = 1e-5
     filters = {
         "kind": kind,
         "centroid": centroid,
@@ -60,8 +63,13 @@ def select_faces(
     }
     filters = {k: v for k, v in filters.items() if v is not None}
     descriptors = [faces] if isinstance(faces, dict) else faces
-    if descriptors is not None and not isinstance(descriptors, (list, tuple)):
-        raise ValueError("select_faces: faces must be a descriptor dict or a list of dicts")
+    if descriptors is not None:
+        if filters:
+            raise ValueError("select_faces: keyword filters cannot be combined with faces=")
+        if not isinstance(descriptors, (list, tuple)):
+            raise ValueError("select_faces: faces must be a descriptor dict or a list of dicts")
+        if not descriptors:
+            raise ValueError("select_faces: faces= must contain at least one descriptor")
 
     def vector(value):
         if len(value) != 3 or not all(math.isfinite(v) for v in value):
@@ -125,7 +133,11 @@ def select_faces(
             else:
                 tolerance = length_tol
                 if key == "area":
-                    tolerance = tol if tol is not None else max(1e-5, abs(found) * 1e-7)
+                    tolerance = (
+                        2 * math.sqrt(abs(found)) * tol + tol * tol
+                        if tol is not None
+                        else max(1e-5, abs(found) * 1e-7)
+                    )
                 elif key == "semi_angle":
                     tolerance = direction_tol
                 if not math.isfinite(value) or abs(found - value) > tolerance:
@@ -145,6 +157,11 @@ def select_faces(
                 f"select_faces: descriptor {index} {descriptor!r} matched {len(found)} faces; "
                 "expected exactly 1 (refine the descriptor or tolerance)"
             )
-        if matches(_descriptor(found[0]), filters) and found[0] not in selected:
-            selected.append(found[0])
+        if found[0] in selected:
+            previous = selected.index(found[0])
+            raise ValueError(
+                f"select_faces: descriptor {index} {descriptor!r} resolves to the same face "
+                f"as descriptor {previous}; each descriptor must resolve to a distinct face"
+            )
+        selected.append(found[0])
     return ShapeList(selected)

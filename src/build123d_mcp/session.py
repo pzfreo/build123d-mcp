@@ -114,6 +114,13 @@ class Session:
             for module in self._star_imports
         ):
             return "name is reserved by a user import"
+        if name in self.namespace:
+            value = self.namespace[name]
+            if not (
+                (name in self._bound_objects and value is self._bound_objects[name])
+                or (name in self.objects and value is self.objects[name])
+            ):
+                return "name already holds a user variable"
         return None
 
     def object_access(self, name: str) -> dict:
@@ -128,6 +135,41 @@ class Session:
                 f"{name!r} was not bound: {reason}; use get_object({name!r})"
             )
         return result
+
+    def object_access_text(self, name: str) -> str:
+        access = self.object_access(name)
+        if access["execute_name"] is not None:
+            return f"available in execute() as `{name}`"
+        return access["binding_warning"]
+
+    def _with_binding_warnings(self, output: str) -> str:
+        if not self._bound_objects:
+            return output
+        from build123d import Shape
+
+        for name in self._bound_objects:
+            registered = self.objects.get(name)
+            if name in self.namespace and self.namespace[name] is registered:
+                continue
+            value = self.namespace.get(name)
+            if isinstance(value, Shape):
+                detail = (
+                    f"`{name}` was reassigned but the registered object {name!r} is unchanged; "
+                    f"call show({name}, {name!r}) to register the edit"
+                )
+            else:
+                state = (
+                    f"was reassigned to a non-Shape value ({type(value).__name__})"
+                    if name in self.namespace
+                    else "is no longer defined"
+                )
+                detail = (
+                    f"`{name}` {state} but the registered object {name!r} is unchanged; "
+                    f"use get_object({name!r}) to fetch it, or call show(edited_shape, {name!r}) "
+                    "to register an edit"
+                )
+            output = output.rstrip("\n") + "\nWarning: " + detail
+        return output
 
     def _bind_object(self, name: str) -> None:
         if self._binding_reason(name) is None:
@@ -272,7 +314,8 @@ class Session:
                 except Exception:
                     pass
             drawing_annotations[name] = meta
-            access = session_ref.register_object(name, shape)
+            session_ref.register_object(name, shape)
+            access = session_ref.object_access_text(name)
             session_ref.current_shape = shape
             session_ref._shape_explicitly_set = True
             print(f"Annotated '{name}': {meta.get('label_str', '')}; {access}")
@@ -282,7 +325,8 @@ class Session:
         def show(shape: Any, name: str | None = None) -> None:
             if name is None:
                 name = "shape"
-            access = session_ref.register_object(name, shape)
+            session_ref.register_object(name, shape)
+            access = session_ref.object_access_text(name)
             session_ref.current_shape = shape
             session_ref._shape_explicitly_set = True
             try:
@@ -350,7 +394,8 @@ class Session:
             if name is None:
                 name = "centerline"
             drawing_annotations[name] = {"type": "centerline"}
-            access = session_ref.register_object(name, shape)
+            session_ref.register_object(name, shape)
+            access = session_ref.object_access_text(name)
             session_ref.current_shape = shape
             session_ref._shape_explicitly_set = True
             print(f"Registered centerline '{name}'; {access}")
@@ -870,7 +915,7 @@ class Session:
                 "line": None,
                 "excerpt": None,
             }
-            return f"Error: ExecutionTimeout: {e}"
+            return self._with_binding_warnings(f"Error: ExecutionTimeout: {e}")
         except AssertionError as e:
             self._rollback_namespace(values_before)
             self._imported_names, self._star_imports = imports_before
@@ -889,7 +934,9 @@ class Session:
                 "line": None,
                 "excerpt": None,
             }
-            return f"Constraint failed: {e}" if str(e) else "Constraint failed"
+            return self._with_binding_warnings(
+                f"Constraint failed: {e}" if str(e) else "Constraint failed"
+            )
         except Exception as e:
             exc = e
         finally:
@@ -905,7 +952,7 @@ class Session:
             # exactly to the prior source-backed hash.
             self.source_provenance = None
             self.last_error_detail = self._make_error_detail(exc, code)
-            return f"Error: {type(exc).__name__}: {exc}"
+            return self._with_binding_warnings(f"Error: {type(exc).__name__}: {exc}")
 
         self.last_error_detail = None
         self.execute_history.append(code)
@@ -940,7 +987,7 @@ class Session:
         if var_summary:
             output = output.rstrip("\n") + "\n# vars: " + var_summary
 
-        return output
+        return self._with_binding_warnings(output)
 
     def objects_types(self) -> dict:
         """Return {name: description} for each named object in the session."""

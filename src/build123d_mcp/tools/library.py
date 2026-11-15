@@ -164,7 +164,8 @@ def load_part(session, index: _LibraryIndex, name: str, params: str = "") -> str
 
     shape = namespace["make"](**final_params)
 
-    access = session.register_object(name, shape)
+    session.register_object(name, shape)
+    access = session.object_access_text(name)
     session.current_shape = shape
 
     try:

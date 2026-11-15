@@ -175,8 +175,10 @@ def inspect_features(
                     None,
                 )
             expression = session.object_access(name)["execute_example"] if name else "part"
-            result["execute_example"] = (
-                f"select_faces({expression}, faces={returned[0]['faces']!r})"
+            # Keep feature selections separate: two features may legitimately
+            # share a face, while one descriptor list must resolve to distinct faces.
+            result["execute_example"] = "; ".join(
+                f"select_faces({expression}, faces={row['faces']!r})" for row in returned
             )
             if name is None:
                 result["execute_note"] = "Use your live shape as part; import a STEP path first."
