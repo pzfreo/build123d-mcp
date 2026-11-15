@@ -24,6 +24,9 @@ _INJECTED = frozenset(
         "show",
         "get_object",
         "select_faces",
+        "translate_faces",
+        "offset_faces",
+        "split_face_chord",
         "named_face",
         "find_edges",
         "annotate",
@@ -346,10 +349,14 @@ class Session:
                     f"get_object: unknown object {name!r}; available names: {sorted(self.objects)}"
                 ) from None
 
+        from build123d_mcp.face_edit import offset_faces, split_face_chord, translate_faces
         from build123d_mcp.selection import select_faces
 
         self.namespace["get_object"] = get_object
         self.namespace["select_faces"] = select_faces
+        self.namespace["translate_faces"] = translate_faces
+        self.namespace["offset_faces"] = offset_faces
+        self.namespace["split_face_chord"] = split_face_chord
 
         def set_page(width: float, height: float, margin: float = 5.0) -> None:
             """Register the drawing page extent for lint_drawing bounds checking.
