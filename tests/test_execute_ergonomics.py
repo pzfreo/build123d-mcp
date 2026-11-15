@@ -331,3 +331,13 @@ def test_multiple_features_example_selects_every_returned_feature(proxy):
     for expression in report["execute_example"].split("; "):
         ok(proxy, f"chosen = {expression}\nassert len(chosen) == 1")
     ok(proxy, report["execute_example"])
+
+
+def test_snapshot_restore_preserves_and_reports_a_user_variable_collision(proxy):
+    ok(proxy, "from build123d import *\nshow(Box(2,3,4), 'part')")
+    proxy.save_snapshot("saved")
+    ok(proxy, "part = 'keep'")
+    response = proxy.restore_snapshot("saved")
+    assert "user variable" in response
+    assert "get_object('part')" in response
+    ok(proxy, "assert part == 'keep'\nassert abs(get_object('part').volume-24) < 1e-9")

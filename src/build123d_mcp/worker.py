@@ -317,7 +317,13 @@ def _op_restore_snapshot(session: Any, args: dict, library_index: Any) -> Any:
     restored = (["current_shape"] if session.current_shape is not None else []) + list(
         session.objects.keys()
     )
-    return f"Snapshot '{name}' restored. Active geometry: {', '.join(restored) if restored else 'none'}."
+    message = f"Snapshot '{name}' restored. Active geometry: {', '.join(restored) if restored else 'none'}."
+    warnings = [
+        access["binding_warning"]
+        for object_name in session.objects
+        if "binding_warning" in (access := session.object_access(object_name))
+    ]
+    return "\n".join([message, *warnings])
 
 
 def _op_reset(session: Any, args: dict, library_index: Any) -> Any:

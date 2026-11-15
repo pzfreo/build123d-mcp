@@ -452,7 +452,9 @@ Save a named checkpoint of the current geometric state.
 
 **What is saved:** `current_shape` and the `show()` object registry.
 **Namespace behavior:** restored registered names are rebound to the restored
-objects; object bindings absent from the snapshot are removed. Other Python
+objects; object bindings absent from the snapshot are removed. User values that
+replaced object variables are preserved, and restore reports `get_object(name)`
+when it cannot bind a restored object. Other Python
 variables and imports remain in scope. Aliases to previous geometry are not
 rewritten; use the registered name or `get_object(name)` after restoring.
 
