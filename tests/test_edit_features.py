@@ -171,3 +171,43 @@ def test_face_mapping_mismatch_is_refused_even_for_enlargement(drilled_plate, mo
     report = json.loads(edit_feature(drilled_plate, target, 8, object_name="plate"))
     assert not report["committed"] and "mapping mismatch" in report["error"]
     assert drilled_plate.objects["plate"] is source
+
+
+def test_reused_face_id_after_middle_hole_removal_is_refused():
+    session = Session()
+    session.execute(
+        "from build123d import *\nplate=Box(80,30,10)\nfor x in (-25,0,25):\n    plate-=Pos(x,0,0)*Cylinder(3,12)\nshow(plate,'plate')"
+    )
+    old = _holes(session)
+    middle = next(h["id"] for h in old if h["location"][0] == 0)
+    assert middle.split("@")[0] == "holes:7"
+    session.execute(
+        "plate=Box(80,30,10)\nfor x in (-25,25):\n    plate-=Pos(x,0,0)*Cylinder(3,12)\nshow(plate,'plate')"
+    )
+    new = _holes(session)
+    right = next(h["id"] for h in new if h["location"][0] == 25)
+    assert right.split("@")[0] == "holes:7" and right != middle
+    objects = session.objects.copy()
+    current = session.current_shape
+    report = json.loads(edit_feature(session, middle, 4, object_name="plate", result_name="wrong"))
+    assert report["committed"] is False and "re-run inspect_features" in report["error"]
+    assert session.objects == objects and session.current_shape is current
+    stale_selection = json.loads(inspect_features(session, "plate", feature_ids=middle))
+    assert "re-run inspect_features" in stale_selection["error"]
+    # A fresh target cannot legitimise an old protection reference either.
+    report = json.loads(
+        edit_feature(
+            session, right, 4, object_name="plate", protected_refs=json.dumps([old[0]["id"]])
+        )
+    )
+    assert not report["committed"] and "re-run inspect_features" in report["error"]
+    assert session.objects == objects
+
+
+def test_unbound_id_cannot_edit_current_geometry(drilled_plate):
+    feature = _holes(drilled_plate)[0]["id"]
+    bare = feature.split("@")[0]
+    before = drilled_plate.objects.copy()
+    report = json.loads(edit_feature(drilled_plate, bare, 8, object_name="plate"))
+    assert not report["committed"] and "re-run inspect_features" in report["error"]
+    assert drilled_plate.objects == before

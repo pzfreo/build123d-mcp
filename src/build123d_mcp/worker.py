@@ -939,7 +939,7 @@ class WorkerSession:
     # analysis in a bounded subprocess (tools/_bounded.py, #360). That subprocess is
     # bounded by op_budget() == _export_budget, so the parent watchdog must be the
     # same (not a smaller fixed _GEOMETRY_TIMEOUT) or it could SIGKILL the worker
-    # while the child is still legitimately running — matching locate/shape_compare.
+    # while the child is still legitimately running — matching locate/export.
     @_op(_tool(f"{_T}.measure:measure"), _export_budget)
     def measure(self, object_name: str = "", density: float = 0.0, material: str = "") -> str:
         raise NotImplementedError
@@ -1054,15 +1054,11 @@ class WorkerSession:
     def last_error(self) -> str:
         raise NotImplementedError
 
-    @_op(_tool(f"{_T}.shape_compare:shape_compare"), _export_budget)
-    def shape_compare(self, object_a: str, object_b: str) -> str:
-        raise NotImplementedError
-
     def compare(
         self,
         a: str,
         b: str = "",
-        kind: str = "fit",
+        kind: str = "shape",
         axis: str = "Z",
         mode: str = "flush",
         format: str = "text",

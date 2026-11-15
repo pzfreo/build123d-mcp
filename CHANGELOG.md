@@ -1,19 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- Replace direct quiddity recognition with specify-core 0.1.15 (Python 3.12+).
-  `inspect_features` provides compact inventories, bounded caller-frame family
-  records and selected analytic face descriptors from STEP paths or session
-  objects. Loaded parts and analysis use an eight-entry content-addressed LRU.
-- Add `diff_step` for feature revision changes and index-independent analytic
-  face changes, including bare planar offsets and tangential moves. Strip PMI
-  verdicts; optional overlays use specify-core’s shipped CLI.
-- Remove the previous recognition/candidate/interface tools and stateful feature
-  handles. `edit_feature` accepts current feature ids and verifies live face
-  mapping before mutation. `compare(kind="shape")` now directs callers to
-  `diff_step`; fit, align and snapshot comparisons remain.
-
 ## v0.3.92
 
 ### Added
@@ -44,22 +30,25 @@
 
 ### Changed
 
-- **Feature recognition runs on quiddity 0.4.** quiddity 0.4 is a Rust rewrite
-  that recognises STEP rather than live build123d objects. `recognise_features`,
-  `find_candidates`, `interface_features` and `edit_feature` now export the
-  shape once per run and read quiddity's JSON through a small adapter
-  (`tools/_recognition.py`). A face index resolves to the live face at that
-  index only after it matches quiddity's proved point on the face, so a
-  renumbered export is refused rather than misattributed. Visible differences:
-  the `cylinders` aggregate no longer exists (use `holes` / `hole_patterns`),
-  hole axes are vectors, `association` is computed from the accepted features'
-  faces and areas, and a family that fails inside quiddity is reported in a new
-  `incomplete` field instead of looking empty.
+- Replace direct quiddity recognition with specify-core 0.1.15. Python 3.11 support
+  is dropped because specify-core requires Python 3.12+.
+  `inspect_features` provides compact inventories, bounded caller-frame family
+  records and selected analytic face descriptors from STEP paths or session
+  objects. Loaded parts and analysis use an eight-entry content-addressed LRU.
+- Add `diff_step` for feature revision changes and index-independent analytic
+  face changes, including bare planar offsets and tangential moves. Strip PMI
+  verdicts; optional overlays use specify-core’s shipped CLI. Host-face boundary
+  changes are separated from plane motion. The remaining native re-analysis
+  cost is upstream (specify-core#180 item 1).
+- Remove the previous recognition/candidate/interface tools and stateful feature
+  handles. `edit_feature` accepts content-bound feature ids and verifies live face
+  mapping before mutation. `compare(kind="shape")` now directs callers to
+  `diff_step`; fit, align and snapshot comparisons remain.
+
 - **Dependency refresh.** The lockfile moves to current releases (mcp 2.3.0,
   numpy 2.5, scipy 1.18, vtk 9.7, pillow 13, resvg-py 0.5,
   build123d-drafting-helpers 0.15.5, trimesh 5). The lock keeps build123d on
-  0.11 (CI covers 0.10, 0.11 and 0.13). quiddity stays on 0.3.x
-  (0.3.12) until feature recognition moves to quiddity 0.4's file-based API.
+  0.11 (CI covers 0.10, 0.11 and 0.13). Recognition now uses specify-core and its bundled recogniser.
   Markdown is excluded from `ruff format`, which reflows code blocks in docs
   from ruff 0.17.
 
@@ -79,7 +68,7 @@
   `build123d_mcp._ocp_compat`, which prefers the OCP 7 names. The packaged
   repair and modeling skill recipes use build123d-level casts instead, and a
   guard test keeps the removed names out of `src` (code and skill files).
-- **`recognise_features()` copes with newer quiddity (#488).** quiddity 0.3.6+
+- **`legacy recognition` copes with newer quiddity (#488).** quiddity 0.3.6+
   degrades locally on an invalid solid instead of raising, so an invalid shape
   now still gets the repair guidance: an error when nothing was proven, a
   `warning` alongside features proven on its sound regions. Any `*_patterns` /
@@ -99,7 +88,7 @@
 
 ### Changed
 
-- **`find_candidates()` evaluates every proper axis orientation, not a Y/Z swap.**
+- **`legacy candidate selection` evaluates every proper axis orientation, not a Y/Z swap.**
   The single "Y/Z-swapped" reading singled out one axis convention and mapped it
   as a mirror (a request's +Z to the part's +Y), which is not a rotation and is
   wrong for genuinely Y-up sources. Candidates are now checked under all 24
@@ -116,9 +105,9 @@
 
 ### Added
 
-- **Generic edit targeting and a checked through-hole resize.** `find_candidates()`
+- **Generic edit targeting and a checked through-hole resize.** `legacy candidate selection`
   lists recognised instances with measured values under literal and Y/Z-swapped
-  axis and side readings. `interface_features()` suggests planar hole-bearing
+  axis and side readings. `legacy interface inspection` suggests planar hole-bearing
   faces. `edit_feature()` resizes one plain through hole transactionally and
   checks an analytic volume prediction, exact material added/removed, the
   other recognised holes, and the outer envelope before committing. Complex
@@ -128,11 +117,11 @@
 
 ### Changed
 
-- **`recognise_features()` returns aggregate families read-only.** Agents often
+- **`legacy recognition` returns aggregate families read-only.** Agents often
   ask for `cylinders` or `hole_patterns` (also `slot_patterns`,
   `oriented_slot_patterns`, `section_recess_patterns`, `gusset_rib_patterns`);
   these used to fail as "unknown targetable families". They now come back under
-  `read_only` with their records and counts but no `@feature` handles, since
+  `read_only` with their records and counts but no `legacy feature references` handles, since
   they are aggregates rather than editable features. Targetable families work
   as before, and genuinely unknown names still error (now also listing
   `read_only_families`).
@@ -163,7 +152,7 @@
   "scorers" and "score zero"; they describe what strict CAD and mesh consumers
   accept. Wording only — no behaviour or threshold changes. Benchmark-specific
   guidance belongs in the harness that drives the MCP.
-- **`recognise_features()` explains invalid-solid failures.** When recognition
+- **`legacy recognition` explains invalid-solid failures.** When recognition
   fails because the shape is not a valid solid, the error now says so and points
   to `build123d://skill/repair` (repair, validate, then recognise again), keeping
   the recogniser's own message as `recogniser_detail`.
@@ -174,7 +163,7 @@
 
 - **Feature recognition now uses [quiddity](https://github.com/pzfreo/quiddity)
   0.3.4**, the renamed successor of the deprecated `b123d-recognisers` (0.4.14
-  was locked before). `recognise_features()` family names change with it:
+  was locked before). `legacy recognition` family names change with it:
   - `pockets`, `channels`, `prismatic_pockets`, `rectangular_blind_slots`,
     `round_bottom_blind_slots` and `section_passages` are gone — all are now
     reported as **`section_recesses`**. A `SectionRecessRefusal` record in that
@@ -518,7 +507,7 @@
 
 ### Changed
 
-- **MCP comparison calls are now one `compare()` tool.** External prompt authors should replace standalone MCP tool calls to `clearance`, `align_check`, `shape_compare`, and `diff_snapshot` with `compare(kind="fit")`, `compare(kind="align")`, `compare(kind="shape")`, and `compare(kind="snapshot")` respectively. The same computations remain available as composable Python helpers inside `execute()` code, so `clearance(a, b)` and `align_check(a, b)` still work there; the consolidation only changes the advertised standalone MCP surface.
+- **MCP comparison calls are now one `compare()` tool.** External prompt authors should replace standalone MCP tool calls to `clearance`, `align_check`, `legacy shape comparison`, and `diff_snapshot` with `compare(kind="fit")`, `compare(kind="align")`, `diff_step(old, new)`, and `compare(kind="snapshot")` respectively. The same computations remain available as composable Python helpers inside `execute()` code, so `clearance(a, b)` and `align_check(a, b)` still work there; the consolidation only changes the advertised standalone MCP surface.
 - **`b123d-modeling` skill: add a dominant-form correction loop for generation fidelity.** The modeling workflow now tells agents to treat the first valid render as a diagnostic checkpoint: classify the dominant body family, name the largest semantic mismatch, and rebuild from the named dimension table when the model is a valid-but-wrong body class rather than patching it with cosmetic cuts. The guidance stays generic CAD workflow advice, with decision rules for axisymmetric shells, repeated radial features, blind pockets versus through voids, sheet-metal bodies, and preserving scored interfaces after fillets/chamfers.
 
 ### Fixed
@@ -535,7 +524,7 @@
 
 ### Changed
 
-- **`b123d-modeling` skill: prefer defeaturing over a broad boolean cut when removing a small feature.** Comparing per-fixture CADGenBench scores (not just validity) across several close-together mcp versions surfaced a fixture where every run agreed on the target fillet but split into two different construction techniques with very different outcomes: some runs cut it with a broad annular boolean and then had to fight `shape_compare`-flagged "non-local surface changes" from unrelated topology merges; others used `BRepAlgoAPI_Defeaturing` directly on the fillet's own face and had no such fighting. Verified head-to-head on a synthetic boss with a root fillet: the boolean cut removed 13× the fillet's own volume (its cutter profile doesn't match the fillet's exact geometry, so it also shaves the adjacent straight wall) and grew the face count from 9 to 13; defeaturing the exact torus face removed only the fillet's volume (matching the real fixture's observed delta to the mm³) and *reduced* the face count to 8, since neighbouring faces extend and merge instead of new ones being added. Added as the subtractive mirror of the existing "extending a boss" guidance, with the same tell: if a cut's volume delta is much larger than the feature you meant to remove, that mismatch is the signal to switch technique, not to trim the cutter's dimensions.
+- **`b123d-modeling` skill: prefer defeaturing over a broad boolean cut when removing a small feature.** Comparing per-fixture CADGenBench scores (not just validity) across several close-together mcp versions surfaced a fixture where every run agreed on the target fillet but split into two different construction techniques with very different outcomes: some runs cut it with a broad annular boolean and then had to fight `legacy shape comparison`-flagged "non-local surface changes" from unrelated topology merges; others used `BRepAlgoAPI_Defeaturing` directly on the fillet's own face and had no such fighting. Verified head-to-head on a synthetic boss with a root fillet: the boolean cut removed 13× the fillet's own volume (its cutter profile doesn't match the fillet's exact geometry, so it also shaves the adjacent straight wall) and grew the face count from 9 to 13; defeaturing the exact torus face removed only the fillet's volume (matching the real fixture's observed delta to the mm³) and *reduced* the face count to 8, since neighbouring faces extend and merge instead of new ones being added. Added as the subtractive mirror of the existing "extending a boss" guidance, with the same tell: if a cut's volume delta is much larger than the feature you meant to remove, that mismatch is the signal to switch technique, not to trim the cutter's dimensions.
 
 ### Fixed
 
@@ -595,7 +584,7 @@
 
 ### Fixed
 
-- **`measure`/`validate`/`cross_sections`/`clearance` no longer kill the session on a large solid (#360).** These read-only geometry tools shared the same session-destroying timeout as pre-#358 `render_view`: a native OCC analysis (`BRepCheck` validity, `BRepMesh`, booleans) on a big B-rep is un-interruptible and can outrun the op budget, and the parent then SIGKILLs the whole worker — field runs saw `validate()` on a 1234-face imported solid do this three times in one fixture. Following the `render`/`locate`/`shape_compare` template, a large shape's native work now runs in a **hard-bounded `subprocess.run`**: on overrun the child is killed and a clean, actionable error returned, and the worker (and, post-#359, the session) survives. It's **size-gated** — small shapes keep the fast in-worker path, since a STEP round-trip would dominate and only complex shapes actually risk the timeout — and the six copy-pasted bounded-subprocess call sites now have a shared helper (`tools/_bounded.py`) to build on. The four ops' budgets now scale with `--exec-timeout` (like `import_cad_file`/`shape_compare`), so a genuinely heavy analysis can be given more time instead of only failing — as do `verify_spec`/`suggest_spec`, which compose `measure()` and so route large shapes through the same subprocess. On a host that blocks child processes (`--in-process`/#143) they fall back to in-process, unchanged. The isolation is result-identical: `clearance()` now measures wall thickness wrapper-independently (a STEP round-trip flips a shape's Solid/Compound wrapper, which `distance_to()` is sensitive to), so it matches the in-worker path — and, as a side effect, reports the true wall thickness for an imported/extracted bare-Solid container instead of a spurious `0`.
+- **`measure`/`validate`/`cross_sections`/`clearance` no longer kill the session on a large solid (#360).** These read-only geometry tools shared the same session-destroying timeout as pre-#358 `render_view`: a native OCC analysis (`BRepCheck` validity, `BRepMesh`, booleans) on a big B-rep is un-interruptible and can outrun the op budget, and the parent then SIGKILLs the whole worker — field runs saw `validate()` on a 1234-face imported solid do this three times in one fixture. Following the `render`/`locate`/`legacy shape comparison` template, a large shape's native work now runs in a **hard-bounded `subprocess.run`**: on overrun the child is killed and a clean, actionable error returned, and the worker (and, post-#359, the session) survives. It's **size-gated** — small shapes keep the fast in-worker path, since a STEP round-trip would dominate and only complex shapes actually risk the timeout — and the six copy-pasted bounded-subprocess call sites now have a shared helper (`tools/_bounded.py`) to build on. The four ops' budgets now scale with `--exec-timeout` (like `import_cad_file`/`legacy shape comparison`), so a genuinely heavy analysis can be given more time instead of only failing — as do `verify_spec`/`suggest_spec`, which compose `measure()` and so route large shapes through the same subprocess. On a host that blocks child processes (`--in-process`/#143) they fall back to in-process, unchanged. The isolation is result-identical: `clearance()` now measures wall thickness wrapper-independently (a STEP round-trip flips a shape's Solid/Compound wrapper, which `distance_to()` is sensitive to), so it matches the in-worker path — and, as a side effect, reports the true wall thickness for an imported/extracted bare-Solid container instead of a spurious `0`.
 - **A slow `execute()` no longer wipes the session (#359).** The primary geometry tool had the same session-destroying timeout as pre-#358 `render_view`: an uninterruptible OCC call (heavy boolean, multi-body fillet, high-face-count mesh) that outran `_exec_timeout` got stopped by SIGKILL-ing the whole worker — taking every variable, named object and snapshot with it (the worker owns the `Session`, so it all dies with the child). Models had learned to route heavy work around `execute()` entirely by dropping to raw `python3` scripts via Bash — *outside* the sandbox's AST/import checks — and the timeout message itself was coaching that escape. `WorkerSession` now keeps a **parent-side log of every completed `execute()` call** (which survives the worker SIGKILL) and, on any timeout/crash restart, **replays it into the fresh worker to rebuild the session** — variables, shapes and named objects come back; only the one op that died is dropped. Each replayed step gets its own budget (a rolled-back SIGALRM timeout is never logged, so replay can't re-hit it), and on a long session the **rebuilt prefix is kept** if replay runs out of budget rather than all-or-nothing wiping. The timeout message reports how many steps were replayed (`N of M`), and points at smaller steps / a bigger `--exec-timeout` first — the standalone-script route is demoted to a genuine last resort in the message and across the guidance surfaces (`SKILL.md`, the server instructions, and the README), which had been training models toward the Bash escape. Honest about its limits, stated in the recovery message itself: snapshots and geometry imported via other tools (`import_cad_file`/`load_part`) are not in the log and don't come back, and because replay re-runs your code a step may re-run to a different result (a non-deterministic value, or a dependency on non-replayed state).
 
 ## v0.3.66
@@ -650,14 +639,14 @@
 
 ### Added
 
-- **`design_audit()` — audit the session program as a *design*, not just a shape.** Every other tool inspects the executed geometry `g` (`validate` proves it's a valid shape, `shape_compare` measures a change); none inspects the *design* `z` — the named parameters — that produced it. Following Arko-T (arXiv:2606.30429, "a design to edit, not a shape to render"), this surfaces the program's top-level numeric parameters (Θ) and, for each, rebuilds the whole program with the value nudged ±ε (default ±10%) and re-runs the existing validity gate. A parameter is flagged **brittle** if a small change fails to rebuild or drops the solid below the gate — the thin-wall / coordinate-reasoning failure mode where a valid *shape* is not a robust *design* (Arko-T §5.5/§6), caught structurally rather than by luck. Returns per-parameter perturbation results (`delta_pct`, `passes_gate`, `volume_delta_pct`, failure `reasons`) plus a baseline and summary; a program with no named parameters gets an advisory to hoist its inline magic constants into a parameter block (§4.3), and a parameter reassigned at the top level is flagged inconclusive rather than falsely passed. Brittleness is judged purely by the validity gate, so a large but still-valid change (e.g. a *count* parameter that adds holes) is not flagged — its volume delta is reported as information; the live session is read-only throughout. Because a rebuild — or the gate's mesh tessellation — can enter an un-interruptible native OCC call that no in-worker SIGALRM can stop, the whole rebuild+gate loop runs **out of process, hard-bounded by the op budget** (matching `export`/`shape_compare`/`render_view`, so it can never SIGKILL the worker), persisting results incrementally so a kill still yields a salvaged partial report; on hosts that block child processes it degrades to an in-process (SIGALRM-bounded) run, and a `max_params` cap bounds the parameter count. Shipped with companion **design-state authoring guidance** (Arko-T §4.3): an "Author for editability" section in the b123d-modeling skill and `default_prompt.md`, and a runnable **design-state authoring** exemplar in the `build123d://quickref` resource (named parameter block with units, base → secondary → finishing construction order) — previously the quickref taught only inline-literal snippets. (#330)
+- **`design_audit()` — audit the session program as a *design*, not just a shape.** Every other tool inspects the executed geometry `g` (`validate` proves it's a valid shape, `legacy shape comparison` measures a change); none inspects the *design* `z` — the named parameters — that produced it. Following Arko-T (arXiv:2606.30429, "a design to edit, not a shape to render"), this surfaces the program's top-level numeric parameters (Θ) and, for each, rebuilds the whole program with the value nudged ±ε (default ±10%) and re-runs the existing validity gate. A parameter is flagged **brittle** if a small change fails to rebuild or drops the solid below the gate — the thin-wall / coordinate-reasoning failure mode where a valid *shape* is not a robust *design* (Arko-T §5.5/§6), caught structurally rather than by luck. Returns per-parameter perturbation results (`delta_pct`, `passes_gate`, `volume_delta_pct`, failure `reasons`) plus a baseline and summary; a program with no named parameters gets an advisory to hoist its inline magic constants into a parameter block (§4.3), and a parameter reassigned at the top level is flagged inconclusive rather than falsely passed. Brittleness is judged purely by the validity gate, so a large but still-valid change (e.g. a *count* parameter that adds holes) is not flagged — its volume delta is reported as information; the live session is read-only throughout. Because a rebuild — or the gate's mesh tessellation — can enter an un-interruptible native OCC call that no in-worker SIGALRM can stop, the whole rebuild+gate loop runs **out of process, hard-bounded by the op budget** (matching `export`/`legacy shape comparison`/`render_view`, so it can never SIGKILL the worker), persisting results incrementally so a kill still yields a salvaged partial report; on hosts that block child processes it degrades to an in-process (SIGALRM-bounded) run, and a `max_params` cap bounds the parameter count. Shipped with companion **design-state authoring guidance** (Arko-T §4.3): an "Author for editability" section in the b123d-modeling skill and `default_prompt.md`, and a runnable **design-state authoring** exemplar in the `build123d://quickref` resource (named parameter block with units, base → secondary → finishing construction order) — previously the quickref taught only inline-literal snippets. (#330)
 - **Live session viewer over a Unix domain socket (`--viewer-socket PATH`).** Optionally stream the session's geometry to an interactive 3D viewer so a human can watch and rotate the model while an agent drives the MCP, instead of only seeing fixed-viewpoint `render_view` PNGs. When the flag (or `BUILD123D_VIEWER_SOCKET`) is set, the server binds a UDS and, after each geometry-mutating tool (`execute`, `reset`, `restore_snapshot`, `import_cad_file`, `load_part`), broadcasts the **changed** shapes as glTF-binary (glb) to connected viewer clients. The publisher runs on a background daemon thread in the server process and never blocks the agent path: it pays nothing while no viewer is attached (no tessellation, no worker round-trip), tessellates only identity-changed shapes via the existing hard-bounded out-of-process path, and a slow client is throttled (bounded per-client buffers, drop-oldest) rather than the producer. A viewer attaching mid-session gets `HELLO` + a full-scene dump; a worker restart emits `RESET`. The glb encoder is a small self-contained glTF 2.0 writer, so there is **no new dependency** and no OCC/VTK in the encode step. The socket is created mode 0600 and lives outside the sandboxed `execute()` worker. Wire protocol, usage, and a dependency-free reference consumer (`examples/live_viewer_client.py`) are documented in `docs/live-viewer.md`. POSIX only.
 
 ## v0.3.59
 
 ### Added
 
-- **`shape_compare()` now localizes WHERE the geometry changed, with an exact magnitude.** It kept volume/bbox/topology/center deltas — useful totals, but they never said *where* an edit landed or by how much the surface actually moved, so verifying "raise this block 10 mm" or "chamfer→fillet r3" against an imported reference was guesswork. `shape_compare` now adds a bounded surface diff: a mesh nearest-neighbour pass (both shapes tessellated at a **shared deflection**, with an auto-scaled noise floor so a same-geometry re-export reads ~0 instead of a fabricated multi-mm "change") **locates** the changed region(s), then an **exact B-rep boolean clipped to that region** reports the true surface displacement and exact added/removed **volume** — no flat-face vertex-NN inflation. Output gains `max_deviation` (largest real change), `changed`/`regions` (per-region centroid/bbox + `added_volume`/`removed_volume`), `magnitude_method` (`exact_boolean` = exact displacement *and* volumes; `exact_volume_mesh_displacement` = exact volumes with a mesh-estimated displacement, e.g. a cut/flush-fill whose surface barely moves; `mesh_estimate` = boolean skipped/failed), `unchanged_elsewhere`, and `warnings`. For editing this is **model↔input verification, not a score**. (#313)
+- **`legacy shape comparison` now localizes WHERE the geometry changed, with an exact magnitude.** It kept volume/bbox/topology/center deltas — useful totals, but they never said *where* an edit landed or by how much the surface actually moved, so verifying "raise this block 10 mm" or "chamfer→fillet r3" against an imported reference was guesswork. `legacy shape comparison` now adds a bounded surface diff: a mesh nearest-neighbour pass (both shapes tessellated at a **shared deflection**, with an auto-scaled noise floor so a same-geometry re-export reads ~0 instead of a fabricated multi-mm "change") **locates** the changed region(s), then an **exact B-rep boolean clipped to that region** reports the true surface displacement and exact added/removed **volume** — no flat-face vertex-NN inflation. Output gains `max_deviation` (largest real change), `changed`/`regions` (per-region centroid/bbox + `added_volume`/`removed_volume`), `magnitude_method` (`exact_boolean` = exact displacement *and* volumes; `exact_volume_mesh_displacement` = exact volumes with a mesh-estimated displacement, e.g. a cut/flush-fill whose surface barely moves; `mesh_estimate` = boolean skipped/failed), `unchanged_elsewhere`, and `warnings`. For editing this is **model↔input verification, not a score**. (#313)
 - The exact boolean is **hard-bounded**: it tessellates and runs out of process under a budget derived from the exec timeout (matching the worker op budget, so it can't outlive — and SIGKILL — the worker), with an in-process mesh-only fallback on hosts that block child processes. Clipping to the located region keeps it in budget even on a 13 MB part (full boolean >2 min → located+clipped ≈ 88 s); a large/spread edit (clip box >150 mm) skips straight to the flagged mesh estimate, and a mid-run timeout **salvages** the already-computed mesh result rather than discarding everything. A genuinely blind case — a **tangential** move (sliding a hole) or a sub-resolution edit on a very large part — detects no region and emits a warning, so `unchanged_elsewhere` is never mistaken for a guarantee.
 - Adds `scipy` as an explicit runtime dependency (`cKDTree` for the nearest-neighbour surface pass).
 
@@ -868,7 +857,7 @@
 
 ### Fixes
 
-- **Slow geometry queries no longer destroy the session.** `measure`, `clearance`, `cross_sections`, `shape_compare`, `align_check`, `analyze_printability`, `save_snapshot`, `diff_snapshot`, `resolve`, `suggest_view_layout`, and `load_part` now get a 60 s budget (previously 10 s — a timeout SIGKILLs the worker and loses all session state). (#214, #226)
+- **Slow geometry queries no longer destroy the session.** `measure`, `clearance`, `cross_sections`, `legacy shape comparison`, `align_check`, `analyze_printability`, `save_snapshot`, `diff_snapshot`, `resolve`, `suggest_view_layout`, and `load_part` now get a 60 s budget (previously 10 s — a timeout SIGKILLs the worker and loses all session state). (#214, #226)
 - **Worker restart errors now say that session state was lost** — every restart path (op timeout, dead-worker detection, mid-call crash) tells the client to re-run setup code instead of leaving it referencing dead object names. (#215, #226)
 - **macOS VTK render subprocess guard lowered to 100 s** so it fires before the parent's 120 s poll where it applies (partial fix; #216 remains open for the in-worker path). (#226)
 - **`session_state` filters the injected helpers (`annotate`, `named_face`, `set_page`, `register_centerline`) via the canonical `_INJECTED` set** instead of an accidental module-prefix match. (#219, #227)
@@ -1390,7 +1379,7 @@ This release is "more build123d native" — every change closes a gap where the 
 - **`measure()` unified response**: returns a single comprehensive JSON — volume, area, topology (face/edge/vertex counts), bounding box with center, volumetric center of mass, 6-component inertia tensor (Ixx/Iyy/Izz/Ixy/Ixz/Iyz), and face-type inventory classifying every face as Plane/Cylinder/Cone/Sphere/Torus/BSpline with type-specific params (cylinder diameter/axis, cone semi-angle, sphere radius, torus radii). Replaces the old query-dispatch API.
 - **`clearance(object_a, object_b)` tool**: returns the minimum distance (mm) between two named shapes.
 - **`cross_sections(object_name, axis, num_slices)` tool**: cross-sectional area at evenly spaced planes along X/Y/Z — useful for detecting internal voids, wall-thickness variation, and verifying profile against a reference.
-- **`import_cad_file(path, name)` tool**: loads a STEP (.step/.stp) or STL (.stl) file as a named object in the session. Supports multi-body STEP files. Use with `shape_compare()` to verify a procedural build against a reference.
+- **`import_cad_file(path, name)` tool**: loads a STEP (.step/.stp) or STL (.stl) file as a named object in the session. Supports multi-body STEP files. Use `diff_step(old, new)` to verify a procedural build against a reference.
 - **`named_face(shape, name)` session built-in**: returns a face by semantic name (`top`, `bottom`, `front`, `back`, `left`, `right`) based on axis sorting. Available in every `execute()` call without import.
 - **OCP sub-module imports in user code**: geometric OCP modules (`OCP.gp`, `OCP.BRepGProp`, `OCP.TopExp`, `OCP.BRepAlgoAPI`, etc.) are now allowed via an explicit allowlist. File I/O modules (`OCP.STEPControl`, `OCP.IGESControl`, `OCP.OSD`) remain blocked.
 - **`execute()` inline repair hints**: on error, matched hints from the repair library are appended directly to the error response — no separate `repair_hints()` call needed.
@@ -1409,7 +1398,7 @@ This release is "more build123d native" — every change closes a gap where the 
 
 - **`last_error()` tool**: returns structured JSON for the most recent failed `execute()` call — error type, message, line number, and a 5-line code excerpt with an arrow marker at the failing line. Cleared automatically on success.
 - **`validate_code()` tool**: static analysis of code before execution — catches syntax errors, blocked imports, missing build123d import, and code that produces no output (no `result` assignment or `show()` call). No execution required.
-- **`shape_compare()` tool**: compares two named objects side-by-side — volume, area, topology counts, bounding-box dimensions, and center-point offset delta. Returns structured JSON.
+- **`legacy shape comparison` tool**: compares two named objects side-by-side — volume, area, topology counts, bounding-box dimensions, and center-point offset delta. Returns structured JSON.
 - **`repair_hints()` tool**: takes an error message and returns a targeted hint from an 11-entry pattern library (NoneType, CadQuery syntax, face selection, interference check, missing show(), etc.). Falls back to a generic hint if nothing matches.
 - **`measure(query="summary")` mode**: single call returning volume, area, topology, bounding-box dimensions, and center — covers the most common post-execute sanity check in one round trip.
 - **`session_state()` namespace variables**: the response now includes a `variables` map summarising all non-shape Python variables in the session namespace (type + value/length).

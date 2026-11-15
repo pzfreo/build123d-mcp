@@ -56,7 +56,7 @@ def test_geometry_heavy_ops_use_geometry_timeout():
 def test_bounded_geometry_ops_honour_exec_timeout():
     # measure/validate/clearance/cross_sections isolate a large shape's native call in
     # a bounded subprocess bounded by op_budget == _export_budget (#360), so their
-    # parent watchdog must scale with --exec-timeout like shape_compare/locate — not a
+    # parent watchdog must scale with --exec-timeout like export/locate — not a
     # fixed 60s that could SIGKILL the worker while the child still runs legitimately.
     record = []
     ws = _proxy_session(record, exec_timeout=300)
@@ -122,23 +122,6 @@ def test_load_part_keeps_geometry_floor():
     ws = _proxy_session(record, exec_timeout=10)
     ws.load_part("worm_gear")
     assert record == [("load_part", _GEOMETRY_TIMEOUT)]
-
-
-def test_shape_compare_honours_exec_timeout():
-    # shape_compare bounds its own tessellation/boolean subprocess by the op budget
-    # (max(60, exec_timeout) - margin), so the worker op MUST give it that budget or
-    # the parent would kill the worker while the child still runs.
-    record = []
-    ws = _proxy_session(record, exec_timeout=300)
-    ws.shape_compare("a", "b")
-    assert record == [("shape_compare", 300)]
-
-
-def test_shape_compare_keeps_export_floor():
-    record = []
-    ws = _proxy_session(record, exec_timeout=10)
-    ws.shape_compare("a", "b")
-    assert record == [("shape_compare", _EXPORT_TIMEOUT)]
 
 
 def test_compare_routes_to_underlying_timeout_tiers():

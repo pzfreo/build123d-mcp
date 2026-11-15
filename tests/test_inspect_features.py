@@ -201,3 +201,52 @@ def test_translated_fillet_record_point_is_in_caller_frame(tmp_path):
         assert b["at"] == pytest.approx(
             [v + delta for v, delta in zip(a["at"], (50, 70, 90))], abs=1e-5
         )
+
+
+def test_inventory_never_uses_diff_for_measures(featured_session, monkeypatch, tmp_path):
+    from specify_core import api
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("inventory must not run a self-diff")
+
+    monkeypatch.setattr(api, "diff", forbidden)
+    shape = featured_session.objects["plate"]
+    path = tmp_path / "plate.step"
+    export_step(shape, path)
+    for target in ("plate", str(path)):
+        report = json.loads(inspect_features(featured_session, target))
+        assert report["measures"]["volume"] == pytest.approx(shape.volume, abs=1e-5)
+        assert report["measures"]["area"] == pytest.approx(shape.area, abs=1e-5)
+        assert report["measures"]["faces"] == len(shape.faces())
+        assert report["measures"]["min"] == pytest.approx(tuple(shape.bounding_box().min), abs=1e-5)
+        assert report["measures"]["max"] == pytest.approx(tuple(shape.bounding_box().max), abs=1e-5)
+
+
+def test_rotated_record_fields_are_transformed_or_dropped():
+    from build123d_mcp.tools._recognition import _caller_geometry
+
+    placement = [[0, -1, 0, 10], [1, 0, 0, 20], [0, 0, 1, 30]]
+    record = {
+        "origin": [1, 2, 3],
+        "axis": "x",
+        "flat_centres": [[1, 2, 3]],
+        "flat_directions": [[1, 0, 0]],
+        "frame": {"origin": [1, 2, 3], "run": [0, 0, 1], "u": [1, 0, 0], "v": [0, 1, 0]},
+        "z": 4,
+        "x_span": [1, 2],
+        "positions": [7],
+        "unknown_point": [1, 2, 3],
+        "unknown_projection": 8,
+        "diameter": 6,
+    }
+    out = _caller_geometry(record, placement)
+    assert out["origin"] == out["flat_centres"][0] == [8, 21, 33]
+    assert out["axis"] == out["flat_directions"][0] == [0, 1, 0]
+    assert out["frame"] == {
+        "origin": [8, 21, 33],
+        "run": [0, 0, 1],
+        "u": [0, 1, 0],
+        "v": [-1, 0, 0],
+    }
+    assert out["diameter"] == 6
+    assert not {"z", "x_span", "positions", "unknown_point", "unknown_projection"} & out.keys()

@@ -152,11 +152,6 @@ def _clearance(ws, tmp_path):
     assert "error" not in r and "status" in r
 
 
-def _shape_compare(ws, tmp_path):
-    r = json.loads(ws.shape_compare("a", "b"))
-    assert "error" not in r and "delta" in r
-
-
 def _find_holes(ws, tmp_path):
     # The seeded boxes have no holes; the empty parent proxy doesn't know 'a'
     # at all, so a non-error reply proves the worker's objects were consulted.
@@ -326,7 +321,6 @@ SESSION_STATEFUL_TOOLS = {
     "verify_spec": _verify_spec,
     "suggest_spec": _suggest_spec,
     "clearance": _clearance,
-    "shape_compare": _shape_compare,
     "align_check": _align_check,
     "find_holes": _find_holes,
     "find_bosses": _find_bosses,
@@ -448,7 +442,7 @@ def test_tools_never_deliver_null_or_empty(seeded_ws):
         "measure": seeded_ws.measure("a"),
         "validate": seeded_ws.validate("a"),
         "locate_gate_defects": seeded_ws.locate_gate_defects("a"),  # subprocess-backed
-        "shape_compare": seeded_ws.shape_compare("a", "b"),  # subprocess-backed
+        "diff_step": seeded_ws.diff_step("a", "b"),
         "verify_spec": seeded_ws.verify_spec(spec=spec, object_name="a"),
         "design_audit": seeded_ws.design_audit(),  # subprocess-backed
         "session_state": seeded_ws.session_state(),

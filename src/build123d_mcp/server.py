@@ -1016,7 +1016,7 @@ def list_sessions() -> str:
 def compare(
     a: str,
     b: str = "",
-    kind: str = "fit",
+    kind: str = "shape",
     axis: str = "Z",
     mode: str = "flush",
     format: str = "text",
@@ -1084,13 +1084,13 @@ def find_countersinks(object_name: str = "") -> str:
 def inspect_features(
     target: str = "", families: str = "", feature_ids: str = "", max_features: int = 50
 ) -> str:
-    """Inspect a STEP path or registered session object (default: current shape). No filters returns compact measures and family counts/dimension ranges. families is comma-separated (e.g. 'holes,bosses,fillets') and returns caller-frame feature records with ids, location, axis and dimensions, without raw face arrays. feature_ids selects analytic face descriptors for those features. max_features bounds expansion to 1..100 records; matched counts remain exact. IDs resolve against current geometry, not persistent edit handles."""
+    """Inspect a STEP path or registered session object (default: current shape). No filters returns compact measures and family counts/dimension ranges. families is comma-separated (e.g. 'holes,bosses,fillets') and returns caller-frame feature records with ids, location, axis and dimensions, without raw face arrays. feature_ids selects analytic face descriptors for those features. max_features bounds expansion to 1..100 records; matched counts remain exact. IDs include a content digest; stale or unbound ids are refused. A registered object name takes precedence over an identical path string."""
     return _resolve_session().inspect_features(target, families, feature_ids, max_features)
 
 
 @mcp.tool(annotations=_READ_ONLY)
 def diff_step(old: str, new: str, render: bool = False) -> str | list:
-    """Compare STEP paths or registered objects using specify-core: adapted/orphaned/new features, measures, unchanged analytic faces and unclaimed planar offsets/tangential moves. Lists are bounded with exact counts. Analytic descriptors do not compare trim contours. render=True also returns specify-core's diff overlay image (orange modified, green added, red removed). Use this to verify revisions; PMI migration is not task acceptance."""
+    """Compare STEP paths or registered objects using specify-core: adapted/orphaned/new features, measures, unchanged analytic faces and unclaimed planar offsets/tangential moves. Lists are bounded with exact counts. Analytic descriptors do not compare trim contours. render=True also returns specify-core's diff overlay image (orange modified, green added, red removed). A registered object name takes precedence over an identical path string. Use this to verify revisions; PMI migration is not task acceptance."""
     result = _resolve_session().diff_step(old, new, render)
     if isinstance(result, dict):
         return [TextContent(type="text", text=result["report"]), *marshal_render_view(result)]
@@ -1105,7 +1105,7 @@ def edit_feature(
     result_name: str = "",
     protected_refs: str = "[]",
 ) -> str:
-    """Transactionally resize one plain cylindrical through hole identified by inspect_features, e.g. holes:12, on object_name (default current shape). Re-analyse current STEP bytes; refuse unresolved ids or live-face descriptor mismatches. Reject dependent hole geometry. Verify predicted annular volume, all other holes and envelope before registering the result. protected_refs is a JSON list of feature ids on the current shape. Defaults to replacing the source; result_name can preserve it under a new name."""
+    """Transactionally resize one plain cylindrical through hole identified by inspect_features, e.g. holes:12@<digest>, on object_name (default current shape). Re-analyse current STEP bytes; refuse unresolved ids or live-face descriptor mismatches. Reject dependent hole geometry. Verify predicted annular volume, all other holes and envelope before registering the result. protected_refs is a JSON list of feature ids on the current shape. Defaults to replacing the source; result_name can preserve it under a new name."""
     return _resolve_session().edit_feature(
         feature_id, diameter, object_name, result_name, protected_refs
     )

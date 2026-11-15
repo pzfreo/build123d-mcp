@@ -77,7 +77,9 @@ def inspect_features(
 
     No filters returns measures and family counts/ranges. families selects
     caller-frame records without face arrays; feature_ids selects analytic face
-    descriptors. Expanded records are bounded to 1..100, with exact counts.
+    descriptors. IDs include a 16-hex STEP digest; stale/unbound ids are refused.
+    A registered name wins over an identical path string. Expanded records are
+    bounded to 1..100, with exact counts.
     """
     try:
         if (
@@ -126,12 +128,11 @@ def inspect_features(
         if feature_ids:
             requested = list(dict.fromkeys(f.strip() for f in feature_ids.split(",") if f.strip()))
             by_id = {f["id"]: f for f in features}
-            unknown = set(requested) - by_id.keys()
-            if unknown:
-                raise ValueError(f"unknown or stale feature ids: {', '.join(sorted(unknown))}")
+            requested = [analysis.resolve_id(fid) for fid in requested]
             faces = {f["id"]: compact(f) for f in analysis.document["faces"]}
             rows = [
-                {"id": fid, "faces": [faces[i] for i in by_id[fid]["faces"]]} for fid in requested
+                {"id": analysis.bind_id(fid), "faces": [faces[i] for i in by_id[fid]["faces"]]}
+                for fid in requested
             ]
         else:
             known = _FAMILIES | groups.keys()
@@ -150,7 +151,7 @@ def inspect_features(
                     )
                 requested.append(family)
             rows = [
-                {"id": f["id"], "family": f["family"], **compact(f["record"])}
+                {**compact(f["record"]), "family": f["family"], "id": analysis.bind_id(f["id"])}
                 for f in features
                 if f["family"] in requested
             ]

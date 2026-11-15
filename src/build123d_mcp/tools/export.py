@@ -14,7 +14,7 @@ from build123d_mcp.tools._paths import safe_output_path
 
 # Headroom under the op budget for the in-process B-rep checks + subprocess
 # teardown + parent poll granularity; and the least time worth starting the
-# out-of-process mesh gate with. Matches the locate/shape_compare convention.
+# out-of-process mesh gate with. Matches the locate/export convention.
 _EXPORT_MESH_MARGIN_S = 15
 _EXPORT_MESH_MIN_S = 10
 

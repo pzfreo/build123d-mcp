@@ -3,7 +3,7 @@
 A native OCC analysis — ``BRepCheck`` validity, ``BRepMesh`` tessellation, a boolean —
 on a big B-rep is un-interruptible and can outlast the op timeout; the parent then
 SIGKILLs the whole worker (the same session-destroying class as #357/#358). This
-generalises the bounded-subprocess pattern that ``locate``/``shape_compare`` already
+generalises the bounded-subprocess pattern that ``locate``/``export`` already
 use into one helper the read-only tools (measure/cross_sections/clearance) share
 instead of copy-pasting. (``validate`` keeps its B-rep checks in-worker and isolates
 only its mesh stitch, like ``export`` — so it does not use this helper.)

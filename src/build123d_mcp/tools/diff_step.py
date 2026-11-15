@@ -38,7 +38,51 @@ def _signature(face):
     return json.dumps(rounded(row), sort_keys=True)
 
 
-def face_diff(old: dict, new: dict, report: dict) -> dict:
+def _feature_hosts(analysis, report, side):
+    if analysis is None:
+        return {}
+    changed = {f.get(side) for f in report.get("features", [])}
+    hosts = defaultdict(set)
+    for feature in analysis.document["features"]:
+        if feature["id"] not in changed:
+            continue
+        for index in feature["faces"]:
+            for neighbor in analysis.adjacency.get(index, ()):
+                hosts[neighbor].add(analysis.bind_id(feature["id"]))
+    return hosts
+
+
+def _translated_boundary(before, old_id, after, new_id, delta):
+    """An area centroid shift is motion only if the whole boundary follows it."""
+    if before is None or after is None:
+        return False
+    old_face, new_face = before.mapped_faces.get(old_id), after.mapped_faces.get(new_id)
+    if old_face is None or new_face is None:
+        return False
+
+    def signature(face, shift):
+        def point(value):
+            return tuple(round(float(v) + d, 5) for v, d in zip(value, shift))
+
+        rows = []
+        for edge in face.edges():
+            kind = str(edge.geom_type).rsplit(".", 1)[-1]
+            if kind == "CIRCLE" and edge.is_closed:
+                geometry = (point(edge.arc_center), round(edge.radius, 5))
+            else:
+                geometry = (
+                    *sorted((point(edge.position_at(0)), point(edge.position_at(1)))),
+                    point(edge.position_at(0.5)),
+                )
+            rows.append((kind, round(edge.length, 5), geometry))
+        return sorted(rows)
+
+    return signature(old_face, delta) == signature(new_face, (0, 0, 0))
+
+
+def face_diff(
+    old: dict, new: dict, report: dict, before_geometry=None, after_geometry=None
+) -> dict:
     """Match multisets of analytic signatures before pairing changed planes.
 
     This is analytic descriptor evidence, not an assertion of B-rep equality:
@@ -81,7 +125,10 @@ def face_diff(old: dict, new: dict, report: dict) -> dict:
             return None  # ambiguous pairing is reported as removed/added instead
         return ranked[0][1]
 
+    old_hosts = _feature_hosts(before_geometry, report, "old")
+    new_hosts = _feature_hosts(after_geometry, report, "new")
     paired_old, paired_new, planar = set(), set(), []
+    boundary_changes, modified = [], []
     for i, face in enumerate(before):
         j = nearest(face, after)
         if j is None or nearest(after[j], before) != i:
@@ -89,17 +136,45 @@ def face_diff(old: dict, new: dict, report: dict) -> dict:
         other = after[j]
         delta = [b - a for a, b in zip(face["centroid"], other["centroid"])]
         offset = sum(d * n for d, n in zip(delta, face["direction"]))
-        planar.append(
-            {
-                "old": compact(face),
-                "new": compact(other),
-                "normal_offset": round(offset, 6),
-                "tangential_displacement": compact(
-                    [d - offset * n for d, n in zip(delta, face["direction"])]
-                ),
-                "area_delta": round(other["area"] - face["area"], 6),
-            }
-        )
+        area_delta = other["area"] - face["area"]
+        explaining = sorted(old_hosts.get(face["id"], set()) | new_hosts.get(other["id"], set()))
+        if (
+            abs(offset) <= 1e-5
+            and explaining
+            and not _translated_boundary(
+                before_geometry, face["id"], after_geometry, other["id"], delta
+            )
+        ):
+            boundary_changes.append(
+                {
+                    "face_id": face["id"],
+                    "new_face_id": other["id"],
+                    "area_delta": round(area_delta, 6),
+                    "explaining_feature_ids": explaining,
+                }
+            )
+        elif abs(offset) <= 1e-5 and (
+            abs(area_delta) > 1e-5 or math.dist(delta, (0, 0, 0)) <= 1e-5
+        ):
+            modified.append(
+                {
+                    "old": compact(face),
+                    "new": compact(other),
+                    "reason": "boundary change without verified feature adjacency",
+                }
+            )
+        else:
+            planar.append(
+                {
+                    "old": compact(face),
+                    "new": compact(other),
+                    "normal_offset": round(offset, 6),
+                    "tangential_displacement": compact(
+                        [d - offset * n for d, n in zip(delta, face["direction"])]
+                    ),
+                    "area_delta": round(area_delta, 6),
+                }
+            )
         paired_old.add(i)
         paired_new.add(j)
     removed = [compact(f) for i, f in enumerate(before) if i not in paired_old]
@@ -108,35 +183,82 @@ def face_diff(old: dict, new: dict, report: dict) -> dict:
         "unchanged_faces": unchanged,
         "planar_deltas": planar[:_MAX_ROWS],
         "planar_deltas_count": len(planar),
+        "feature_boundary_changes": boundary_changes[:_MAX_ROWS],
+        "feature_boundary_changes_count": len(boundary_changes),
         "unclaimed_face_changes": {
+            "modified": modified[:_MAX_ROWS],
+            "modified_count": len(modified),
             "removed": removed[:_MAX_ROWS],
             "added": added[:_MAX_ROWS],
             "removed_count": len(removed),
             "added_count": len(added),
         },
-        "truncated": any(len(rows) > _MAX_ROWS for rows in (planar, removed, added)),
+        "truncated": any(
+            len(rows) > _MAX_ROWS for rows in (planar, removed, added, boundary_changes, modified)
+        ),
         "basis": "analytic descriptors (kind, area, centroid and surface parameters); trim contours are not compared",
     }
 
 
-def _bounded(value, budget=None):
-    """Strip every verdict and bound all upstream collections/strings recursively."""
-    if budget is None:
-        budget = [1800]
-    budget[0] -= 1
-    if budget[0] < 0:
-        return {"omitted": True}
+def _node_count(value):
     if isinstance(value, dict):
-        out = {k: _bounded(v, budget) for k, v in value.items() if k != "verdict"}
-        return out
+        return 1 + sum(_node_count(v) for k, v in value.items() if k != "verdict")
     if isinstance(value, list):
-        out = [_bounded(v, budget) for v in value[:_MAX_ROWS]]
-        if len(value) > _MAX_ROWS:
-            out.append({"omitted_count": len(value) - _MAX_ROWS})
-        return out
+        return 1 + sum(_node_count(v) for v in value)
+    return 1
+
+
+def _bounded(value, budget=1800):
+    """A fresh budget per top-level key; every omitted subtree is counted.
+
+    Strings carry explicit character counts when shortened. List/dict omissions
+    count immediate entries; a whole omitted subtree counts all of its nodes.
+    Measures and small independent sections can never be consumed by features.
+    """
+    remaining = [budget]
+
+    def visit(item):
+        if remaining[0] <= 0:
+            return {"omitted": _node_count(item), "unit": "nodes"}
+        remaining[0] -= 1
+        if isinstance(item, dict):
+            out = {}
+            entries = [(k, v) for k, v in item.items() if k != "verdict"]
+            for i, (key, child) in enumerate(entries):
+                if remaining[0] <= 0:
+                    out["omitted"] = len(entries) - i
+                    out["omitted_unit"] = "fields"
+                    break
+                out[key] = visit(child)
+            return out
+        if isinstance(item, list):
+            out = []
+            for i, child in enumerate(item):
+                if i >= _MAX_ROWS or remaining[0] <= 0:
+                    out.append({"omitted": len(item) - i, "unit": "items"})
+                    break
+                out.append(visit(child))
+            return out
+        if isinstance(item, str) and len(item) > 1000:
+            return {"text": item[:1000], "omitted": len(item) - 1000, "unit": "characters"}
+        return compact(item)
+
+    return visit(value)
+
+
+def _bind_references(value, before, after, side="new"):
+    if isinstance(value, dict):
+        return {
+            key: _bind_references(item, before, after, key if key in {"old", "new"} else side)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_bind_references(item, before, after, side) for item in value]
     if isinstance(value, str):
-        return value[:1000]
-    return compact(value)
+        source = before if side == "old" else after
+        if value in {f["id"] for f in source.document["features"]}:
+            return source.bind_id(value)
+    return value
 
 
 def _render_overlay(old: bytes, new: bytes, timeout: float) -> bytes:
@@ -176,7 +298,8 @@ def diff_step(session, old: str, new: str, render: bool = False) -> str | dict:
 
     Reports adapted/orphaned/new features plus bare plane offsets and tangential
     moves. Counts are exact; expanded lists are bounded. render=True includes
-    specify-core's model.png overlay, via its CLI in 0.1.15.
+    specify-core's model.png overlay, via its CLI in 0.1.15. A registered name
+    wins over an identical path string. Feature ids include their STEP digest.
     """
     try:
         from specify_core import api
@@ -185,9 +308,7 @@ def diff_step(session, old: str, new: str, render: bool = False) -> str | dict:
         before = resolve_analysis(session, old)
         after = resolve_analysis(session, new)
         report = api.diff(before.loaded, after.loaded)["report"]
-        before._measures = before.caller_measures(report["measures"]["old"])
-        after._measures = after.caller_measures(report["measures"]["new"])
-        report["measures"] = {"old": before._measures, "new": after._measures}
+        report["measures"] = {"old": before.measures, "new": after.measures}
         for feature in report.get("features", []):
             source = after if feature.get("class") == "new" else before
             if isinstance(feature.get("at"), list):
@@ -211,11 +332,19 @@ def diff_step(session, old: str, new: str, render: bool = False) -> str | dict:
                 feature.pop("place", None)
         # Exclude PMI workflow prose/answers: they are not CAD edit acceptance
         # criteria. Keep structural feature changes, measures and PMI facts.
-        result = _bounded(
-            {k: report[k] for k in ("features", "measures", "pmi", "problems") if k in report}
-        )
+        result = {
+            key: _bounded(_bind_references(report[key], before, after))
+            for key in ("features", "measures", "pmi", "problems")
+            if key in report
+        }
         result["feature_changes_count"] = len(report.get("features", []))
-        result.update(face_diff(before.document, after.document, report))
+        shown = sum("class" in f for f in result.get("features", []))
+        if shown != result["feature_changes_count"]:
+            result["features_truncated"] = {
+                "shown": shown,
+                "total": result["feature_changes_count"],
+            }
+        result.update(face_diff(before.document, after.document, report, before, after))
         text = json.dumps(result, separators=(",", ":"))
         if render:
             return {

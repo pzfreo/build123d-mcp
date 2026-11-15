@@ -38,8 +38,8 @@ The server is **excellent on the executability axis and nearly empty on the desi
   metric, §5.1) — and stricter than the paper's: BRepCheck well-formedness, edge-face watertight/
   manifold counts, *mesh-level* non-manifold edges and vertices, and an open-edge deflection ladder.
   Its own docstring references CADGenBench.
-- `tools/shape_compare.py` is the **CD / volumetric-IoU** analog (§5.1) — surface-deviation regions
-  plus exact added/removed volume.
+- `tools/diff_step.py` reports STEP feature revisions and analytic face changes.
+  It is revision evidence, rather than a CD / volumetric-IoU score (§5.1).
 - `tools/find_features.py` (`find_holes`, `find_hole_patterns`, `find_bosses`) recognizes the **F**
   axis.
 - `measure(min_wall_thickness)` senses the thin-wall failure mode (§5.5).
@@ -133,10 +133,9 @@ more than a code change.
 - The **hard validity gate before scoring** (§5.1: "must execute *and* produce a non-empty, valid
   solid") is `validate.py` — and this server's version is stricter (mesh-level non-manifold
   edges/vertices, open-edge deflection ladder). Keep it.
-- **Geometric agreement metrics** (CD / IoU) map to `shape_compare.py`. One paper-aligned
-  refinement: its docstring notes it compares A-vs-B, *not* against a reference answer — the paper
-  always scores against ground truth, so a "compare to reference STEP" mode would make it a true
-  scorer.
+- **Geometric agreement metrics** (CD / IoU) would require a separate scorer.
+  `diff_step.py` instead compares feature dimensions, measures and analytic faces
+  against a reference STEP; it does not calculate those scores.
 - **build123d as the backend** — the paper chose build123d for its 1.3M-program training corpus,
   third-party validation of this project's bet.
 

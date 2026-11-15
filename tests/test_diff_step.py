@@ -2,9 +2,10 @@
 
 import copy
 import json
+import math
 
 import pytest
-from build123d import Axis, Box, Cylinder, Pos, export_step, fillet
+from build123d import Align, Axis, Box, Cylinder, Pos, export_step, fillet
 
 from build123d_mcp.session import Session
 from build123d_mcp.tools._recognition import resolve_analysis
@@ -178,3 +179,125 @@ def test_server_overlay_uses_render_view_image_delivery(monkeypatch):
         assert os.path.isfile(path)
     finally:
         os.unlink(path)
+
+
+def test_off_center_hole_resize_changes_host_boundaries_without_planar_motion():
+    def part(radius):
+        return fillet(Box(60, 40, 20).edges().filter_by(Axis.Z), 5) - Pos(10, 5, 0) * Cylinder(
+            radius, 40
+        )
+
+    s = pair(part(3), part(4))
+    report = json.loads(diff_step(s, "old", "new"))
+    assert report["planar_deltas"] == []
+    assert report["feature_boundary_changes_count"] == 2
+    assert all(
+        row["area_delta"] == pytest.approx(-7 * math.pi, abs=1e-5)
+        for row in report["feature_boundary_changes"]
+    )
+    hole = next(f for f in report["features"] if f["family"] == "holes")
+    assert all(
+        set(row["explaining_feature_ids"]) == {hole["old"], hole["new"]}
+        for row in report["feature_boundary_changes"]
+    )
+    # Every exposed feature reference can be consumed on exactly its own content.
+    from build123d_mcp.tools.inspect_features import inspect_features
+
+    for target, ref in (("old", hole["old"]), ("new", hole["new"])):
+        assert "error" not in json.loads(inspect_features(s, target, feature_ids=ref))
+    assert "stale" in json.loads(inspect_features(s, "new", feature_ids=hole["old"]))["error"]
+
+
+def test_orphaned_fillet_adjoining_planes_are_boundary_changes():
+    box = Box(30, 30, 10)
+    s = pair(fillet(box.edges().filter_by(Axis.Z), 2), box)
+    report = json.loads(diff_step(s, "old", "new"))
+    assert report["planar_deltas"] == []
+    assert report["feature_boundary_changes_count"] == 6
+    assert all(row["explaining_feature_ids"] for row in report["feature_boundary_changes"])
+    assert any(f["class"] == "orphaned" and f["family"] == "fillets" for f in report["features"])
+
+
+def test_genuine_tangential_translation_of_boss_cap_is_reported():
+    base = Box(60, 50, 6)
+    old = base + Pos(-12, 0, 3) * Box(
+        8,
+        10,
+        8,
+        align=(
+            Align.CENTER,
+            Align.CENTER,
+            Align.MIN,
+        ),
+    )
+    new = base + Pos(12, 0, 3) * Box(
+        8,
+        10,
+        8,
+        align=(
+            Align.CENTER,
+            Align.CENTER,
+            Align.MIN,
+        ),
+    )
+    report = json.loads(diff_step(pair(old, new), "old", "new"))
+    assert any(
+        d["old"]["centroid"][2] == 11
+        and d["normal_offset"] == 0
+        and d["area_delta"] == 0
+        and d["tangential_displacement"] == [24, 0, 0]
+        for d in report["planar_deltas"]
+    )
+
+
+def test_many_feature_changes_preserve_complete_independent_sections(monkeypatch):
+    from specify_core import api
+
+    original = api.diff
+    expected = {}
+
+    def crowded(*args, **kwargs):
+        out = original(*args, **kwargs)
+        expected.update(out["report"]["measures"])
+        template = out["report"]["features"][0]
+        out["report"]["features"] = [
+            {
+                **template,
+                "changes": {f"dimension_{i}": {"old": i, "new": i + 1} for i in range(250)},
+            }
+            for _ in range(500)
+        ]
+        out["report"]["problems"] = {"added": ["keep this independent finding"], "resolved": []}
+        return out
+
+    monkeypatch.setattr(api, "diff", crowded)
+    report = json.loads(
+        diff_step(
+            pair(Box(30, 30, 10) - Cylinder(3, 12), Box(30, 30, 10) - Cylinder(4, 12)), "old", "new"
+        )
+    )
+    for side in ("old", "new"):
+        assert set(report["measures"][side]) == {"volume", "area", "min", "max", "faces"}
+        for key in ("volume", "area", "min", "max", "faces"):
+            assert report["measures"][side][key] == pytest.approx(expected[side][key], abs=1e-5)
+    assert report["problems"] == {"added": ["keep this independent finding"], "resolved": []}
+    assert report["features_truncated"]["total"] == 500
+    assert report["features_truncated"]["shown"] < 500
+    assert report["features"][-1]["omitted"] == 500 - report["features_truncated"]["shown"]
+    no_verdict(report)
+
+
+def test_bare_compare_keeps_shape_default_and_never_calls_fit(monkeypatch):
+    import inspect
+
+    from build123d_mcp import server
+    from build123d_mcp.worker import WorkerSession
+
+    proxy = WorkerSession.__new__(WorkerSession)
+    monkeypatch.setattr(
+        proxy, "clearance", lambda *args: pytest.fail("bare compare must not check fit")
+    )
+    assert "diff_step" in json.loads(proxy.compare("old", "new"))["error"]
+    assert inspect.signature(server.compare).parameters["kind"].default == "shape"
+    monkeypatch.setattr(server, "_resolve_session", lambda: proxy)
+    assert "diff_step" in json.loads(server.compare("old", "new"))["error"]

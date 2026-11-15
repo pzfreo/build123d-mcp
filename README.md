@@ -183,9 +183,9 @@ script, and try the next smaller step.
 After importing a STEP and establishing a valid baseline, call
 `inspect_features(target="part")` for measures and a compact feature inventory.
 Expand `families="holes,bosses,fillets"`, or request analytic face descriptors
-with `feature_ids="holes:12"`. Coordinates match the input model. For a plain
-through hole, `edit_feature(feature_id="holes:12", diameter=8, object_name="part",
-protected_refs='["holes:13"]')` verifies predicted material change, other holes
+with `feature_ids="holes:12@<digest>"`. Coordinates match the input model. For a plain
+through hole, `edit_feature(feature_id="holes:12@<digest>", diameter=8, object_name="part",
+protected_refs='["holes:13@<digest>"]')` verifies predicted material change, other holes
 and the envelope before registering the result. Complex hole stacks are refused.
 Inspect again after edits. Verify revisions with
 `diff_step(old="input.step", new="part", render=True)` and the STEP export gate.

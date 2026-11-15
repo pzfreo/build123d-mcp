@@ -299,23 +299,38 @@ Check whether two named shapes intersect.
 
 ---
 
-### `shape_compare`
-Compare two named shapes by geometry metrics **plus a localized surface-deviation diff**.
+### `inspect_features`
+Inspect a STEP path or registered object (default current shape). A registered
+name wins over an identical path string. With no filters, returns measures plus
+family counts and dimension ranges in under 2 KB. `families="holes,bosses"`
+returns bounded caller-frame feature records; `feature_ids` selects analytic
+face descriptors. `max_features` is 1..100; counts remain exact.
 
-**Inputs:** `object_a`, `object_b` (string) — names from `show()`
+Copy returned ids verbatim, e.g. `holes:7@<digest>`: the suffix binds the id to
+STEP content. Re-inspect after any change; unbound/stale ids are refused.
 
-**Returns:** JSON with:
-- volume delta, bbox delta, topology delta (faces/edges/vertices), and centre offset (as before);
-- `max_deviation` — the largest *real* surface change (noise-floored against an independent shared-deflection tessellation, so a re-export no-op reads ~0);
-- `changed` / `regions` — the localized region(s) that moved: centroid and bbox, plus exact `added_volume` / `removed_volume`;
-- `magnitude_method` — how to read `max_deviation`: `exact_boolean` (exact surface displacement *and* exact volumes), `exact_volume_mesh_displacement` (exact added/removed volume, mesh-estimated displacement — e.g. a cut/flush-fill), or `mesh_estimate` (boolean skipped or failed);
-- `unchanged_elsewhere` (bool) and `warnings`.
+### `diff_step`
+Compare `old` and `new`, each a STEP path or registered object name. Registered
+names take precedence over identical path strings. Returns adapted/orphaned/new
+features, complete measures, analytic planar motion and unclaimed changes.
+`feature_boundary_changes` identifies adjoining host faces whose boundaries
+changed with a feature; their centroid changes are not labelled plane motion.
+Lists are bounded with omission counts. Analytic signatures do not prove trim
+contour equality. `render=True` includes specify-core's native diff overlay.
 
-The exact B-rep boolean is clipped to the located region and runs in a hard-bounded subprocess (in-process fallback where child processes are blocked); on a large/spread edit it gracefully falls back to the flagged mesh estimate rather than overrunning the op budget.
+Use this for revision verification. The former shape comparison route now
+returns an error directing callers here, including a bare `compare(a, b)`.
+`compare(kind="fit"|"align"|"snapshot")` remains available. Native diff analysis
+cost remains upstream in specify-core#180 item 1; the local content cache cannot
+prevent that engine work.
 
-For editing this is **model↔input verification, not a score**: confirm the changed region(s) and the add/remove volumes match the request. Note a *tangential* move (sliding a hole) or a sub-resolution edit on a very large part produces no detected region — `unchanged_elsewhere` then means "no change above the detection floor", not a guarantee; cross-check the volume/bbox/center deltas and `find_holes`.
-
-Useful for verifying a procedural build matches a reference, or quantifying how a modification changed the geometry.
+### `edit_feature`
+Resize one plain through hole by its content-bound `feature_id` and `diameter`.
+`object_name` defaults to the current shape; `result_name` can preserve a named
+source. `protected_refs` is a JSON list of content-bound ids from the same part.
+Refuses stale ids, mismatched live face descriptors and compound hole stacks.
+Registers a result only after predicted material change, other holes and the
+outer envelope pass validation. Coordinates are the caller's frame.
 
 ---
 
@@ -328,7 +343,7 @@ Import a STEP or STL file as a named object in the session.
 
 **Returns:** volume, topology, and bounding box of the imported shape. The shape becomes both the named object and `current_shape`.
 
-Use with `shape_compare()` to verify a procedural build against a reference.
+Use `inspect_features` to inspect the imported part, and `diff_step(old="reference.step", new="model")` to verify revisions.
 
 ---
 

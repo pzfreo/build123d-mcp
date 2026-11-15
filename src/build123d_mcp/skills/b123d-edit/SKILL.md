@@ -98,15 +98,15 @@ construction.
 For an imported B-rep, call `inspect_features(target="part")` for a compact
 inventory, then expand likely families with `families="holes,bosses,fillets"`.
 Records and selected face descriptors use the imported model's coordinates.
-Request descriptors with `feature_ids="holes:12"`; verify kind, centroid and
+Request descriptors with `feature_ids="holes:12@<digest>"`; verify kind, centroid and
 area against live faces before editing. IDs describe the current STEP bytes:
 inspect again after changing geometry. Empty recognition is not permission to
 substitute a nearby feature. Check axis, location and starting dimensions
 against the request, and identify mating interfaces explicitly.
 
 For a plain through hole with one cylindrical wall, use
-`edit_feature(feature_id="holes:12", diameter=8, object_name="part",
-protected_refs='["holes:13"]')`. It checks predicted material change, all other
+`edit_feature(feature_id="holes:12@<digest>", diameter=8, object_name="part",
+protected_refs='["holes:13@<digest>"]')`. It checks predicted material change, all other
 holes and the envelope, and refuses dependent hole stacks or face mismatches.
 For other features, use the manual workflow below and verify with `diff_step`.
 

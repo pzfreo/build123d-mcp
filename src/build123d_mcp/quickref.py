@@ -472,7 +472,7 @@ RUNNABLE_EXAMPLES: list[tuple[str, str]] = [
 STEP_INSPECTION = """
 Inspect STEP paths or registered session objects with inspect_features(target="part").
 Use families="holes,bosses,fillets" for bounded caller-frame feature records, or
-feature_ids="holes:12" for analytic face descriptors. Re-inspect after edits.
+feature_ids="holes:12@<digest>" for analytic face descriptors. Re-inspect after edits.
 Compare revisions with diff_step(old="input.step", new="edited", render=True).
 Use compare(kind="fit"|"align"|"snapshot") for other comparisons.
 """

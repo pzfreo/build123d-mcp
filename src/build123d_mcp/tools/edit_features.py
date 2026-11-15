@@ -97,6 +97,7 @@ def edit_feature(
 ) -> str:
     """Resize one plain through hole, checking predicted change before commit.
 
+    The id and protected_refs must include the digest returned by inspection.
     Only a single cylindrical wall without a counterbore, spotface or
     countersink is accepted. Other feature edits require a different geometric
     contract; silently guessing their dependent geometry would be unsafe.
@@ -115,17 +116,16 @@ def edit_feature(
         source = _resolve_shape(session, object_name)
         source_name = object_name or "@current"
         evidence = build_evidence(source, session)
-        if feature_id not in evidence.features:
-            raise ValueError("unknown or stale feature id; inspect_features() on the current shape")
-        feature = feature_id
+        feature = evidence.analysis.resolve_id(feature_id)
         if evidence.family(feature) != "holes":
             raise ValueError("edit_feature currently supports only plain through holes")
         if not source.is_valid or len(source.solids()) != 1:
             raise ValueError("source must be one valid solid")
-        for ref in protected:
-            if ref not in evidence.features or evidence.family(ref) != "holes":
-                raise ValueError(f"protected feature id {ref!r} is unknown or not a hole")
-        if feature_id in protected:
+        protected_ids = [evidence.analysis.resolve_id(ref) for ref in protected]
+        for ref in protected_ids:
+            if evidence.family(ref) != "holes":
+                raise ValueError(f"protected feature id {ref!r} is not a hole")
+        if feature in protected_ids:
             raise ValueError("target hole is protected; remove it from protected_refs to edit it")
         record = evidence.record(feature).to_dict()
         faces = evidence.constituent_faces(feature)
