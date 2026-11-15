@@ -396,6 +396,12 @@ show(result, "constrained_arc")""",
 ## MCP server conventions
 - Name the final shape 'result' OR call show() — both trigger current_shape auto-detection
 - show(shape, "name")      registers object, prints vol + face count as immediate confirmation
+- Named imports/registrations bind safe names automatically; builtins, imports and unrelated user variables are preserved
+- get_object("name") retrieves the exact registered object inside execute(), including names whose binding was refused
+- Reassigning a bound variable warns; call show(edited, "name") to register the edit
+- select_faces(shape, faces=<descriptor or nonempty list>) uniquely matches distinct live faces from inspect_features; no STEP indices
+- select_faces(shape, kind="plane", direction=(0,0,1)) returns every keyword match; do not combine filters with faces=
+- get_object/select_faces are injected helpers; no import required
 - named_face(shape, "top") returns the highest-Z face; also: bottom/front/back/left/right
 - find_edges(shape, geom="circle", radius=4.25, at_z=10.2) filters edges for fillet/chamfer; prints count + radii + Z levels""",
     ),

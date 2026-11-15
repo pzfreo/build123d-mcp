@@ -31,6 +31,14 @@
 
 ### Fixed
 
+- Warn when an execute variable diverges from its registered geometry; preserve
+  unrelated user variables during registration and report clean access text.
+- Reject mixed filters, empty descriptor lists and repeated live-face resolutions
+  in `select_faces`. Length tolerances no longer relax direction checks; document
+  cone/torus radius semantics and select every feature in inspection examples.
+- Document object bindings, `get_object` and `select_faces` in execute discovery
+  and the quick reference, with worker coverage for transformed face selection.
+
 - **Tool errors reach the client again under mcp 2.3.** The SDK now treats any
   exception other than `ToolError` as a crash and sends only `Error executing
   tool <name>`, which hid messages such as "No shape in session" and the

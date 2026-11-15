@@ -33,14 +33,17 @@ All tool calls share a single Python namespace. Variables and shapes you create 
 `import_cad_file`, `show`, `annotate`, `register_centerline`, `load_part`,
 `edit_feature` and `execute_file` result promotion bind registered objects in
 this same namespace. A safe Python identifier gets `execute_name` in the
-response. Keywords, builtins, session helpers and names reserved by user imports
+response. Keywords, builtins, session helpers, unrelated user variables and names reserved by user imports
 (including aliases and star imports) are not overwritten; responses report the
 collision and show `get_object("name")`, available without an import.
 Noncanonical Unicode identifier spellings also use the accessor because Python
 normalizes identifier references. It returns
 the exact registered object and lists available names on an unknown name.
 Replacements rebind the variable. Assigning an edited shape to a variable alone
-does not register it: use `show(edited, "part")` to replace the registry entry.
+does not register it: execute warns while the variable and registry differ.
+Use `show(edited, "part")` to replace the registry entry. A registration can
+adopt the identical object already held by the variable; it never replaces an
+unrelated user value.
 
 ### Multi-object sessions
 
@@ -322,14 +325,21 @@ is 1..100; counts remain exact.
 Inside `execute()`, `select_faces(part, faces=<one descriptor or list>)` returns
 live build123d `ShapeList` faces by analytic geometry in the caller frame.
 Descriptor ids are metadata, never indices into `part.faces()`. Every descriptor
-must match exactly one face; zero or multiple matches raise a diagnostic.
+must match exactly one distinct face; zero or multiple matches, empty lists,
+repeated resolutions to the same face, and filters combined with `faces=` raise
+a diagnostic. Multi-feature examples select each returned feature separately
+so features that share faces remain usable.
 Keyword mode returns every match, e.g.
 `select_faces(part, kind="plane", direction=(0, 0, 1), area=100)`.
 Filters: `kind`, `centroid`, `area`, `direction`, `radius`. Plane direction is an
 outward normal; curved axes are sign independent. Default tolerances: length
 `max(1e-5 mm, bbox diagonal * 1e-7)`, area `max(1e-5 mm², face area * 1e-7)`,
-direction distance/angle `1e-6`. `tol` overrides each absolute tolerance in its
-respective units. Ambiguity always fails in descriptor mode, even with `tol`.
+direction distance/angle `1e-5` (fixed). `tol` is a length tolerance in mm;
+when supplied, area tolerance is `2*sqrt(face area)*tol + tol²` in mm², the area
+change of a square with side `sqrt(face area)` expanded by `tol`. It never
+relaxes direction checks. `radius` is the reference radius on cones (dependent
+on the surface parameter frame), and the minor radius on tori.
+Ambiguity always fails in descriptor mode, even with `tol`.
 
 Copy returned ids verbatim, e.g. `holes:7@<digest>`: the suffix binds the id to
 STEP content. Re-inspect after any change; unbound/stale ids are refused.

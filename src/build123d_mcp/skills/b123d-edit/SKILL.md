@@ -109,7 +109,14 @@ live `ShapeList` faces by analytic geometry, without trusting STEP indices.
 Every descriptor must uniquely match or raises a clear error. Keyword filters
 return all matches, e.g. `select_faces(part, kind="cylinder", radius=4)`.
 Default length tolerance is max(1e-5 mm, bbox diagonal * 1e-7), area tolerance
-max(1e-5 mm², face area * 1e-7), direction/angle 1e-6; `tol` overrides them.
+max(1e-5 mm², face area * 1e-7), fixed direction/angle 1e-5. `tol` overrides
+length tolerance in mm; area tolerance is then 2*sqrt(face area)*tol + tol²
+(mm²). It never relaxes direction checks. Cone `radius` is the reference radius
+in the surface parameter frame; torus `radius` is the minor radius.
+Descriptor lists must be nonempty and resolve to distinct faces, and cannot be
+combined with keyword filters. A variable reassignment warns until registered
+with `show`; registrations preserve unrelated user variables and report
+`get_object(name)` as the access path when binding is refused.
 IDs describe the current STEP bytes:
 inspect again after changing geometry. Empty recognition is not permission to
 substitute a nearby feature. Check axis, location and starting dimensions
