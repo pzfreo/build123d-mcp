@@ -61,13 +61,17 @@ show(edited, 'edited')
 
 def compare(proxy, code):
     output = ok(proxy, BUILDERS + code + COMPARE)
+    assert_reference_diff(proxy)
+    return output
+
+
+def assert_reference_diff(proxy):
     report = json.loads(proxy.diff_step("reference", "edited"))
     assert "error" not in report, report
     assert report["features"] == [], report
     assert report["planar_deltas"] == [], report
     assert report["unclaimed_face_changes"]["added_count"] == 0, report
     assert report["unclaimed_face_changes"]["removed_count"] == 0, report
-    return output
 
 
 @pytest.mark.parametrize("height", [8, 11])
@@ -220,10 +224,9 @@ def test_refusals_preserve_input(proxy, setup, operation, reason):
 
 
 def test_split_planar_face_volume_and_topology(proxy):
-    output = ok(
+    output = compare(
         proxy,
-        BUILDERS
-        + """
+        """
 part = Box(20,30,10)
 before = signature(part)
 top = select_faces(part, kind='plane', direction=(0,0,1))[0]
@@ -238,7 +241,12 @@ print('absolute_volume_error', abs(edited.volume-part.volume))
 assert abs(edited.volume-part.volume) <= 1e-9*part.volume
 assert (edited.bounding_box().min-part.bounding_box().min).length < 1e-7
 assert (edited.bounding_box().max-part.bounding_box().max).length < 1e-7
-show(edited, 'edited')
+# Independent seven-face reference: sew five block faces and two fresh top patches.
+reference_faces = [f for f in Box(20,30,10).faces() if f.normal_at().Z < 0.9]
+for low, high in [(-15,0), (0,15)]:
+    boundary = Wire.make_polygon([(-10,low,5), (10,low,5), (10,high,5), (-10,high,5)])
+    reference_faces.append(Face(boundary))
+reference = Solid(Shell(reference_faces))
 """,
     )
     assert "absolute_volume_error 0.0" in output
@@ -294,10 +302,9 @@ assert not hasattr(candidate, 'builder')
 
 
 def test_split_cylindrical_generator(proxy):
-    ok(
+    compare(
         proxy,
-        BUILDERS
-        + """
+        """
 part = Cylinder(8,10)
 before = signature(part)
 wall = select_faces(part, kind='cylinder')[0]
@@ -306,6 +313,12 @@ assert len(edited.faces()) == 4
 assert len(select_faces(edited, kind='cylinder')) == 2
 assert abs(edited.volume-part.volume) <= 1e-9*part.volume
 assert signature(part) == before
+# Independent reference: two semicylindrical supports and two circular caps.
+half = Cylinder(8,10,arc_size=180,align=(Align.CENTER,Align.MIN,Align.CENTER))
+reference_faces = list(Cylinder(8,10).faces().filter_by(GeomType.PLANE))
+reference_faces += list(half.faces().filter_by(GeomType.CYLINDER))
+reference_faces += list((Rot(0,0,180)*half).faces().filter_by(GeomType.CYLINDER))
+reference = Solid(Shell(reference_faces))
 """,
     )
 
