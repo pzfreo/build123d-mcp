@@ -148,7 +148,7 @@ def test_render_failure_is_clear_and_no_fabricated_image(monkeypatch):
     from specify_core import api
 
     def unavailable(*args, **kwargs):
-        assert kwargs["image_width"] == 1024
+        assert kwargs["image_width"] == 900
         raise ValueError("native image rendering unavailable")
 
     monkeypatch.setattr(api, "diff", unavailable)
@@ -365,7 +365,7 @@ def test_overlay_reuses_the_single_comparison_and_loaded_handles(monkeypatch):
     monkeypatch.setattr(api, "diff", counted)
     result = diff_step(session, "old", "new", render=True)
     assert result["png"].startswith(b"\x89PNG\r\n\x1a\n")
-    assert calls == [{"image_width": 1024}]
+    assert calls == [{"image_width": 900}]
 
 
 def test_unclaimed_sphere_resize_uses_native_face_report(monkeypatch):

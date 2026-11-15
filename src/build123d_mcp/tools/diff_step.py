@@ -317,7 +317,8 @@ def diff_step(session, old: str, new: str, render: bool = False) -> str | dict:
 
         before = resolve_analysis(session, old)
         after = resolve_analysis(session, new)
-        comparison = api.diff(before.loaded, after.loaded, image_width=1024 if render else None)
+        # Preserve the CLI overlay's 900-pixel width.
+        comparison = api.diff(before.loaded, after.loaded, image_width=900 if render else None)
         report = comparison["report"]
         report["measures"] = {"old": before.measures, "new": after.measures}
         for feature in report.get("features", []):
