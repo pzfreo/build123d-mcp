@@ -205,7 +205,9 @@ class Session:
             elif isinstance(node, ast.ImportFrom):
                 for alias in node.names:
                     if alias.name == "*":
-                        self._star_imports.add(node.module)
+                        # A relative star import (`from . import *`) has no module name.
+                        if node.module:
+                            self._star_imports.add(node.module)
                     else:
                         self._imported_names.add(alias.asname or alias.name)
 
