@@ -250,3 +250,41 @@ def test_rotated_record_fields_are_transformed_or_dropped():
     }
     assert out["diameter"] == 6
     assert not {"z", "x_span", "positions", "unknown_point", "unknown_projection"} & out.keys()
+
+
+def test_rotated_part_drops_product_projection_fields(tmp_path):
+    from build123d import Align, RegularPolygon, extrude
+    from specify_core import api
+
+    part = Box(40, 40, 8) + Pos(0, 0, 4) * extrude(RegularPolygon(8, 6), amount=7)
+    part -= Pos(12, 0, 4) * Box(4, 8, 3, align=(Align.CENTER, Align.CENTER, Align.MAX))
+    placement = Pos(8, 10, 12) * Rot(17, 23, 31)
+    path = tmp_path / "rotated.step"
+    export_step(placement * part, path)
+    native = {f["id"]: f for f in api.analyse(path)["features"]}
+    report = json.loads(
+        inspect_features(
+            Session(), str(path), "polygonal_bosses,risers,step_levels,section_recesses"
+        )
+    )
+    assert report["features"] and "error" not in report
+    assert any(f["family"] == "risers" for f in report["features"])
+    for feature in report["features"]:
+        original = native[feature["id"].partition("@")[0]]["record"]
+        assert (
+            not {
+                "z",
+                "x_span",
+                "y_span",
+                "positions",
+                "other_positions",
+                "z_lo",
+                "z_hi",
+                "body_key",
+            }
+            & feature.keys()
+        )
+        for field in ("origin", "center", "location", "at"):
+            if field in original:
+                expected = (placement * Vertex(*original[field])).center()
+                assert feature[field] == pytest.approx(tuple(expected), abs=1e-5)

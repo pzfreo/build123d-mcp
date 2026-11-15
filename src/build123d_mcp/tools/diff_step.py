@@ -138,13 +138,14 @@ def face_diff(
         offset = sum(d * n for d, n in zip(delta, face["direction"]))
         area_delta = other["area"] - face["area"]
         explaining = sorted(old_hosts.get(face["id"], set()) | new_hosts.get(other["id"], set()))
-        if (
-            abs(offset) <= 1e-5
-            and explaining
-            and not _translated_boundary(
+        translated = (
+            abs(area_delta) <= 1e-5
+            and math.dist(delta, (0, 0, 0)) > 1e-5
+            and _translated_boundary(
                 before_geometry, face["id"], after_geometry, other["id"], delta
             )
-        ):
+        )
+        if abs(offset) <= 1e-5 and explaining and not translated:
             boundary_changes.append(
                 {
                     "face_id": face["id"],
@@ -153,9 +154,7 @@ def face_diff(
                     "explaining_feature_ids": explaining,
                 }
             )
-        elif abs(offset) <= 1e-5 and (
-            abs(area_delta) > 1e-5 or math.dist(delta, (0, 0, 0)) <= 1e-5
-        ):
+        elif abs(offset) <= 1e-5 and (abs(area_delta) > 1e-5 or not translated):
             modified.append(
                 {
                     "old": compact(face),
@@ -246,6 +245,35 @@ def _bounded(value, budget=1800):
     return visit(value)
 
 
+def _caller_changes(changes, before, after):
+    out = {}
+    for key, item in changes.items():
+        if key.startswith("sizes.") or key in {"bottom", "cbore", "spotface", "csink"}:
+            out[key] = item
+        elif key in {
+            "position",
+            "location",
+            "center",
+            "origin",
+            "at",
+            "axis",
+            "direction",
+            "normal",
+        }:
+            if isinstance(item, dict) and all(
+                isinstance(item.get(side), list) and len(item[side]) == 3 for side in ("old", "new")
+            ):
+                out[key] = {
+                    side: transform_vector(
+                        item[side],
+                        source.placement,
+                        point=key not in {"axis", "direction", "normal"},
+                    )
+                    for side, source in (("old", before), ("new", after))
+                }
+    return out
+
+
 def _bind_references(value, before, after, side="new"):
     if isinstance(value, dict):
         return {
@@ -310,6 +338,8 @@ def diff_step(session, old: str, new: str, render: bool = False) -> str | dict:
         report = api.diff(before.loaded, after.loaded)["report"]
         report["measures"] = {"old": before.measures, "new": after.measures}
         for feature in report.get("features", []):
+            if "changes" in feature:
+                feature["changes"] = _caller_changes(feature["changes"], before, after)
             source = after if feature.get("class") == "new" else before
             if isinstance(feature.get("at"), list):
                 feature["at"] = transform_vector(feature["at"], source.placement, point=True)

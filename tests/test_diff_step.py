@@ -218,7 +218,7 @@ def test_orphaned_fillet_adjoining_planes_are_boundary_changes():
     assert any(f["class"] == "orphaned" and f["family"] == "fillets" for f in report["features"])
 
 
-def test_genuine_tangential_translation_of_boss_cap_is_reported():
+def test_genuine_tangential_translation_of_boss_cap_and_wall_is_reported():
     base = Box(60, 50, 6)
     old = base + Pos(-12, 0, 3) * Box(
         8,
@@ -249,6 +249,31 @@ def test_genuine_tangential_translation_of_boss_cap_is_reported():
         for d in report["planar_deltas"]
     )
 
+    assert any(
+        d["old"]["centroid"][2] == 7
+        and abs(d["old"]["direction"][1]) == 1
+        and d["normal_offset"] == 0
+        and d["area_delta"] == 0
+        and d["tangential_displacement"] == [24, 0, 0]
+        for d in report["planar_deltas"]
+    )
+    assert not any(
+        d["old"]["centroid"][2] == 3 and d["normal_offset"] == 0 for d in report["planar_deltas"]
+    )
+
+
+def test_rotated_revision_motion_uses_caller_frame(tmp_path):
+    from build123d import Rot
+
+    placement = Pos(10, 20, 30) * Rot(0, 0, 90)
+    before, after = tmp_path / "old.step", tmp_path / "new.step"
+    export_step(placement * (Box(40, 30, 10) - Cylinder(3, 12)), before)
+    export_step(placement * (Box(40, 30, 10) - Pos(5, 0, 0) * Cylinder(4, 12)), after)
+    report = json.loads(diff_step(Session(), str(before), str(after)))
+    hole = next(f for f in report["features"] if f["family"] == "holes")
+    assert hole["changes"]["position"]["old"] == pytest.approx([10, 20, 30], abs=1e-5)
+    assert hole["changes"]["position"]["new"] == pytest.approx([10, 25, 30], abs=1e-5)
+
 
 def test_many_feature_changes_preserve_complete_independent_sections(monkeypatch):
     from specify_core import api
@@ -263,7 +288,7 @@ def test_many_feature_changes_preserve_complete_independent_sections(monkeypatch
         out["report"]["features"] = [
             {
                 **template,
-                "changes": {f"dimension_{i}": {"old": i, "new": i + 1} for i in range(250)},
+                "changes": {f"sizes.dimension_{i}": {"old": i, "new": i + 1} for i in range(250)},
             }
             for _ in range(500)
         ]
