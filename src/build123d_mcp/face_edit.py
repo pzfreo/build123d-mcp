@@ -59,7 +59,6 @@ def _solid_from_shells(raw, shell_count):
 
 def _finish(result, original, *, extra_faces=0):
     from OCP.BOPAlgo import BOPAlgo_CheckerSI
-    from OCP.TopTools import TopTools_ListOfShape
 
     from build123d_mcp.tools.validate import _gate_report
 
@@ -75,10 +74,8 @@ def _finish(result, original, *, extra_faces=0):
     if len(result.solids()) != 1 or len(result.shells()) != len(original.shells()):
         raise ValueError("topology change: expected one closed Solid with the original shells")
     # BRepCheck does not detect all geometrically crossing faces/void shells.
-    args = TopTools_ListOfShape()
-    args.Append(result.wrapped)
     checker = BOPAlgo_CheckerSI()
-    checker.SetArguments(args)
+    checker.AddArgument(result.wrapped)
     checker.SetNonDestructive(True)
     checker.SetLevelOfCheck(5)
     checker.Perform()
@@ -132,7 +129,8 @@ def translate_faces(shape, faces, vector):
     from OCP.gp import gp_Trsf
     from OCP.ShapeFix import ShapeFix_Face
     from OCP.TopAbs import TopAbs_FORWARD
-    from OCP.TopoDS import TopoDS
+
+    from build123d_mcp._ocp_compat import to_edge, to_face, to_wire
 
     try:
         vector = _vector(vector)
@@ -161,7 +159,7 @@ def translate_faces(shape, faces, vector):
                 raise ValueError(f"connecting edge {edge.geom_type.name} cannot be extended")
             # Normalize orientation before replacing curve geometry. A boolean may
             # enumerate the same edge reversed in its first incident face.
-            edge = Edge(TopoDS.Edge_s(edge.wrapped.Oriented(TopAbs_FORWARD)))
+            edge = Edge(to_edge(edge.wrapped.Oriented(TopAbs_FORWARD)))
             vertices = sorted(
                 edge.vertices(), key=lambda v: (Vector(v) - edge.position_at(0)).length
             )
@@ -194,11 +192,11 @@ def translate_faces(shape, faces, vector):
                     raise ValueError(
                         f"non-analytic neighbour {face.geom_type.name} cannot be extended"
                     )
-                forward = Face(TopoDS.Face_s(face.wrapped.Oriented(TopAbs_FORWARD)))
-                outer = TopoDS.Wire_s(replacements.Apply(forward.outer_wire().wrapped))
+                forward = Face(to_face(face.wrapped.Oriented(TopAbs_FORWARD)))
+                outer = to_wire(replacements.Apply(forward.outer_wire().wrapped))
                 maker = BRepBuilderAPI_MakeFace(BRep_Tool.Surface_s(face.wrapped), outer, True)
                 for wire in forward.inner_wires():
-                    maker.Add(TopoDS.Wire_s(replacements.Apply(wire.wrapped)))
+                    maker.Add(to_wire(replacements.Apply(wire.wrapped)))
                 rebuilt = maker.Face()
                 rebuilt.Orientation(face.wrapped.Orientation())
                 fix = ShapeFix_Face(rebuilt)
