@@ -580,8 +580,11 @@ async def _mcp_session(coro, cwd=None, extra_args=()):
     from mcp.client.stdio import StdioServerParameters, stdio_client
 
     params = StdioServerParameters(
-        command="uv",
-        args=["run", "build123d-mcp", *extra_args],
+        # Exercise the installed server in this test environment. A nested
+        # uv run would re-resolve unpublished dependency upgrades or replace
+        # the wheel under test with the published version.
+        command=sys.executable,
+        args=["-m", "build123d_mcp.cli", *extra_args],
         cwd=cwd or SERVER_DIR,
     )
     async with stdio_client(params) as (read, write):
