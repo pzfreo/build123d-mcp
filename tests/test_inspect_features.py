@@ -184,3 +184,20 @@ def test_path_security_size_and_extension(featured_session, monkeypatch, tmp_pat
     monkeypatch.setenv("BUILD123D_MAX_CAD_BYTES", "10")
     assert "exceeding" in json.loads(inspect_features(featured_session, str(path)))["error"]
     assert "path" in json.loads(inspect_features(featured_session, "missing.stl"))["error"]
+
+
+def test_translated_fillet_record_point_is_in_caller_frame(tmp_path):
+    from build123d import Axis, fillet
+
+    s = Session()
+    part = fillet(Box(30, 30, 10).edges().filter_by(Axis.Z), 2)
+    before, after = tmp_path / "before.step", tmp_path / "after.step"
+    export_step(part, before)
+    export_step(Pos(50, 70, 90) * part, after)
+    old = json.loads(inspect_features(s, str(before), "fillets"))["features"]
+    new = json.loads(inspect_features(s, str(after), "fillets"))["features"]
+    assert old and len(old) == len(new)
+    for a, b in zip(old, new):
+        assert b["at"] == pytest.approx(
+            [v + delta for v, delta in zip(a["at"], (50, 70, 90))], abs=1e-5
+        )

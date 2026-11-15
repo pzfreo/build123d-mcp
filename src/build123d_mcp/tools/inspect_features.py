@@ -7,7 +7,16 @@ from build123d_mcp.tools._recognition import resolve_analysis
 
 _MAX_FEATURES = 100
 _MAX_BYTES = 32_000
-_DIMENSIONS = ("diameter", "radius", "height", "depth", "width", "length")
+_DIMENSIONS = (
+    "diameter",
+    "radius",
+    "height",
+    "depth",
+    "width",
+    "length",
+    "across_flats",
+    "thickness",
+)
 # Empty families are still queryable on a plain box.
 _FAMILIES = {
     "holes",

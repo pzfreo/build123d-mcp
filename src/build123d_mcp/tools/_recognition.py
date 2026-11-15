@@ -88,6 +88,8 @@ def _caller_geometry(value, placement):
     center = value.get("center")
     if isinstance(axis, str) and axis.lower() in {"x", "y", "z"} and isinstance(center, list):
         index = "xyz".index(axis.lower())
+        if all(isinstance(value.get(key), (int, float)) for key in ("base", "top")):
+            value.setdefault("height", abs(value["top"] - value["base"]))
         for end in ("base", "top"):
             if isinstance(value.get(end), (int, float)):
                 point = list(center)
@@ -105,6 +107,7 @@ def _caller_geometry(value, placement):
             key
             in {
                 "location",
+                "at",
                 "centroid",
                 "origin",
                 "center",
@@ -122,7 +125,7 @@ def _caller_geometry(value, placement):
                 item,
                 placement,
                 point=key
-                in {"location", "centroid", "origin", "center", "base_point", "top_point"},
+                in {"location", "at", "centroid", "origin", "center", "base_point", "top_point"},
             )
         else:
             out[key] = _caller_geometry(item, placement)

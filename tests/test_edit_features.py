@@ -50,6 +50,7 @@ def test_polygonal_boss_inspection_has_axis_and_dimensions():
     boss = report["features"][0]
     assert boss["side_count"] == 6 and boss["across_flats"] > 0
     assert abs(boss["axis"][2]) == 1
+    assert boss["height"] == 7
 
 
 def test_hole_ids_and_faces_identify_interfaces(drilled_plate):
