@@ -380,7 +380,12 @@ def test_unclaimed_sphere_resize_uses_native_face_report(monkeypatch):
         return out
 
     monkeypatch.setattr(api, "diff", capture)
-    report = json.loads(diff_step(pair(Sphere(10), Sphere(11)), "old", "new"))
+    session = pair(Sphere(10), Sphere(11))
+    identical = json.loads(diff_step(session, "old", "old"))
+    assert identical["unchanged_faces"] == 1
+    assert identical["unclaimed_face_changes"]["removed_count"] == 0
+    assert identical["unclaimed_face_changes"]["added_count"] == 0
+    report = json.loads(diff_step(session, "old", "new"))
     assert report["features"] == []
     assert len(native["other_faces"]) == 1
     change = native["other_faces"][0]
