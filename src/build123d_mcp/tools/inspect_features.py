@@ -98,15 +98,22 @@ def inspect_features(
                         summary[key] = [round(min(values), 3), round(max(values), 3)]
                 inventory[family] = summary
             result = {"measures": compact(analysis.measures), "inventory": inventory}
-            # Keep counts for every family even on complex parts. Dimension
-            # ranges are bounded separately, with an explicit omission notice.
-            if len(json.dumps(result)) >= 2000:
-                for entry in inventory.values():
-                    for key in list(entry):
-                        if key != "count":
-                            del entry[key]
-                result["ranges_omitted"] = True
-            return json.dumps(result, separators=(",", ":"))
+            text = json.dumps(result, separators=(",", ":"))
+            if len(text.encode()) >= 2000:
+                # Keep every count AND range: a shared column table saves
+                # repeated field names on inventories with many families.
+                columns = [
+                    key for key in _DIMENSIONS if any(key in row for row in inventory.values())
+                ]
+                result["inventory_columns"] = ["count", *columns]
+                result["inventory"] = {
+                    family: [row["count"], *(row.get(key) for key in columns)]
+                    for family, row in inventory.items()
+                }
+                text = json.dumps(result, separators=(",", ":"))
+            if len(text.encode()) >= 2000:
+                raise ValueError("inventory exceeds 2 KB; query specific families")
+            return text
         if feature_ids:
             requested = list(dict.fromkeys(f.strip() for f in feature_ids.split(",") if f.strip()))
             by_id = {f["id"]: f for f in features}

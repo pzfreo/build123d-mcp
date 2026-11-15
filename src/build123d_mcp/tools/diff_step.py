@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from collections import defaultdict
 
 from build123d_mcp.tools._recognition import resolve_analysis, transform_vector
@@ -180,6 +181,7 @@ def diff_step(session, old: str, new: str, render: bool = False) -> str | dict:
     try:
         from specify_core import api
 
+        deadline = time.monotonic() + session.exec_timeout
         before = resolve_analysis(session, old)
         after = resolve_analysis(session, new)
         report = api.diff(before.loaded, after.loaded)["report"]
@@ -190,6 +192,17 @@ def diff_step(session, old: str, new: str, render: bool = False) -> str | dict:
             source = after if feature.get("class") == "new" else before
             if isinstance(feature.get("at"), list):
                 feature["at"] = transform_vector(feature["at"], source.placement, point=True)
+            old_feature = next(
+                (f for f in before.document["features"] if f["id"] == feature.get("old")), None
+            )
+            new_feature = next(
+                (f for f in after.document["features"] if f["id"] == feature.get("new")), None
+            )
+            if old_feature and new_feature:
+                for field in ("location", "axis"):
+                    a, b = old_feature["record"].get(field), new_feature["record"].get(field)
+                    if isinstance(a, list) and isinstance(b, list) and math.dist(a, b) > 1e-5:
+                        feature.setdefault("changes", {})["caller." + field] = {"old": a, "new": b}
         # place is upstream's product-frame prose; omit it when placement is
         # non-identity rather than returning misleading caller-frame labels.
         identity = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]
@@ -207,7 +220,9 @@ def diff_step(session, old: str, new: str, render: bool = False) -> str | dict:
         if render:
             return {
                 "report": text,
-                "png": _render_overlay(before.step, after.step, session.exec_timeout),
+                "png": _render_overlay(
+                    before.step, after.step, max(0.1, deadline - time.monotonic() - 1)
+                ),
             }
         return text
     except Exception as exc:
