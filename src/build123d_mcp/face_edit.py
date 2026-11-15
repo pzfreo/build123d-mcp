@@ -5,10 +5,27 @@ user code; modules, builders and operation histories remain internal.
 """
 
 import math
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any
 
 # A real module-level dependency also keeps this server-internal module out of
 # security.py's transitively-safe user import set. OCP imports stay restricted.
 from OCP.BRepOffset import BRepOffset_MakeOffset
+
+# Execution-local state never enters the user namespace. ContextVar keeps parallel
+# in-process sessions isolated and the context manager restores it on every error.
+_gate_session: ContextVar[Any] = ContextVar("face_edit_gate_session", default=None)
+
+
+@contextmanager
+def _gate_context(session: Any) -> Iterator[None]:
+    token = _gate_session.set(session)
+    try:
+        yield
+    finally:
+        _gate_session.reset(token)
 
 
 def _vector(value):
@@ -60,13 +77,13 @@ def _solid_from_shells(raw, shell_count):
 def _finish(result, original, *, extra_faces=0):
     from OCP.BOPAlgo import BOPAlgo_CheckerSI
 
-    from build123d_mcp.tools.validate import _gate_report
+    from build123d_mcp.tools.validate import _validate_gate
 
     if len(result.faces()) != len(original.faces()) + extra_faces:
         raise ValueError("topology change: a face collapsed, disappeared or split unexpectedly")
     if any(f.area <= 1e-10 for f in result.faces()):
         raise ValueError("topology change: a face collapsed to zero area")
-    report = _gate_report(result, exact=True, early_exit=True)
+    report = _validate_gate(_gate_session.get(), result)
     if not report["passes_gate"] or report["mesh_check"] not in {"exact", "exact-subprocess"}:
         raise ValueError(
             "validity gate refused result: " + "; ".join(report["reasons"] + report["warnings"])

@@ -429,3 +429,42 @@ def test_foreign_empty_duplicate_and_nonfinite_selections(proxy):
         assert output.startswith("Error: ValueError:"), output
         assert reason in output, output
         ok(proxy, "assert signature(part) == before")
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "translate_faces(part, select_faces(part, kind='plane', direction=(0,0,1)), (0,0,2))",
+        "offset_faces(part, select_faces(part, kind='plane', direction=(1,0,0)), 2)",
+        "split_face_chord(part, select_faces(part, kind='plane', direction=(0,0,1))[0], (-10,0,5), (10,0,5))",
+    ],
+)
+def test_face_helpers_use_shared_large_shape_gate_policy(monkeypatch, operation):
+    from build123d_mcp import face_edit
+    from build123d_mcp.session import Session
+    from build123d_mcp.tools import _bounded, validate
+
+    session = Session(exec_timeout=60)
+    # Exercise the real size-based policy and real child on a cheap solid. A
+    # timing assertion would be flaky and would not prove the route was shared.
+    monkeypatch.setattr(_bounded, "_FACE_GATE", 1)
+    original = validate._validate_gate
+    reports = []
+    contexts = []
+
+    def gate(context, shape):
+        contexts.append(context)
+        report = original(context, shape)
+        reports.append(report)
+        return report
+
+    monkeypatch.setattr(validate, "_validate_gate", gate)
+    ok(session, "from build123d import *\npart = Box(20,30,10)")
+    ok(session, "edited = " + operation)
+    assert contexts == [session]
+    assert len(reports) == 1 and reports[0]["passes_gate"]
+    assert reports[0]["mesh_check"] == "exact-subprocess"
+    assert face_edit._gate_session.get() is None
+    output = session.execute("translate_faces(part, [], (0,0,1))")
+    assert "faces must be a nonempty selection" in output
+    assert face_edit._gate_session.get() is None

@@ -901,8 +901,10 @@ class Session:
         except (OSError, ValueError, AttributeError):
             pass  # Windows (no SIGALRM) or non-main thread; no timeout protection
 
+        from build123d_mcp.face_edit import _gate_context
+
         try:
-            with redirect_stdout(buf), redirect_stderr(buf):
+            with redirect_stdout(buf), redirect_stderr(buf), _gate_context(self):
                 exec(compiled, self.namespace)  # noqa: S102
             # Cancel alarm immediately so it cannot fire during post-exec shape detection.
             if _alarm_set:
