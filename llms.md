@@ -35,7 +35,9 @@ All tool calls share a single Python namespace. Variables and shapes you create 
 this same namespace. A safe Python identifier gets `execute_name` in the
 response. Keywords, builtins, session helpers and names reserved by user imports
 (including aliases and star imports) are not overwritten; responses report the
-collision and show `get_object("name")`, available without an import. It returns
+collision and show `get_object("name")`, available without an import.
+Noncanonical Unicode identifier spellings also use the accessor because Python
+normalizes identifier references. It returns
 the exact registered object and lists available names on an unknown name.
 Replacements rebind the variable. Assigning an edited shape to a variable alone
 does not register it: use `show(edited, "part")` to replace the registry entry.

@@ -105,7 +105,7 @@ def test_snapshot_restore_reset_unknown_names(proxy):
 
 
 @pytest.mark.parametrize(
-    "name", ["list", "open", "Box", "math", "pi_alias", "bad-name", "for", "show"]
+    "name", ["list", "open", "Box", "math", "pi_alias", "bad-name", "for", "show", "ｌｉｓｔ"]
 )
 def test_import_collision_is_reported_and_accessible(proxy, tmp_path, name):
     path = tmp_path / "box.step"

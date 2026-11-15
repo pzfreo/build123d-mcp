@@ -6,6 +6,7 @@ import keyword
 import signal
 import sys
 import time
+import unicodedata
 from contextlib import redirect_stderr, redirect_stdout
 from typing import Any
 
@@ -98,6 +99,8 @@ class Session:
     def _binding_reason(self, name: str) -> str | None:
         if not name.isidentifier() or keyword.iskeyword(name):
             return "not a Python identifier (or is a keyword)"
+        if unicodedata.normalize("NFKC", name) != name:
+            return "Python normalizes this identifier spelling; use get_object for exact access"
         if name in vars(builtins) or name in _INJECTED:
             return "reserved builtin or session helper"
         if name in self._imported_names or any(
