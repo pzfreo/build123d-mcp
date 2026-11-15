@@ -387,6 +387,9 @@ def test_unclaimed_sphere_resize_uses_native_face_report(monkeypatch):
     assert change["class"] == "adapted"
     unclaimed = report["unclaimed_face_changes"]
     assert unclaimed["removed_count"] == unclaimed["added_count"] == 1
-    assert unclaimed["removed"][0]["radius"] == 10
-    assert unclaimed["added"][0]["radius"] == 11
+    # Spheres are native "other" surfaces: the public descriptors expose
+    # their area, not a sphere radius.
+    assert unclaimed["removed"][0]["kind"] == unclaimed["added"][0]["kind"] == "other"
+    assert unclaimed["removed"][0]["area"] == pytest.approx(4 * math.pi * 10**2)
+    assert unclaimed["added"][0]["area"] == pytest.approx(4 * math.pi * 11**2)
     assert [unclaimed[side][0]["area"] for side in ("removed", "added")] == change["area"]
