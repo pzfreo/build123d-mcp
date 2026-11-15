@@ -158,6 +158,12 @@ def test_path_and_object_have_same_inventory(featured_session, tmp_path):
     assert json.loads(inspect_features(featured_session, str(path))) == json.loads(
         inspect_features(featured_session, "plate")
     )
+    from build123d_mcp.tools.import_step import import_cad_file
+
+    import_cad_file(featured_session, str(path), "imported")
+    assert json.loads(inspect_features(featured_session, str(path))) == json.loads(
+        inspect_features(featured_session, "imported")
+    )
 
 
 def test_cache_is_bounded_and_temp_paths_cleaned(featured_session):

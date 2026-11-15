@@ -19,12 +19,11 @@ _FACE_TOLERANCE = 1e-5
 
 
 def _step_bytes(shape: Any) -> bytes:
-    from build123d import export_step
+    from build123d_mcp.tools.export import _write_step
 
     with tempfile.TemporaryDirectory(prefix="build123d_inspect_") as directory:
         path = os.path.join(directory, "model.step")
-        if not export_step(shape, path):
-            raise ValueError("could not export the shape to STEP for inspection")
+        _write_step(shape, path)
         with open(path, "rb") as stream:
             data = stream.read()
     # OCCT writes a clock timestamp even for identical geometry. Canonicalise
