@@ -143,7 +143,14 @@ def translate_faces(shape, faces, vector):
         moved_edges = {e for f in selected for e in f.edges()}
         moved_vertices = {v: Vector(v) + vector for f in selected for v in f.vertices()}
         for edge in moved_edges:
-            replacements.Replace(edge.wrapped, moved.ModifiedShape(edge.wrapped))
+            # ReShape normalizes the old edge orientation. Transform history can
+            # report the orientation from a different incident face (notably the
+            # inner wire of a holed cap), so normalize the new edge as well.
+            # Otherwise a periodic neighbour loses its forward/reverse seam pairing.
+            forward_edge = edge.wrapped.Oriented(TopAbs_FORWARD)
+            replacements.Replace(
+                forward_edge, moved.ModifiedShape(forward_edge).Oriented(TopAbs_FORWARD)
+            )
         for face in source.faces():
             if face in selected or not any(e in moved_edges for e in face.edges()):
                 continue

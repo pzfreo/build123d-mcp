@@ -31,6 +31,13 @@ def boss(height):
     body = base + post
     return fillet(body.edges().filter_by(GeomType.CIRCLE).sort_by(Axis.Z)[-1:], 3)
 
+def bored_boss(height, foot_fillet):
+    body = boss(height)
+    if foot_fillet:
+        body = fillet(body.edges().filter_by(GeomType.CIRCLE).sort_by(Axis.Z)[:1], 2)
+    bore = Pos(0,0,-1) * Cylinder(10, height+12, align=(Align.CENTER,Align.CENTER,Align.MIN))
+    return body - bore
+
 def pocket(right):
     # Rebuild the rounded cutter from dimensions, independently of the edit.
     stock = Box(80, 60, 20, align=(Align.CENTER, Align.CENTER, Align.MIN))
@@ -86,6 +93,34 @@ blend = select_faces(part, kind='torus', radius=3)
 assert len(cap) == len(blend) == 1
 edited = translate_faces(part, cap + blend, (0,0,{height - 13}))
 reference = boss({height})
+""",
+    )
+
+
+def test_translate_holed_top_face_preserves_bore_seam(proxy):
+    compare(
+        proxy,
+        """
+part = Box(20,20,10) - Cylinder(3,20)
+before = signature(part)
+edited = translate_faces(part, select_faces(part, kind='plane', direction=(0,0,1)), (0,0,2))
+reference = Pos(0,0,1)*Box(20,20,12) - Cylinder(3,20)
+""",
+    )
+
+
+@pytest.mark.parametrize("foot_fillet", [False, True])
+def test_shorten_through_bored_filleted_boss(proxy, foot_fillet):
+    compare(
+        proxy,
+        f"""
+part = bored_boss(13, {foot_fillet})
+before = signature(part)
+cap = select_faces(part, kind='plane', centroid=(0,0,23))
+blend = select_faces(part, kind='torus', radius=3)
+assert len(cap) == len(blend) == 1
+edited = translate_faces(part, cap + blend, (0,0,-5))
+reference = bored_boss(8, {foot_fillet})
 """,
     )
 
