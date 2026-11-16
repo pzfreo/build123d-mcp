@@ -63,9 +63,12 @@
 - Add `diff_step` for feature revision changes and index-independent analytic
   face changes, including bare planar offsets and tangential moves. Strip PMI
   verdicts; optional overlays use the Python diff API's same comparison.
-  Upstream supplies unclaimed non-planar face changes. Caller-frame unchanged
-  counts, planar motion and verified host-face boundary changes remain local
-  because upstream aligns rigid motion and omits individual context faces.
+  Caller-frame signatures account for unchanged and unclaimed curved faces;
+  upstream plane pairings supplement local motion and host-boundary checks.
+  Multi-solid parts and nested single-instance assemblies retain every solid
+  and their placements. Errors include exception types. Overlays are refused
+  above 500 combined faces; pathological smaller native renders can still
+  exhaust the worker budget because the native API has no cancellation hook.
 - Remove the previous recognition/candidate/interface tools and stateful feature
   handles. `edit_feature` accepts content-bound feature ids and verifies live face
   mapping before mutation. `compare(kind="shape")` now directs callers to

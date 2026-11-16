@@ -397,3 +397,35 @@ def test_unclaimed_sphere_resize_uses_native_face_report(monkeypatch):
     assert unclaimed["removed"][0]["area"] == pytest.approx(4 * math.pi * 10**2)
     assert unclaimed["added"][0]["area"] == pytest.approx(4 * math.pi * 11**2)
     assert [unclaimed[side][0]["area"] for side in ("removed", "added")] == change["area"]
+
+
+def test_render_face_limit_refuses_overlay_without_losing_session(monkeypatch):
+    from specify_core import api
+
+    monkeypatch.setattr("build123d_mcp.tools.diff_step._MAX_RENDER_FACES", 12)
+    original = api.diff
+    calls = []
+
+    def counted(*args, **kwargs):
+        calls.append(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(api, "diff", counted)
+    session = pair(Box(30, 30, 10) - Cylinder(3, 12), Box(30, 30, 10) - Cylinder(4, 12))
+    old = session.objects["old"]
+    result = diff_step(session, "old", "new", render=True)
+    assert "png" not in result
+    message = json.loads(result["report"])["error"]
+    assert message.startswith("ValueError:")
+    assert "at most 12 faces" in message and "found 14" in message
+    assert "render=False" in message
+    assert calls == []
+    assert session.objects["old"] is old
+    assert "error" not in json.loads(diff_step(session, "old", "new"))
+    assert calls == [{"image_width": None}]
+
+
+def test_render_at_face_limit_uses_native_overlay(monkeypatch):
+    monkeypatch.setattr("build123d_mcp.tools.diff_step._MAX_RENDER_FACES", 12)
+    result = diff_step(pair(Box(10, 10, 10), Box(11, 10, 10)), "old", "new", render=True)
+    assert result["png"].startswith(b"\x89PNG\r\n\x1a\n")

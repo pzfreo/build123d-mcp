@@ -10,6 +10,7 @@ from build123d_mcp.tools._recognition import resolve_analysis, transform_vector
 from build123d_mcp.tools.inspect_features import compact
 
 _MAX_ROWS = 50
+_MAX_RENDER_FACES = 500
 
 
 def _signature(face):
@@ -80,19 +81,16 @@ def face_diff(
 ) -> dict:
     """Match multisets of analytic signatures before pairing changed planes.
 
-    Upstream owns unclaimed non-planar correspondence. Retain caller-frame
-    signature counts and planar evidence: upstream aligns whole-part motion,
-    omits feature context indices, and cannot distinguish tangential trim motion
-    from a moving host boundary. These are existing tool output semantics.
+    Caller-frame signatures own all face accounting. Upstream may pair changed
+    planes, but its aligned comparison and feature/context exclusions must not
+    hide caller-frame curved changes or change our unchanged-face count.
     """
-    # Native "other" surfaces can be reported changed even on a self-diff.
-    same_source = old is new and not report["other_faces"]
     buckets = defaultdict(list)
-    for face in () if same_source else new["faces"]:
+    for face in new["faces"]:
         buckets[_signature(face)].append(face)
     unmatched_old = []
-    unchanged = report["unchanged_faces"] if same_source else 0
-    for face in () if same_source else old["faces"]:
+    unchanged = 0
+    for face in old["faces"]:
         matches = buckets[_signature(face)]
         if matches:
             matches.pop()
@@ -104,10 +102,12 @@ def face_diff(
     for side, document in (("old", old), ("new", new)):
         ids = {f.get(side) for f in report.get("features", [])}
         claimed.append({i for f in document["features"] if f["id"] in ids for i in f["faces"]})
-    before = [f for f in unmatched_old if f["kind"] == "plane" and f["id"] not in claimed[0]]
-    after = [f for f in unmatched_new if f["kind"] == "plane" and f["id"] not in claimed[1]]
+    before = [f for f in unmatched_old if f["id"] not in claimed[0]]
+    after = [f for f in unmatched_new if f["id"] not in claimed[1]]
 
     def distance(a, b):
+        if a["kind"] != "plane" or b["kind"] != "plane":
+            return math.inf
         if sum(x * y for x, y in zip(a["direction"], b["direction"])) < 1 - 1e-8:
             return math.inf
         return math.dist(a["centroid"], b["centroid"]) + abs(
@@ -129,6 +129,8 @@ def face_diff(
     native_pairs = {c["old"]: c["new"] for c in report["other_faces"] if "old" in c and "new" in c}
     new_indices = {f["id"]: i for i, f in enumerate(after)}
     for i, face in enumerate(before):
+        if face["kind"] != "plane":
+            continue
         j = new_indices.get(native_pairs.get(face["id"]))
         if j is None or not math.isfinite(distance(face, after[j])):
             # Native context faces are counted but not indexed, and aligned
@@ -183,17 +185,6 @@ def face_diff(
         paired_new.add(j)
     removed = [compact(f) for i, f in enumerate(before) if i not in paired_old]
     added = [compact(f) for i, f in enumerate(after) if i not in paired_new]
-    # Keep the established removed/added descriptor representation for changed
-    # non-planar surfaces, using upstream's feature/context exclusion and pairing.
-    for side, rows, unmatched in (("old", removed, unmatched_old), ("new", added, unmatched_new)):
-        faces = {f["id"]: f for f in unmatched}
-        rows.extend(
-            compact(faces[change[side]])
-            for change in report["other_faces"]
-            # Native "other" surfaces may be adapted despite identical
-            # analytic descriptors (e.g. an offset sphere versus a fresh one).
-            if change.get(side) in faces and faces[change[side]]["kind"] != "plane"
-        )
     return {
         "unchanged_faces": unchanged,
         "planar_deltas": planar[:_MAX_ROWS],
@@ -312,12 +303,22 @@ def diff_step(session, old: str, new: str, render: bool = False) -> str | dict:
     moves. Counts are exact; expanded lists are bounded. render=True includes
     specify-core's overlay from the same comparison. A registered name
     wins over an identical path string. Feature ids include their STEP digest.
+    Overlays are refused above 500 faces across both parts. Native rendering has
+    no cancellation/deadline API: a pathological smaller part can still exhaust
+    the worker budget and lose the session. Use render=False for such parts.
     """
     try:
         from specify_core import api
 
         before = resolve_analysis(session, old)
         after = resolve_analysis(session, new)
+        if render:
+            faces = before.loaded.binding.face_count + after.loaded.binding.face_count
+            if faces > _MAX_RENDER_FACES:
+                raise ValueError(
+                    f"render=True supports at most {_MAX_RENDER_FACES} faces across both parts "
+                    f"(found {faces}); use render=False to compare without an overlay"
+                )
         # Preserve the CLI overlay's 900-pixel width.
         comparison = api.diff(before.loaded, after.loaded, image_width=900 if render else None)
         report = comparison["report"]
@@ -365,5 +366,5 @@ def diff_step(session, old: str, new: str, render: bool = False) -> str | dict:
             return {"report": text, "png": comparison["image"]}
         return text
     except Exception as exc:
-        error = json.dumps({"error": str(exc)[:1500]})
+        error = json.dumps({"error": f"{type(exc).__name__}: {exc}"[:1500]})
         return {"report": error} if render else error

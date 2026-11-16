@@ -28,11 +28,26 @@ def _step_bytes(shape: Any) -> bytes:
             data = stream.read()
     # OCCT writes a clock timestamp even for identical geometry. Canonicalise
     # only this header metadata, also on build123d versions without timestamp=.
-    return re.sub(
+    data = re.sub(
         rb"(FILE_NAME\s*\(\s*'(?:[^']|'')*'\s*,\s*)'(?:[^']|'')*'",
         rb"\1'2000-01-01T00:00:00'",
         data,
         count=1,
+    )
+    # OCCT's occurrence identifiers use a process-wide counter. They are
+    # metadata, not STEP entity references: renumber by occurrence order so
+    # unchanged live assemblies keep the same content binding between exports.
+    occurrence = 0
+
+    def stable_occurrence(match):
+        nonlocal occurrence
+        occurrence += 1
+        return match[1] + b"'" + str(occurrence).encode() + b"'"
+
+    return re.sub(
+        rb"(NEXT_ASSEMBLY_USAGE_OCCURRENCE\s*\(\s*)'\d+'",
+        stable_occurrence,
+        data,
     )
 
 
@@ -264,7 +279,7 @@ def _caller_geometry(value, placement):
 
 def _instance_geometry(data: bytes):
     """Read one STEP instance in memory, retaining its product-to-caller frame."""
-    from build123d import Location, Solid
+    from build123d import Compound, Location
     from OCP.IFSelect import IFSelect_RetDone
     from OCP.STEPCAFControl import STEPCAFControl_Reader
     from OCP.TCollection import TCollection_ExtendedString
@@ -305,7 +320,7 @@ def _instance_geometry(data: bytes):
     wrapped, location = leaves[0]
     transform = location.Transformation()
     placement = [[transform.Value(i, j) for j in range(1, 5)] for i in range(1, 4)]
-    return Solid.cast(wrapped).moved(Location(location)), placement
+    return Compound.cast(wrapped).moved(Location(location)), placement
 
 
 def analysis_from_bytes(data: bytes, cache: OrderedDict | None = None) -> Analysis:

@@ -187,4 +187,4 @@ def inspect_features(
                 result["execute_note"] = "Use your live shape as part; import a STEP path first."
         return json.dumps(result, separators=(",", ":"))
     except Exception as exc:
-        return json.dumps({"error": str(exc)[:1500]})
+        return json.dumps({"error": f"{type(exc).__name__}: {exc}"[:1500]})
