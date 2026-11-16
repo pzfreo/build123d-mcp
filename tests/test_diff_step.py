@@ -335,7 +335,6 @@ def test_bare_compare_keeps_shape_default_and_never_calls_fit(monkeypatch):
     assert "diff_step" in json.loads(server.compare("old", "new"))["error"]
 
 
-@pytest.mark.xfail(strict=True, reason="needs specify-core built on quiddity >=0.5.3 (#181)")
 def test_shortened_top_filleted_boss_reports_full_height():
     def boss(height):
         base = Box(120, 120, 10, align=(Align.CENTER, Align.CENTER, Align.MIN))
