@@ -283,10 +283,12 @@ def _instance_geometry(data: bytes):
     from OCP.IFSelect import IFSelect_RetDone
     from OCP.STEPCAFControl import STEPCAFControl_Reader
     from OCP.TCollection import TCollection_ExtendedString
-    from OCP.TDF import TDF_Label, TDF_LabelSequence
+    from OCP.TDF import TDF_Label
     from OCP.TDocStd import TDocStd_Document
     from OCP.TopLoc import TopLoc_Location
     from OCP.XCAFDoc import XCAFDoc_DocumentTool
+
+    from build123d_mcp._ocp_compat import LabelSequence
 
     doc = TDocStd_Document(TCollection_ExtendedString("XCAF"))
     reader = STEPCAFControl_Reader()
@@ -304,14 +306,14 @@ def _instance_geometry(data: bytes):
             product = TDF_Label()
             tool.GetReferredShape_s(label, product)
         if tool.IsAssembly_s(product):
-            children = TDF_LabelSequence()
+            children = LabelSequence()
             tool.GetComponents_s(product, children)
             for i in range(1, children.Length() + 1):
                 instances(children.Value(i), location)
         else:
             leaves.append((tool.GetShape_s(product), location))
 
-    roots = TDF_LabelSequence()
+    roots = LabelSequence()
     tool.GetFreeShapes(roots)
     for i in range(1, roots.Length() + 1):
         instances(roots.Value(i), TopLoc_Location())

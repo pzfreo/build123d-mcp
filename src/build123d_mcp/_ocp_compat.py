@@ -11,6 +11,7 @@ The old names are tried first, so behaviour on OCP 7.x is unchanged.
 from OCP.TopoDS import TopoDS
 
 try:
+    from OCP.TDF import TDF_LabelSequence as LabelSequence
     from OCP.TopTools import (
         TopTools_HSequenceOfShape as HSequenceOfShape,
     )
@@ -30,6 +31,9 @@ except ImportError:  # OCP 8+
     from OCP.collections import (  # type: ignore[no-redef]
         IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher as IndexedMapOfShape,
     )
+    from OCP.collections import (  # type: ignore[no-redef]
+        Sequence_TDF_Label as LabelSequence,
+    )
 
 
 def _downcast(name: str):
@@ -47,6 +51,7 @@ __all__ = [
     "HSequenceOfShape",
     "IndexedDataMapOfShapeListOfShape",
     "IndexedMapOfShape",
+    "LabelSequence",
     "to_edge",
     "to_face",
     "to_shell",
