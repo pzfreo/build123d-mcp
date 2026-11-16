@@ -10,7 +10,6 @@ from build123d_mcp.tools._recognition import resolve_analysis, transform_vector
 from build123d_mcp.tools.inspect_features import compact
 
 _MAX_ROWS = 50
-_MAX_RENDER_FACES = 500
 
 
 def _signature(face):
@@ -303,22 +302,15 @@ def diff_step(session, old: str, new: str, render: bool = False) -> str | dict:
     moves. Counts are exact; expanded lists are bounded. render=True includes
     specify-core's overlay from the same comparison. A registered name
     wins over an identical path string. Feature ids include their STEP digest.
-    Overlays are refused above 500 faces across both parts. Native rendering has
-    no cancellation/deadline API: a pathological smaller part can still exhaust
-    the worker budget and lose the session. Use render=False for such parts.
+    The overlay adds little time next to recognition, but neither has its own
+    deadline: a part whose recognition is very slow can exhaust the worker
+    budget and lose the session, with or without render.
     """
     try:
         from specify_core import api
 
         before = resolve_analysis(session, old)
         after = resolve_analysis(session, new)
-        if render:
-            faces = before.loaded.binding.face_count + after.loaded.binding.face_count
-            if faces > _MAX_RENDER_FACES:
-                raise ValueError(
-                    f"render=True supports at most {_MAX_RENDER_FACES} faces across both parts "
-                    f"(found {faces}); use render=False to compare without an overlay"
-                )
         # Preserve the CLI overlay's 900-pixel width.
         comparison = api.diff(before.loaded, after.loaded, image_width=900 if render else None)
         report = comparison["report"]

@@ -66,9 +66,9 @@
   Caller-frame signatures account for unchanged and unclaimed curved faces;
   upstream plane pairings supplement local motion and host-boundary checks.
   Multi-solid parts and nested single-instance assemblies retain every solid
-  and their placements. Errors include exception types. Overlays are refused
-  above 500 combined faces; pathological smaller native renders can still
-  exhaust the worker budget because the native API has no cancellation hook.
+  and their placements. Errors include exception types. Recognition and the
+  native overlay have no cancellation hook, so a very slow recognition can
+  exhaust the worker budget.
 - Remove the previous recognition/candidate/interface tools and stateful feature
   handles. `edit_feature` accepts content-bound feature ids and verifies live face
   mapping before mutation. `compare(kind="shape")` now directs callers to
