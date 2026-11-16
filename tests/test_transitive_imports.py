@@ -313,3 +313,20 @@ def test_execute_hint_mentions_import_cad_file(tmp_path, monkeypatch):
     s = Session()
     result = s.execute("import blocked_hint_pkg")
     assert "import_cad_file" in result
+
+
+@pytest.mark.parametrize(
+    "module", ["build123d_mcp", "build123d_mcp.face_edit", "build123d_mcp.selection"]
+)
+def test_server_helpers_cannot_be_imported_by_user_code(monkeypatch, tmp_path, module):
+    # Even a future implementation with only safe imports must stay private.
+    # Do not make this security boundary depend on an incidental OCP import.
+    source = tmp_path / "safe.py"
+    source.write_text("import math\n")
+    monkeypatch.setattr(_sec, "_source_path", lambda _: str(source))
+    assert not _is_transitively_safe(module)
+    with pytest.raises(ValueError, match="not allowed"):
+        _sec.check_ast(f"import {module}")
+    restricted_import = _sec.make_restricted_builtins()["__import__"]
+    with pytest.raises(ImportError, match="not allowed"):
+        restricted_import(module)

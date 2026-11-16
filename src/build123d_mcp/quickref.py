@@ -396,6 +396,17 @@ show(result, "constrained_arc")""",
 ## MCP server conventions
 - Name the final shape 'result' OR call show() — both trigger current_shape auto-detection
 - show(shape, "name")      registers object, prints vol + face count as immediate confirmation
+- Named imports/registrations bind safe names automatically; builtins, imports and unrelated user variables are preserved
+- get_object("name") retrieves the exact registered object inside execute(), including names whose binding was refused
+- Reassigning a bound variable warns; call show(edited, "name") to register the edit
+- select_faces(shape, faces=<descriptor or nonempty list>) uniquely matches distinct live faces from inspect_features; no STEP indices
+- select_faces(shape, kind="plane", direction=(0,0,1)) returns every keyword match; do not combine filters with faces=
+- translate_faces(shape, faces, vector): rigid local face-set move; select tangent cap/fillet faces together
+- offset_faces(shape, faces, distance): analytic face offset along outward normals; positive adds material
+- split_face_chord(shape, face, p0, p1): straight interior boundary-to-boundary chord; no volume drift
+- Face edits return a new gated Solid, preserve the input, and refuse unsupported neighbours/topology changes/self-intersections
+- These helpers do not register/show/bank; check diff_step then show() explicitly
+- get_object/select_faces/translate_faces/offset_faces/split_face_chord are injected helpers; no import required
 - named_face(shape, "top") returns the highest-Z face; also: bottom/front/back/left/right
 - find_edges(shape, geom="circle", radius=4.25, at_z=10.2) filters edges for fillet/chamfer; prints count + radii + Z levels""",
     ),
@@ -461,9 +472,18 @@ def _section_enabled(s: Section) -> bool:
 
 def build_quickref_text() -> str:
     sections = (s.text for s in SECTIONS if _section_enabled(s))
-    return _build123d_version_banner() + "\n\n" + "\n\n".join(sections)
+    return _build123d_version_banner() + "\n\n" + "\n\n".join(sections) + STEP_INSPECTION
 
 
 RUNNABLE_EXAMPLES: list[tuple[str, str]] = [
     (s.label, s.text) for s in SECTIONS if s.label is not None and _section_enabled(s)
 ]
+
+
+STEP_INSPECTION = """
+Inspect STEP paths or registered session objects with inspect_features(target="part").
+Use families="holes,bosses,fillets" for bounded caller-frame feature records, or
+feature_ids="holes:12@<digest>" for analytic face descriptors. Re-inspect after edits.
+Compare revisions with diff_step(old="input.step", new="edited", render=True).
+Use compare(kind="fit"|"align"|"snapshot") for other comparisons.
+"""

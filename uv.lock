@@ -202,10 +202,10 @@ dependencies = [
     { name = "defusedxml" },
     { name = "mcp" },
     { name = "pillow" },
-    { name = "quiddity" },
     { name = "resvg-py" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "specify-core" },
     { name = "vtk" },
 ]
 
@@ -232,9 +232,9 @@ requires-dist = [
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "mcp", specifier = ">=2,<3" },
     { name = "pillow" },
-    { name = "quiddity", specifier = ">=0.4.9,<0.5" },
     { name = "resvg-py" },
     { name = "scipy" },
+    { name = "specify-core", specifier = ">=0.1.16,<0.2" },
     { name = "uvicorn", marker = "extra == 'http'" },
     { name = "vtk", specifier = ">=9.3" },
 ]
@@ -2083,19 +2083,6 @@ wheels = [
 ]
 
 [[package]]
-name = "quiddity"
-version = "0.4.9"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/bd/b8/840225d7fa75979b9dd981dd0b997ec4a0b1aa4b8bf129cf16b7db95c21b/quiddity-0.4.9.tar.gz", hash = "sha256:d10730f923060aa9b24ee58ff7081129c5170928ed1b8091c0c6959b075a2dbb", size = 1492885, upload-time = "2026-11-07T08:30:35.713Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/ba/061c35cd3199497342c9a6a2ccb0dd8f139b3a880f91385ece90ff4a8d42/quiddity-0.4.9-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:d0dfacdf6990c08a089d17571e57ca9bba4e8cea6328ae3556bfe534762f12ab", size = 7840395, upload-time = "2026-11-07T08:30:25.799Z" },
-    { url = "https://files.pythonhosted.org/packages/dd/5b/c6c267c5b2a72dbe0784966eaf4521f28c5bfbdff59c7708e35ac5e8ab65/quiddity-0.4.9-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:aa2057c85abe9612e40766e0413c380916724722cb95d0f813bfd74300da7be9", size = 7268947, upload-time = "2026-11-07T08:30:27.694Z" },
-    { url = "https://files.pythonhosted.org/packages/02/27/1df20072f9431ce869682f4d53daf953411d81f04f4212e7d7c922a331c2/quiddity-0.4.9-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:0d52ae9a368a623eb819c6d95c418faee03ecb11c93a9bb8d269d86f6e84fdc9", size = 7493404, upload-time = "2026-11-07T08:30:29.545Z" },
-    { url = "https://files.pythonhosted.org/packages/17/c1/9cb254334e9af3f09f09746e6690bb719c07dff7f0e9d3c1c086e4c08df5/quiddity-0.4.9-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:c11355af1ae1de7fe6372aeafed461f815840451478fe33dd54ffb0688fe1cb7", size = 8177128, upload-time = "2026-11-07T08:30:31.365Z" },
-    { url = "https://files.pythonhosted.org/packages/a4/d2/6707df0d0ba76a136ada2e4359e5da3b39e360fa7dd0eec3a48221dcc9f8/quiddity-0.4.9-cp311-abi3-win_amd64.whl", hash = "sha256:ae38439a54ba097b578b6f08583273f16e06f3da564baed190a368c9d9df3ff1", size = 8300909, upload-time = "2026-11-07T08:30:33.393Z" },
-]
-
-[[package]]
 name = "referencing"
 version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2494,6 +2481,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/88/2e/f97a666d362fee68b18f41c9c30ed502ca5c98b549749bfcb52a8b74d1eb/scipy-1.18.1-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:11c423f1049c5755ad4409af52a9ada1cff96fe9b50795d4af3619f292901239", size = 37525424, upload-time = "2026-08-21T23:26:56.751Z" },
     { url = "https://files.pythonhosted.org/packages/ca/d5/a9e765a84654ebba8479a1fd1b059ced1af72b168a3b2a3a46540ea38d20/scipy-1.18.1-cp314-cp314t-win_amd64.whl", hash = "sha256:c24acac1e18912761c4700239bbc1fd32f615af690f1584d49b35859be51324d", size = 37416961, upload-time = "2026-08-21T23:27:01.546Z" },
     { url = "https://files.pythonhosted.org/packages/ee/16/e79e0d1c63ef698879d85439d37e9fb434e3b804e506a6991038d086ebd9/scipy-1.18.1-cp314-cp314t-win_arm64.whl", hash = "sha256:9f2897bf7737392ad0d5213ea7b6add72a4edf5679b3153106aeb88b6507b3b9", size = 25331848, upload-time = "2026-08-21T23:27:05.884Z" },
+]
+
+[[package]]
+name = "specify-core"
+version = "0.1.16"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/86/eb/aee41825e1823fd6e40ef816472177348bfcef129c59fde144384c174e37/specify_core-0.1.16.tar.gz", hash = "sha256:868ff991ba489025bb0ccd3a97e79da2c390825e77cd6ffec71b633cdd16d001", size = 15213759, upload-time = "2026-11-16T07:46:18.647Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/06/17/551e942700045bb553026a022ff30eeab09ea98faace33ec1857ee4ef2e4/specify_core-0.1.16-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:c7838c65ac4887262df61572df6db99db232b954e3e81239a6ca09ea84254574", size = 9859054, upload-time = "2026-11-16T07:46:03.702Z" },
+    { url = "https://files.pythonhosted.org/packages/de/ec/cd1c2f0a0d82ba99ccfcec6678e6f1267fd03a29c36560adefdcfb7b4ebd/specify_core-0.1.16-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:881fbea51ef9047bf9d604d2fe55f36ca29aa95e2b807cbc8e24c7ee03d60405", size = 9189107, upload-time = "2026-11-16T07:46:07.132Z" },
+    { url = "https://files.pythonhosted.org/packages/34/bf/8b6feb31e01ce7a12e081de80248b0e3c7ce7d886422c29cb2520a959ac5/specify_core-0.1.16-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:935e329ecbd59bd55b8cd2f41cc0afbb3e83ebd1b2fa43582b96d073338f6846", size = 9442951, upload-time = "2026-11-16T07:46:10.121Z" },
+    { url = "https://files.pythonhosted.org/packages/93/90/f6b82b46273a829d2e3806ec2cb81161499abc5318f1b59799ce8b1074a0/specify_core-0.1.16-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:93a2456dac59376c8f628d789291f305611aea611a21ffb304eb68243a43f2fb", size = 10461490, upload-time = "2026-11-16T07:46:12.771Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/d6/6433c841f77e66a20b1762616111bc1b802e20c70073db5771f1551d8e84/specify_core-0.1.16-cp311-abi3-win_amd64.whl", hash = "sha256:7fd1f0d9fd4f187827dd8c22b7c388551e777c08c77e729765e828904dc0d2be", size = 10390216, upload-time = "2026-11-16T07:46:15.632Z" },
 ]
 
 [[package]]

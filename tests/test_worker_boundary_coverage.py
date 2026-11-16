@@ -152,11 +152,6 @@ def _clearance(ws, tmp_path):
     assert "error" not in r and "status" in r
 
 
-def _shape_compare(ws, tmp_path):
-    r = json.loads(ws.shape_compare("a", "b"))
-    assert "error" not in r and "delta" in r
-
-
 def _find_holes(ws, tmp_path):
     # The seeded boxes have no holes; the empty parent proxy doesn't know 'a'
     # at all, so a non-error reply proves the worker's objects were consulted.
@@ -186,19 +181,21 @@ def _find_hole_patterns(ws, tmp_path):
     assert "error" not in r and r["patterns"] == []
 
 
-def _recognise_features(ws, tmp_path):
-    r = json.loads(ws.recognise_features("a"))
-    assert "error" not in r and r["inventory"]["holes"] == 0
+def _inspect_features(ws, tmp_path):
+    r = json.loads(ws.inspect_features("a"))
+    assert "error" not in r and r["measures"]["faces"] == 6
+    # Helpers live with exec in the worker, not on the parent proxy (#286/#500).
+    output = ws.execute(
+        "assert a is get_object('a')\n"
+        "assert len(select_faces(a, kind='plane', direction=(0,0,1))) == 1\n"
+        "assert callable(translate_faces) and callable(offset_faces) and callable(split_face_chord)"
+    )
+    assert not output.startswith(("Error:", "Constraint failed")), output
 
 
-def _find_candidates(ws, tmp_path):
-    r = json.loads(ws.find_candidates("hole", object_name="a"))
-    assert "error" not in r and r["candidates"] == []
-
-
-def _interface_features(ws, tmp_path):
-    r = json.loads(ws.interface_features("a"))
-    assert "error" not in r and r["mounting_face_candidates"] == []
+def _diff_step(ws, tmp_path):
+    r = json.loads(ws.diff_step("a", "b"))
+    assert "error" not in r and r["planar_deltas_count"] > 0
 
 
 def _align_check(ws, tmp_path):
@@ -331,16 +328,14 @@ SESSION_STATEFUL_TOOLS = {
     "verify_spec": _verify_spec,
     "suggest_spec": _suggest_spec,
     "clearance": _clearance,
-    "shape_compare": _shape_compare,
     "align_check": _align_check,
     "find_holes": _find_holes,
     "find_bosses": _find_bosses,
     "find_bored_bosses": _find_bored_bosses,
     "find_countersinks": _find_countersinks,
     "find_hole_patterns": _find_hole_patterns,
-    "recognise_features": _recognise_features,
-    "find_candidates": _find_candidates,
-    "interface_features": _interface_features,
+    "inspect_features": _inspect_features,
+    "diff_step": _diff_step,
     "cross_sections": _cross_sections,
     "mesh_section": _mesh_section,
     "mesh_holes": _mesh_holes,
@@ -366,8 +361,8 @@ SESSION_STATEFUL_TOOLS = {
 # cannot be exercised with a plain geometry seed. A new dispatch op must be added
 # to SESSION_STATEFUL_TOOLS or here (see test_every_dispatch_op_is_classified).
 NON_SMOKED_OPS = {
-    "edit_feature": "requires a recognised hole handle and changes geometry; covered by test_edit_features",
-    "execute": "the seeding mechanism itself; exercised by every WorkerSession test",
+    "edit_feature": "requires a current hole id and changes geometry; covered by test_edit_features",
+    "execute": "seeding plus injected selection/face edits; covered by test_execute_ergonomics and test_face_edit",
     "execute_file": "requires an external Python source file; covered by test_execute_file",
     "reset": "session-lifecycle op; smoke-testing it would clear the seeded worker state",
     "search_library": "reads the worker library index, not Session geometry",
@@ -454,7 +449,7 @@ def test_tools_never_deliver_null_or_empty(seeded_ws):
         "measure": seeded_ws.measure("a"),
         "validate": seeded_ws.validate("a"),
         "locate_gate_defects": seeded_ws.locate_gate_defects("a"),  # subprocess-backed
-        "shape_compare": seeded_ws.shape_compare("a", "b"),  # subprocess-backed
+        "diff_step": seeded_ws.diff_step("a", "b"),
         "verify_spec": seeded_ws.verify_spec(spec=spec, object_name="a"),
         "design_audit": seeded_ws.design_audit(),  # subprocess-backed
         "session_state": seeded_ws.session_state(),

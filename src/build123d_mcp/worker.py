@@ -317,7 +317,13 @@ def _op_restore_snapshot(session: Any, args: dict, library_index: Any) -> Any:
     restored = (["current_shape"] if session.current_shape is not None else []) + list(
         session.objects.keys()
     )
-    return f"Snapshot '{name}' restored. Active geometry: {', '.join(restored) if restored else 'none'}."
+    message = f"Snapshot '{name}' restored. Active geometry: {', '.join(restored) if restored else 'none'}."
+    warnings = [
+        access["binding_warning"]
+        for object_name in session.objects
+        if "binding_warning" in (access := session.object_access(object_name))
+    ]
+    return "\n".join([message, *warnings])
 
 
 def _op_reset(session: Any, args: dict, library_index: Any) -> Any:
@@ -939,7 +945,7 @@ class WorkerSession:
     # analysis in a bounded subprocess (tools/_bounded.py, #360). That subprocess is
     # bounded by op_budget() == _export_budget, so the parent watchdog must be the
     # same (not a smaller fixed _GEOMETRY_TIMEOUT) or it could SIGKILL the worker
-    # while the child is still legitimately running — matching locate/shape_compare.
+    # while the child is still legitimately running — matching locate/export.
     @_op(_tool(f"{_T}.measure:measure"), _export_budget)
     def measure(self, object_name: str = "", density: float = 0.0, material: str = "") -> str:
         raise NotImplementedError
@@ -1054,10 +1060,6 @@ class WorkerSession:
     def last_error(self) -> str:
         raise NotImplementedError
 
-    @_op(_tool(f"{_T}.shape_compare:shape_compare"), _export_budget)
-    def shape_compare(self, object_a: str, object_b: str) -> str:
-        raise NotImplementedError
-
     def compare(
         self,
         a: str,
@@ -1075,9 +1077,9 @@ class WorkerSession:
         """
         kind_norm = kind.strip().lower()
         if kind_norm == "shape":
-            if not b:
-                return json.dumps({"error": "compare(kind='shape') requires b."}, indent=2)
-            return self.shape_compare(a, b)
+            return json.dumps(
+                {"error": "compare(kind='shape') was removed; use diff_step(old, new)."}
+            )
         if kind_norm == "fit":
             if not b:
                 return json.dumps({"error": "compare(kind='fit') requires b."}, indent=2)
@@ -1089,7 +1091,7 @@ class WorkerSession:
         if kind_norm == "snapshot":
             return self.diff_snapshot(a, b, format=format)
         return json.dumps(
-            {"error": (f"Unknown compare kind '{kind}'. Use one of: shape, fit, align, snapshot.")},
+            {"error": (f"Unknown compare kind '{kind}'. Use one of: fit, align, snapshot.")},
             indent=2,
         )
 
@@ -1151,36 +1153,22 @@ class WorkerSession:
     def find_hole_patterns(self, object_name: str = "") -> str:
         raise NotImplementedError
 
-    @_op(_tool(f"{_T}.recognise_features:recognise_features"), _exec_budget)
-    def recognise_features(
-        self,
-        object_name: str = "",
-        families: str = "",
-        coordinate_frame: str = "caller",
-        include_faces: bool = False,
-        max_features: int = 50,
+    @_op(_tool(f"{_T}.inspect_features:inspect_features"), _exec_budget)
+    def inspect_features(
+        self, target: str = "", families: str = "", feature_ids: str = "", max_features: int = 50
     ) -> str:
         raise NotImplementedError
 
-    @_op(_tool(f"{_T}.edit_features:find_candidates"), _exec_budget)
-    def find_candidates(
-        self,
-        kind: str,
-        qualifiers: str = "{}",
-        stated_value: float | None = None,
-        object_name: str = "",
-    ) -> str:
-        raise NotImplementedError
-
-    @_op(_tool(f"{_T}.edit_features:interface_features"), _exec_budget)
-    def interface_features(self, object_name: str = "") -> str:
+    @_op(_tool(f"{_T}.diff_step:diff_step"), _exec_budget)
+    def diff_step(self, old: str, new: str, render: bool = False) -> str | dict:
         raise NotImplementedError
 
     @_op(_tool(f"{_T}.edit_features:edit_feature"), _exec_budget)
     def edit_feature(
         self,
-        handle: str,
+        feature_id: str,
         diameter: float,
+        object_name: str = "",
         result_name: str = "",
         protected_refs: str = "[]",
     ) -> str:

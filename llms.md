@@ -30,6 +30,21 @@ All tool calls share a single Python namespace. Variables and shapes you create 
 
 **Analysis composes in code.** `measure`, `clearance`, `cross_sections`, `find_holes`, `find_bosses`, `find_countersinks`, `find_hole_patterns`, and `align_check` are callable *inside* `execute` and return real Python objects (dicts / recogniser records), so you compute over results — `measure(part)["volume"]`, `[h for h in find_holes(part) if h.location[0] < 5]`, `clearance(a, b)["clearance"]` — instead of reading numbers out of one JSON tool result and re-typing them into the next call. They take a shape (default: `current_shape`); the standalone MCP tools of the same name remain for one-shot queries.
 
+`import_cad_file`, `show`, `annotate`, `register_centerline`, `load_part`,
+`edit_feature` and `execute_file` result promotion bind registered objects in
+this same namespace. A safe Python identifier gets `execute_name` in the
+response. Keywords, builtins, session helpers, unrelated user variables and names reserved by user imports
+(including aliases and star imports) are not overwritten; responses report the
+collision and show `get_object("name")`, available without an import.
+Noncanonical Unicode identifier spellings also use the accessor because Python
+normalizes identifier references. It returns
+the exact registered object and lists available names on an unknown name.
+Replacements rebind the variable. Assigning an edited shape to a variable alone
+does not register it: execute warns while the variable and registry differ.
+Use `show(edited, "part")` to replace the registry entry. A registration can
+adopt the identical object already held by the variable; it never replaces an
+unrelated user value.
+
 ### Multi-object sessions
 
 Use `show(shape, name)` inside `execute` to register named objects. Calling `show()` also sets `current_shape`, so subsequent `measure()`/`export()`/`render_view()` calls work immediately without an explicit `result` assignment. All tools that accept `object_name` operate on a named object instead of the implicit `current_shape`. This is essential for assemblies where you need to inspect, measure, or export individual parts.
@@ -299,23 +314,84 @@ Check whether two named shapes intersect.
 
 ---
 
-### `shape_compare`
-Compare two named shapes by geometry metrics **plus a localized surface-deviation diff**.
+### `inspect_features`
+Inspect a STEP path or registered object (default current shape). A registered
+name wins over an identical path string. With no filters, returns measures plus
+family counts and dimension ranges in under 2 KB. `families="holes,bosses"`
+returns bounded caller-frame feature records; `feature_ids` selects analytic
+face descriptors, with an executable `select_faces` example. `max_features`
+is 1..100; counts remain exact.
 
-**Inputs:** `object_a`, `object_b` (string) — names from `show()`
+Inside `execute()`, three explicit face-edit primitives need no import:
 
-**Returns:** JSON with:
-- volume delta, bbox delta, topology delta (faces/edges/vertices), and centre offset (as before);
-- `max_deviation` — the largest *real* surface change (noise-floored against an independent shared-deflection tessellation, so a re-export no-op reads ~0);
-- `changed` / `regions` — the localized region(s) that moved: centroid and bbox, plus exact `added_volume` / `removed_volume`;
-- `magnitude_method` — how to read `max_deviation`: `exact_boolean` (exact surface displacement *and* exact volumes), `exact_volume_mesh_displacement` (exact added/removed volume, mesh-estimated displacement — e.g. a cut/flush-fill), or `mesh_estimate` (boolean skipped or failed);
-- `unchanged_elsewhere` (bool) and `warnings`.
+- `translate_faces(shape, faces, vector)` moves a selected set rigidly, trimming
+  or extending adjacent planes/cylinders on their existing supports. Select a
+  cap and its tangent top fillet together to shorten a boss without losing the
+  fillet. For a pocket wall, select the wall and its corner fillets together.
+- `offset_faces(shape, faces, distance)` offsets analytic faces along outward
+  normals; positive distance adds material (shrinks holes). OCCT per-face
+  intersection offsets are checked against every requested/unchanged support;
+  tangent propagation is refused.
+- `split_face_chord(shape, face, p0, p1)` wraps OCCT face splitting with a straight
+  boundary-to-boundary interior chord, useful for an explicitly diagnosed mesh
+  cusp. Both endpoints and the whole chord must lie on the face within 1e-7 mm.
+  Volume drift must be at most 1e-9 relative (floating-point quadrature).
 
-The exact B-rep boolean is clipped to the located region and runs in a hard-bounded subprocess (in-process fallback where child processes are blocked); on a large/spread edit it gracefully falls back to the flagged mesh estimate rather than overrunning the op budget.
+Each returns a new Solid and leaves the input untouched. Each uses the existing
+validity gate and checks self-intersection; unsupported non-analytic neighbours,
+non-line connecting edges, face collapse and shell/topology changes are refused.
+Rigid translations of boundaries on cone/sphere/torus neighbours are refused
+when those supports cannot contain the moved boundary. No automatic selection,
+registration, display or banking occurs. Inspect with `diff_step`, then `show()`
+explicitly; exported deliverables still need the written STEP export gate.
+These are agent-authored operations, not an automatic repair tool. See
+`build123d://skill/edit` and `build123d://skill/repair` for recipes.
 
-For editing this is **model↔input verification, not a score**: confirm the changed region(s) and the add/remove volumes match the request. Note a *tangential* move (sliding a hole) or a sub-resolution edit on a very large part produces no detected region — `unchanged_elsewhere` then means "no change above the detection floor", not a guarantee; cross-check the volume/bbox/center deltas and `find_holes`.
+Inside `execute()`, `select_faces(part, faces=<one descriptor or list>)` returns
+live build123d `ShapeList` faces by analytic geometry in the caller frame.
+Descriptor ids are metadata, never indices into `part.faces()`. Every descriptor
+must match exactly one distinct face; zero or multiple matches, empty lists,
+repeated resolutions to the same face, and filters combined with `faces=` raise
+a diagnostic. Multi-feature examples select each returned feature separately
+so features that share faces remain usable.
+Keyword mode returns every match, e.g.
+`select_faces(part, kind="plane", direction=(0, 0, 1), area=100)`.
+Filters: `kind`, `centroid`, `area`, `direction`, `radius`. Plane direction is an
+outward normal; curved axes are sign independent. Default tolerances: length
+`max(1e-5 mm, bbox diagonal * 1e-7)`, area `max(1e-5 mm², face area * 1e-7)`,
+direction distance/angle `1e-5` (fixed). `tol` is a length tolerance in mm;
+when supplied, area tolerance is `2*sqrt(face area)*tol + tol²` in mm², the area
+change of a square with side `sqrt(face area)` expanded by `tol`. It never
+relaxes direction checks. `radius` is the reference radius on cones (dependent
+on the surface parameter frame), and the minor radius on tori.
+Ambiguity always fails in descriptor mode, even with `tol`.
 
-Useful for verifying a procedural build matches a reference, or quantifying how a modification changed the geometry.
+Copy returned ids verbatim, e.g. `holes:7@<digest>`: the suffix binds the id to
+STEP content. Re-inspect after any change; unbound/stale ids are refused.
+
+### `diff_step`
+Compare `old` and `new`, each a STEP path or registered object name. Registered
+names take precedence over identical path strings. Returns adapted/orphaned/new
+features, complete measures, analytic planar motion and unclaimed changes.
+`feature_boundary_changes` identifies adjoining host faces whose boundaries
+changed with a feature; their centroid changes are not labelled plane motion.
+Lists are bounded with omission counts. Analytic signatures do not prove trim
+contour equality. `render=True` includes specify-core's native diff overlay.
+
+Use this for revision verification. The former shape comparison route now
+returns an error directing callers here, including a bare `compare(a, b)`.
+`compare(kind="fit"|"align"|"snapshot")` remains available. An eight-entry
+content cache retains loaded parts and their recognition: inspecting a baseline
+before diffing it reuses the same recognition. Overlay rendering uses that same
+comparison through the Python API.
+
+### `edit_feature`
+Resize one plain through hole by its content-bound `feature_id` and `diameter`.
+`object_name` defaults to the current shape; `result_name` can preserve a named
+source. `protected_refs` is a JSON list of content-bound ids from the same part.
+Refuses stale ids, mismatched live face descriptors and compound hole stacks.
+Registers a result only after predicted material change, other holes and the
+outer envelope pass validation. Coordinates are the caller's frame.
 
 ---
 
@@ -326,9 +402,13 @@ Import a STEP or STL file as a named object in the session.
 - `path` (string) — absolute or relative path to the file (`.step`, `.stp`, or `.stl`)
 - `name` (string, default `""`) — name to register under; defaults to the filename stem
 
-**Returns:** volume, topology, and bounding box of the imported shape. The shape becomes both the named object and `current_shape`.
+**Returns:** volume, topology, bounding box, `execute_name` and `execute_example`
+(or a binding warning). The shape becomes both the named object and
+`current_shape`. After importing as `part`, use `part` directly in `execute()`;
+`get_object("part")` always retrieves the exact registered object. Multi-object
+3MF imports also bind each generated member name when safe.
 
-Use with `shape_compare()` to verify a procedural build against a reference.
+Use `inspect_features` to inspect the imported part, and `diff_step(old="reference.step", new="model")` to verify revisions.
 
 ---
 
@@ -397,7 +477,12 @@ Save a named checkpoint of the current geometric state.
 **Returns:** confirmation listing what was captured
 
 **What is saved:** `current_shape` and the `show()` object registry.
-**What is NOT saved:** the Python variable namespace. After a restore, any intermediate Python variables created after the snapshot are still in scope — but `current_shape` and all `show()` objects revert to the snapshot state.
+**Namespace behavior:** restored registered names are rebound to the restored
+objects; object bindings absent from the snapshot are removed. User values that
+replaced object variables are preserved, and restore reports `get_object(name)`
+when it cannot bind a restored object. Other Python
+variables and imports remain in scope. Aliases to previous geometry are not
+rewritten; use the registered name or `get_object(name)` after restoring.
 
 ---
 

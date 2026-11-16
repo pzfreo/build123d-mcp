@@ -20,8 +20,18 @@ jobs:
           current=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
           base="${current%.dev*}"
           uv version "${base}.dev${{ github.run_number }}"
+      - name: Use the tag's version for a prerelease
+        # A prerelease (e.g. v0.4.0a1) can be cut from a branch: it takes its
+        # version from the tag, and skips the MCP registry and the main bump.
+        if: github.event_name == 'release' && github.event.release.prerelease
+        run: |
+          tag=${{ github.event.release.tag_name }}
+          version="${tag#v}"
+          echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(a|b|rc)[0-9]+$' \
+            || { echo "prerelease tag must be vX.Y.Z(a|b|rc)N, got $tag"; exit 1; }
+          uv version "$version"
       - name: Strip dev suffix for real release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' && !github.event.release.prerelease
         run: |
           current=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
           base="${current%.dev*}"
@@ -64,7 +74,7 @@ jobs:
 
   publish-mcp-registry:
     needs: publish-pypi
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' && !github.event.release.prerelease
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # for github-oidc auth to the MCP registry
@@ -94,7 +104,7 @@ jobs:
 
   bump-version:
     needs: publish-pypi
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' && !github.event.release.prerelease
     runs-on: ubuntu-latest
     permissions:
       contents: write

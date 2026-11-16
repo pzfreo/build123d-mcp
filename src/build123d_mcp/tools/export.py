@@ -14,7 +14,7 @@ from build123d_mcp.tools._paths import safe_output_path
 
 # Headroom under the op budget for the in-process B-rep checks + subprocess
 # teardown + parent poll granularity; and the least time worth starting the
-# out-of-process mesh gate with. Matches the locate/shape_compare convention.
+# out-of-process mesh gate with. Matches the locate/export convention.
 _EXPORT_MESH_MARGIN_S = 15
 _EXPORT_MESH_MIN_S = 10
 
@@ -735,7 +735,7 @@ def bank_candidate(
             "replaced_existing_output": existed,
             "snapshot_saved": saved,
             "snapshot_name": snapshot_name or None,
-            "next_tool_call": f"recognise_features(object_name={target!r})",
+            "next_tool_call": f"inspect_features(target={target!r})",
             "note": (
                 "The written STEP passed the gate and is now the safe floor. For an imported "
                 "B-rep edit, run compact then targeted recognition before manual topology walking."

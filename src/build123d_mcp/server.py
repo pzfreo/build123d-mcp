@@ -22,14 +22,14 @@ B", "make a drawing of X" — instead of writing standalone Python scripts run
 via the shell. The server keeps a persistent build123d session, so you can
 build incrementally with execute(), verify each step numerically with measure()
 (volume, bounding box, face inventory), inspect visually with render_view(),
-compare shapes/fits/snapshots with compare(), and undo experiments with
+compare revisions with diff_step() and fits/snapshots with compare(), and undo experiments with
 snapshots — a feedback loop a one-shot script cannot give.
 
 Quick start: execute("from build123d import *"), build in small steps,
 register parts with show(part, "name"), measure() after every boolean,
 bank_candidate() when establishing a safe STEP floor or final output, and
 export() for ordinary diagnostic/interchange writes. For edits to imported
-B-reps, call recognise_features() once for a compact inventory after the
+B-reps, call inspect_features() for a compact inventory after the
 baseline is gate-clean, before hand-walking topology; then expand only the
 likely feature families and use their exact face evidence where available.
 Read the build123d://quickref resource before writing build code. Step-by-step
@@ -412,7 +412,7 @@ def http_app():
 
 @mcp.tool(annotations=_MUTATING)
 def execute(code: str) -> str:
-    """Execute build123d Python code in the persistent session. Errors include automatic fix hints — read them before retrying. Use show(shape, name) to register named objects (name defaults to 'shape'); show() immediately prints volume and face count confirming the shape is non-empty. After any boolean operation (-, +, &) call measure() to confirm it succeeded (check topology.faces). named_face(shape, name) is a built-in helper: named_face(box, 'top') returns the highest-Z face, 'bottom'/'front'/'back'/'left'/'right' work similarly. find_edges(shape, geom='circle', radius=4.25, at_z=10.2, length=None, tol=0.05) filters edges for fillet/chamfer selection and prints what matched. Analysis primitives are callable INSIDE this execute() code and return real Python objects so you compose (filter, do arithmetic) instead of copying numbers out of a tool result: measure(shape) -> dict (measure(part)['volume']), clearance(a, b) -> dict, cross_sections(shape) -> list of {position,area}, find_holes(shape) -> hole records with .location (an (x,y,z) tuple), .diameter, .depth, … ([h for h in find_holes(part) if h.location[0] < 5]); find_bosses(shape) / find_bored_bosses(shape) / find_countersinks(shape) / find_hole_patterns(shape) return recogniser records too; align_check(a, b, axis='Z', mode='flush') -> dict (align_check(a,b)['delta'] is a float). For standalone MCP comparison calls, use compare(a='axle', b='frame', kind='fit'), compare(a='a', b='b', kind='align'), compare(a='before', b='after', kind='shape'), or compare(a='before', kind='snapshot'). shape defaults to the current shape, and measure/clearance/cross_sections stay bounded on large shapes. save_json(name, obj) writes structured analysis data (face inventories, hole tables) to a server scratch file and returns its path — use it instead of printing large results; open()/os stay blocked."""
+    """Execute build123d Python code in the persistent session. Errors include automatic fix hints — read them before retrying. Use show(shape, name) to register named objects (name defaults to 'shape'); show() immediately prints volume and face count confirming the shape is non-empty. Imports and named registrations automatically bind safe names here without overwriting builtins, imports or unrelated user variables; responses show the access path. get_object(name) retrieves the exact registered object under any name and lists available names on an unknown name. Reassigning a bound variable warns that the registry is unchanged; call show(edited, 'name') to register the edit. select_faces(shape, faces=<descriptor or list>) returns live faces from inspect_features descriptors, requiring one distinct unique match per descriptor; keyword mode (kind/centroid/area/direction/radius) returns all matches. These helpers need no import; do not combine faces= with keyword filters. translate_faces(shape, faces, vector) rigidly moves an explicit face set and trims adjacent supported analytic faces; select tangent cap/fillet patches together. offset_faces(shape, faces, distance) offsets selected analytic faces along outward normals. split_face_chord(shape, face, p0, p1) splits one face along a straight interior boundary-to-boundary chord without volume drift. All three return a new gated Solid, leave the input untouched, and refuse unsupported neighbours, topology changes or self-intersections. They need no import and do not register/show/bank; inspect with diff_step and show the accepted result explicitly. After any boolean operation (-, +, &) call measure() to confirm it succeeded (check topology.faces). named_face(shape, name) is a built-in helper: named_face(box, 'top') returns the highest-Z face, 'bottom'/'front'/'back'/'left'/'right' work similarly. find_edges(shape, geom='circle', radius=4.25, at_z=10.2, length=None, tol=0.05) filters edges for fillet/chamfer selection and prints what matched. Analysis primitives are callable INSIDE this execute() code and return real Python objects so you compose (filter, do arithmetic) instead of copying numbers out of a tool result: measure(shape) -> dict (measure(part)['volume']), clearance(a, b) -> dict, cross_sections(shape) -> list of {position,area}, find_holes(shape) -> hole records with .location (an (x,y,z) tuple), .diameter, .depth, … ([h for h in find_holes(part) if h.location[0] < 5]); find_bosses(shape) / find_bored_bosses(shape) / find_countersinks(shape) / find_hole_patterns(shape) return recogniser records too; align_check(a, b, axis='Z', mode='flush') -> dict (align_check(a,b)['delta'] is a float). For standalone MCP comparison calls, use compare(a='axle', b='frame', kind='fit'), compare(a='a', b='b', kind='align'), diff_step(old='before', new='after'), or compare(a='before', kind='snapshot'). shape defaults to the current shape, and measure/clearance/cross_sections stay bounded on large shapes. save_json(name, obj) writes structured analysis data (face inventories, hole tables) to a server scratch file and returns its path — use it instead of printing large results; open()/os stay blocked."""
     from build123d_mcp.tools.execute import execute_code
 
     result = execute_code(_resolve_session(), code)
@@ -954,8 +954,8 @@ def save_snapshot(name: str) -> str:
 @mcp.tool(annotations=_IDEMPOTENT)
 def restore_snapshot(name: str) -> str:
     """Restore geometric state from a previously saved snapshot (current_shape and the show() registry).
-    The Python variable namespace is NOT restored — execute() calls made after the snapshot are still in scope,
-    but current_shape and all show() objects revert to what they were at snapshot time.
+    Registered object variables are rebound to the restored objects, and departed object bindings are removed.
+    Other Python variables/imports remain in scope; aliases to old shapes are not rewritten.
     Raises an error if the snapshot name does not exist."""
     result = _resolve_session().restore_snapshot(name)
     _publish_deltas()
@@ -1023,8 +1023,7 @@ def compare(
 ) -> str:
     """Unified comparison tool.
 
-    kind='shape' compares two named shapes from show(), a and b, by
-    volume/bbox/topology and localized surface deviation; b is required.
+    For STEP revision comparisons use diff_step(old, new).
 
     kind='fit' reports the spatial relationship between two named shapes, a and b:
     clearance, apart/touching/containing/interpenetrating status, containment,
@@ -1082,49 +1081,34 @@ def find_countersinks(object_name: str = "") -> str:
 
 
 @mcp.tool(annotations=_READ_ONLY)
-def recognise_features(
-    object_name: str = "",
-    families: str = "",
-    coordinate_frame: str = "caller",
-    include_faces: bool = False,
-    max_features: int = 50,
+def inspect_features(
+    target: str = "", families: str = "", feature_ids: str = "", max_features: int = 50
 ) -> str:
-    """Run the shared quiddity inventory once and return exact, run-local edit evidence. With families='' the response is a compact inventory and targetable-family count; pass comma-separated families such as 'holes,bosses,blends' for structured records and @feature handles. Returned handles are usable inside execute() as recognition_faces(handle), or recognition_faces(handle, role='defining'), and fail if their source geometry has been replaced. coordinate_frame='caller' (default) preserves the imported model coordinates used by edit instructions; 'part' uses a rigid-equivariant part-relative frame and returns that frame. include_faces adds exact caller-face indices and geometry descriptors. max_features limits expanded records to 1..100; counts remain exact."""
-    return _resolve_session().recognise_features(
-        object_name,
-        families=families,
-        coordinate_frame=coordinate_frame,
-        include_faces=include_faces,
-        max_features=max_features,
-    )
+    """Inspect a STEP path or registered session object (default: current shape). No filters returns compact measures and family counts/dimension ranges. families is comma-separated (e.g. 'holes,bosses,fillets') and returns caller-frame feature records with ids, location, axis and dimensions, without raw face arrays. feature_ids selects caller-frame analytic face descriptors and an executable select_faces(shape, faces=...) example; the helper is injected inside execute() and requires a unique match per descriptor. max_features bounds expansion to 1..100 records; matched counts remain exact. IDs include a content digest; stale or unbound ids are refused. A registered object name takes precedence over an identical path string."""
+    return _resolve_session().inspect_features(target, families, feature_ids, max_features)
 
 
 @mcp.tool(annotations=_READ_ONLY)
-def find_candidates(
-    kind: str,
-    qualifiers: str = "{}",
-    stated_value: float | None = None,
-    object_name: str = "",
-) -> str:
-    """List recognised instances of a hole, boss, polygonal boss, slot, chamfer or fillet. qualifiers is JSON with optional axis (X/Y/Z), side (+X/-X/+Y/-Y/+Z/-Z, relative to the part bounding-box centre), and value_field; matches are reported for the literal axes and grouped over all 24 proper rotations of the request frame (no mirror readings, none preferred). stated_value is checked against the measured feature value within 0.1 mm or 1%. An unmatched value is flagged; empty or truncated recognition is never treated as proof of absence. Returns exact @feature handles for recognised instances."""
-    return _resolve_session().find_candidates(kind, qualifiers, stated_value, object_name)
-
-
-@mcp.tool(annotations=_READ_ONLY)
-def interface_features(object_name: str = "") -> str:
-    """Suggest planar mounting faces from recognised hole openings, with exact hole handles. These are geometric candidates, not a declaration of design intent. Pass chosen hole handles as protected_refs to edit_feature(); that edit also checks every other recognised hole and the outer envelope."""
-    return _resolve_session().interface_features(object_name)
+def diff_step(old: str, new: str, render: bool = False) -> str | list:
+    """Compare STEP paths or registered objects using specify-core: adapted/orphaned/new features, measures, unchanged analytic faces and unclaimed planar offsets/tangential moves. Lists are bounded with exact counts. Analytic descriptors do not compare trim contours. render=True also returns specify-core's diff overlay image from the same comparison (orange modified, green added, red removed). Cached loaded parts reuse recognition after inspection. Recognition and the overlay have no deadline of their own: a part whose recognition is very slow can exhaust the worker budget and lose the session. A registered object name takes precedence over an identical path string. Use this to verify revisions; PMI migration is not task acceptance."""
+    result = _resolve_session().diff_step(old, new, render)
+    if isinstance(result, dict):
+        return [TextContent(type="text", text=result["report"]), *marshal_render_view(result)]
+    return result
 
 
 @mcp.tool(annotations=_MUTATING)
 def edit_feature(
-    handle: str,
+    feature_id: str,
     diameter: float,
+    object_name: str = "",
     result_name: str = "",
     protected_refs: str = "[]",
 ) -> str:
-    """Transactionally resize one plain cylindrical through hole identified by a current @feature handle. Reject holes with counterbores, spotfaces, countersinks or multiple constituent faces. Predict the annular volume change, then check exact added/removed material, hole recognition, every other hole and the outer envelope before registering the result. protected_refs is a JSON list of other hole handles; the target itself cannot be protected. On failure no result is registered. Defaults to replacing the named source; result_name can preserve it under a new name."""
-    return _resolve_session().edit_feature(handle, diameter, result_name, protected_refs)
+    """Transactionally resize one plain cylindrical through hole identified by inspect_features, e.g. holes:12@<digest>, on object_name (default current shape). Re-analyse current STEP bytes; refuse unresolved ids or live-face descriptor mismatches. Reject dependent hole geometry. Verify predicted annular volume, all other holes and envelope before registering the result. protected_refs is a JSON list of feature ids on the current shape. Defaults to replacing the source; result_name can preserve it under a new name."""
+    return _resolve_session().edit_feature(
+        feature_id, diameter, object_name, result_name, protected_refs
+    )
 
 
 # not read-only: with the optional label= arg it stores the descriptor in
@@ -1144,7 +1128,7 @@ def script(save_to: str = "") -> str:
 
 @mcp.tool(annotations=_MUTATING)
 def import_cad_file(path: str, name: str = "") -> str:
-    """Import a STEP (.step/.stp), STL (.stl), or 3MF (.3mf) file as a named object in the session. path: absolute or relative path to the file. name: name to register the shape under (defaults to the filename stem). The shape becomes both the named object and the current_shape. A multi-object 3MF registers an aggregate under name plus each member as name_1, name_2, etc.; the result includes per-member topology summaries. After importing, use render_view() to visualise the shape, measure() for geometry queries, or compare(a='imported', b='model', kind='shape') to diff against a show() object. Note: STL imports produce a shell (volume=0) rather than a solid. 3MF commonly yields editable solids when its meshes are closed, but callers must check the returned solids and volume fields rather than assuming every mesh is valid. If you have both the original built shape and an imported copy in session.objects, render the imported one by name (e.g. objects='mypart') to avoid Z-fighting artifacts from two co-located shapes."""
+    """Import a STEP (.step/.stp), STL (.stl), or 3MF (.3mf) file as a named object in the session. path: absolute or relative path to the file. name: name to register the shape under (defaults to the filename stem). The shape becomes both the named object and the current_shape. A multi-object 3MF registers an aggregate under name plus each member as name_1, name_2, etc.; the result includes per-member topology summaries. After importing, use render_view() to visualise the shape, measure() for geometry queries, or diff_step(old='imported', new='model') to diff against a show() object. Note: STL imports produce a shell (volume=0) rather than a solid. 3MF commonly yields editable solids when its meshes are closed, but callers must check the returned solids and volume fields rather than assuming every mesh is valid. Safe names are bound directly inside execute() (e.g. part after importing as name="part"); the response gives execute_name/execute_example. Keywords, builtins, helpers and user import names are not overwritten: use the injected get_object(name) to fetch any registered name. Replacements and snapshot restore rebind named objects. Render a specific registered name (objects="mypart") to avoid co-located geometry artifacts."""
     result = _resolve_session().import_cad_file(path, name)
     _publish_deltas()
     return result
@@ -1160,7 +1144,7 @@ def repair_hints(error_text: str) -> str:
 
 @mcp.tool(annotations=_READ_ONLY)
 def repair_advice(error_text: str = "", goal: str = "", context: str = "") -> str:
-    """Return structured, field-proven repair/edit recipes for an agent to implement explicitly in execute(). Unlike repair_hints(), which gives short error-specific tips, this emits a sequenced plan with code-pattern names, acceptance checks, and stop conditions. Provide the full validate()/export()/last_error() text as error_text, the intended edit as goal, and any extra notes from locate_gate_defects()/compare(a='before', b='after', kind='shape') as context. The tool is read-only and does not mutate geometry."""
+    """Return structured, field-proven repair/edit recipes for an agent to implement explicitly in execute(). Unlike repair_hints(), which gives short error-specific tips, this emits a sequenced plan with code-pattern names, acceptance checks, and stop conditions. Provide the full validate()/export()/last_error() text as error_text, the intended edit as goal, and any extra notes from locate_gate_defects()/diff_step(old='before', new='after') as context. The tool is read-only and does not mutate geometry."""
     from build123d_mcp.tools.repair_advice import repair_advice as _repair_advice
 
     return _repair_advice(error_text=error_text, goal=goal, context=context)
@@ -1204,7 +1188,7 @@ BUILD123D-MCP WORKFLOW GUIDE
    h.location[0] < 5] — so filter/compute in code instead of copying numbers out of a
    JSON tool result. For standalone MCP fit/alignment/shape/snapshot comparisons,
    use compare(a="part", b="mate", kind="fit"),
-   compare(a="a", b="b", kind="align"), compare(a="before", b="after", kind="shape"),
+   compare(a="a", b="b", kind="align"), diff_step(old="before", new="after"),
    or compare(a="before", kind="snapshot").
 
 3. VERIFY BOOLEAN OPERATIONS WITH TOPOLOGY

@@ -1,315 +1,12 @@
-"""Conservative feature selection and transactional edits of imported solids."""
+"""Conservative, stateless transactional edits of imported solids."""
 
 from __future__ import annotations
 
-import itertools
 import json
 import math
 
+from build123d_mcp.tools._recognition import build_evidence
 from build123d_mcp.tools.measure import _resolve_shape
-from build123d_mcp.tools.recognise_features import recognise_features
-
-
-def _report(session, object_name: str, family: str) -> dict:
-    report = json.loads(
-        recognise_features(session, object_name=object_name, families=family, max_features=100)
-    )
-    if "error" in report:
-        raise ValueError(report["error"])
-    if report["truncated"]:
-        raise ValueError("feature inventory exceeds 100 records; enumeration would be incomplete")
-    return report
-
-
-def _families(kind: str) -> tuple[str, ...]:
-    names = {
-        "hole": ("holes",),
-        "bore": ("holes",),
-        "boss": ("bosses", "polygonal_bosses"),
-        "polygonal_boss": ("polygonal_bosses",),
-        "slot": ("slots",),
-        "chamfer": ("chamfers",),
-        "fillet": ("fillets",),
-    }
-    try:
-        return names[kind.strip().lower().replace(" ", "_")]
-    except KeyError as exc:
-        raise ValueError(
-            f"unsupported feature kind {kind!r}; choose one of {sorted(names)}"
-        ) from exc
-
-
-def _measured_value(family: str, record: dict) -> tuple[str | None, float | None]:
-    choices = {
-        "holes": ("diameter",),
-        "bosses": ("diameter", "height"),
-        "polygonal_bosses": ("across_flats", "diameter", "height"),
-        "slots": ("width", "length"),
-        "chamfers": ("size", "width"),
-        "fillets": ("radius",),
-    }
-    for key in choices[family]:
-        value = record.get(key)
-        if isinstance(value, (int, float)) and math.isfinite(value):
-            return key, float(value)
-    return None, None
-
-
-def _axis(record: dict) -> list[float] | None:
-    axis = record.get("axis")
-    if isinstance(axis, str) and axis.lower() in {"x", "y", "z"}:
-        return [float(axis.lower() == name) for name in "xyz"]
-    if isinstance(axis, (list, tuple)) and len(axis) == 3:
-        return [float(v) for v in axis]
-    return None
-
-
-_AXES = "XYZ"
-
-
-def _proper_orientations() -> list[tuple[tuple[int, int], ...]]:
-    """All 24 proper rotations of the request frame, identity first.
-
-    Each orientation maps request axis i (X, Y, Z) to ``(part_axis, sign)``. Only
-    signed permutations with determinant +1 are kept, so no reading mirrors the
-    part; none is preferred beyond reporting the identity as the literal reading.
-    """
-    out = []
-    for perm in itertools.permutations(range(3)):
-        for signs in itertools.product((1, -1), repeat=3):
-            matrix = [[0] * 3 for _ in range(3)]
-            for i, (j, sign) in enumerate(zip(perm, signs)):
-                matrix[j][i] = sign
-            det = (
-                matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
-                - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
-                + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0])
-            )
-            if det == 1:
-                out.append(tuple(zip(perm, signs)))
-    identity = ((0, 1), (1, 1), (2, 1))
-    out.remove(identity)
-    return [identity, *out]
-
-
-_ORIENTATIONS = _proper_orientations()
-
-
-def _orientation_label(orientation: tuple[tuple[int, int], ...]) -> str:
-    return ", ".join(
-        f"{_AXES[i]}->{'+' if sign > 0 else '-'}{_AXES[j]}"
-        for i, (j, sign) in enumerate(orientation)
-    )
-
-
-def _axis_matches(axis: list[float] | None, requested: str, orientation) -> bool:
-    if not requested:
-        return True
-    if axis is None:
-        return False
-    requested = requested.upper()
-    if requested not in {"X", "Y", "Z"}:
-        raise ValueError("qualifiers.axis must be X, Y, or Z")
-    part_axis, _ = orientation[_AXES.index(requested)]
-    return abs(axis[part_axis]) >= 0.98
-
-
-def _side_matches(record: dict, requested: str, orientation, midpoint: tuple) -> bool:
-    if not requested:
-        return True
-    point = record.get("location", record.get("center"))
-    if not isinstance(point, (list, tuple)) or len(point) != 3:
-        return False
-    part_axis, sign = orientation[_AXES.index(requested[1])]
-    direction = sign * (1 if requested[0] == "+" else -1)
-    return (point[part_axis] - midpoint[part_axis]) * direction > 0.01
-
-
-def find_candidates(
-    session,
-    kind: str,
-    qualifiers: str = "{}",
-    stated_value: float | None = None,
-    object_name: str = "",
-) -> str:
-    """Enumerate recognised instances under the literal and every rotated axis reading.
-
-    ``qualifiers`` is JSON with optional ``axis``, ``side`` and ``value_field``. No guess
-    is made when recognition or a stated-value check fails.
-    """
-    try:
-        families = _families(kind)
-        filters = json.loads(qualifiers)
-        if not isinstance(filters, dict) or set(filters) - {"axis", "side", "value_field"}:
-            raise ValueError("qualifiers must be a JSON object with axis, side and/or value_field")
-        requested_axis = filters.get("axis", "")
-        if not isinstance(requested_axis, str):
-            raise ValueError("qualifiers.axis must be a string")
-        if requested_axis and requested_axis.upper() not in {"X", "Y", "Z"}:
-            raise ValueError("qualifiers.axis must be X, Y, or Z")
-        requested_side = filters.get("side", "")
-        if not isinstance(requested_side, str) or (
-            requested_side and requested_side.upper() not in {"+X", "-X", "+Y", "-Y", "+Z", "-Z"}
-        ):
-            raise ValueError("qualifiers.side must be +X, -X, +Y, -Y, +Z, or -Z")
-        requested_side = requested_side.upper()
-        value_field = filters.get("value_field")
-        if value_field is not None and not isinstance(value_field, str):
-            raise ValueError("qualifiers.value_field must be a string")
-        if stated_value is not None and (
-            isinstance(stated_value, bool)
-            or not isinstance(stated_value, (int, float))
-            or not math.isfinite(stated_value)
-            or stated_value <= 0
-        ):
-            raise ValueError("stated_value must be a positive finite number")
-        reports = [_report(session, object_name, family) for family in families]
-        box = _resolve_shape(session, object_name).bounding_box()
-        midpoint = tuple((a + b) / 2 for a, b in zip(box.min, box.max))
-        candidates = []
-        for feature in (item for report in reports for item in report["features"]):
-            family = feature["family"]
-            record = feature["record"]
-            field, value = _measured_value(family, record)
-            if value_field is not None:
-                field = value_field
-                raw = record.get(field)
-                value = float(raw) if isinstance(raw, (int, float)) else None
-            axis = _axis(record)
-            if stated_value is None:
-                value_matches = True
-            else:
-                tolerance = max(0.1, 0.01 * stated_value)
-                value_matches = value is not None and abs(value - stated_value) <= tolerance
-            candidates.append(
-                {
-                    "ref": feature["ref"],
-                    "family": family,
-                    "record": record,
-                    "measured_field": field,
-                    "measured_value": value,
-                    "value_matches": value_matches,
-                    "axis": axis,
-                    "literal_axis_matches": _axis_matches(axis, requested_axis, _ORIENTATIONS[0]),
-                    "literal_side_matches": _side_matches(
-                        record, requested_side, _ORIENTATIONS[0], midpoint
-                    ),
-                    "_matching_orientations": [
-                        index
-                        for index, orientation in enumerate(_ORIENTATIONS)
-                        if value_matches
-                        and _axis_matches(axis, requested_axis, orientation)
-                        and _side_matches(record, requested_side, orientation, midpoint)
-                    ],
-                }
-            )
-        # Group orientations by the candidate set they select, so every distinct
-        # reading is reported once without singling out any rotation.
-        groups: dict[tuple[str, ...], list[int]] = {}
-        # Without an axis or side qualifier every orientation selects the same set,
-        # so rotated readings carry no information; report none.
-        oriented = bool(requested_axis or requested_side)
-        for index in range(len(_ORIENTATIONS) if oriented else 0):
-            refs = tuple(c["ref"] for c in candidates if index in c["_matching_orientations"])
-            if refs:
-                groups.setdefault(refs, []).append(index)
-        readings = [
-            {
-                "matches": list(refs),
-                "includes_literal": 0 in indices,
-                "orientations": [_orientation_label(_ORIENTATIONS[i]) for i in indices],
-            }
-            for refs, indices in sorted(groups.items(), key=lambda item: item[1][0])
-        ]
-        for c in candidates:
-            del c["_matching_orientations"]
-        return json.dumps(
-            {
-                "kind": kind,
-                "count": len(candidates),
-                "candidates": candidates,
-                "literal_matches": [
-                    c["ref"]
-                    for c in candidates
-                    if c["value_matches"]
-                    and c["literal_axis_matches"]
-                    and c["literal_side_matches"]
-                ],
-                "orientation_readings": readings,
-                "orientations_evaluated": len(_ORIENTATIONS),
-                "stated_value_unmatched": stated_value is not None
-                and not any(c["value_matches"] for c in candidates),
-                "recognition_only": True,
-            },
-            indent=2,
-        )
-    except (ValueError, TypeError, json.JSONDecodeError) as exc:
-        return json.dumps({"error": str(exc)}, indent=2)
-
-
-def interface_features(session, object_name: str = "") -> str:
-    """Suggest planar mounting faces from recognised hole openings.
-
-    These are candidates rather than claims about mating intent. An edit gate
-    must compare their geometry, not assume every large flat face is an interface.
-    """
-    try:
-        shape = _resolve_shape(session, object_name)
-        report = _report(session, object_name, "holes")
-        rows = []
-        for index, face in enumerate(shape.faces()):
-            if str(face.geom_type).split(".")[-1] != "PLANE":
-                continue
-            normal = tuple(face.normal_at())
-            center = tuple(face.center())
-            opening_edges = [
-                (tuple(edge.arc_center), edge.radius)
-                for edge in face.edges()
-                if str(edge.geom_type).split(".")[-1] == "CIRCLE"
-            ]
-            holes = []
-            for feature in report["features"]:
-                record = feature["record"]
-                opening = record["location"]
-                offset = sum((opening[i] - center[i]) * normal[i] for i in range(3))
-                axis = record["axis"]
-                parallel = abs(sum(axis[i] * normal[i] for i in range(3)))
-                opening_radii = {record["diameter"] / 2}
-                for stack in (record["cbore"], record["spotface"], record["csink"]):
-                    if isinstance(stack, dict):
-                        opening_radii.update(
-                            value / 2
-                            for key, value in stack.items()
-                            if key in {"diameter", "major_diameter"}
-                            and isinstance(value, (int, float))
-                        )
-                on_boundary = any(
-                    any(abs(radius - wanted) <= 0.01 for wanted in opening_radii)
-                    and all(abs(edge_center[i] - opening[i]) <= 0.01 for i in range(3))
-                    for edge_center, radius in opening_edges
-                )
-                if abs(offset) <= 0.01 and parallel >= 0.98 and on_boundary:
-                    holes.append(feature["ref"])
-            if holes:
-                rows.append(
-                    {
-                        "face_index": index,
-                        "area": round(face.area, 6),
-                        "normal": list(normal),
-                        "hole_refs": holes,
-                    }
-                )
-        return json.dumps(
-            {
-                "object": object_name or "current_shape",
-                "mounting_face_candidates": rows,
-                "protected_hole_refs": sorted({ref for row in rows for ref in row["hole_refs"]}),
-                "note": "Geometric suggestions only; the caller must choose which interfaces to protect.",
-            },
-            indent=2,
-        )
-    except (ValueError, RuntimeError) as exc:
-        return json.dumps({"error": str(exc)}, indent=2)
 
 
 def _solid_from_occt(shape):
@@ -392,13 +89,15 @@ def _annulus_bounds(opening: list[float], axis: list[float], depth: float, radiu
 
 def edit_feature(
     session,
-    handle: str,
+    feature_id: str,
     diameter: float,
+    object_name: str = "",
     result_name: str = "",
     protected_refs: str = "[]",
 ) -> str:
     """Resize one plain through hole, checking predicted change before commit.
 
+    The id and protected_refs must include the digest returned by inspection.
     Only a single cylindrical wall without a counterbore, spotface or
     countersink is accepted. Other feature edits require a different geometric
     contract; silently guessing their dependent geometry would be unsafe.
@@ -413,31 +112,21 @@ def edit_feature(
             raise ValueError("diameter must be a positive finite number")
         protected = json.loads(protected_refs)
         if not isinstance(protected, list) or not all(isinstance(ref, str) for ref in protected):
-            raise ValueError("protected_refs must be a JSON list of feature handles")
-        target = session._recognition_targets.get(handle)
-        if target is None:
-            raise ValueError("unknown or expired feature handle; call recognise_features() again")
-        source_name = target["source_name"]
-        source = target["source"]
-        active = (
-            session.current_shape if source_name == "@current" else session.objects.get(source_name)
-        )
-        if active is not source:
-            raise ValueError("stale feature handle; source geometry has changed")
-        if target["family"] != "holes":
+            raise ValueError("protected_refs must be a JSON list of feature ids")
+        source = _resolve_shape(session, object_name)
+        source_name = object_name or "@current"
+        evidence = build_evidence(source, session)
+        feature = evidence.analysis.resolve_id(feature_id)
+        if evidence.family(feature) != "holes":
             raise ValueError("edit_feature currently supports only plain through holes")
         if not source.is_valid or len(source.solids()) != 1:
             raise ValueError("source must be one valid solid")
-        for ref in protected:
-            entry = session._recognition_targets.get(ref)
-            if entry is None or entry["source"] is not source:
-                raise ValueError(f"protected handle {ref!r} is unknown or belongs to another shape")
-            if entry["family"] != "holes":
-                raise ValueError("protected_refs currently accepts only hole handles")
-        if handle in protected:
+        protected_ids = [evidence.analysis.resolve_id(ref) for ref in protected]
+        for ref in protected_ids:
+            if evidence.family(ref) != "holes":
+                raise ValueError(f"protected feature id {ref!r} is not a hole")
+        if feature in protected_ids:
             raise ValueError("target hole is protected; remove it from protected_refs to edit it")
-        evidence = target["evidence"]
-        feature = target["feature"]
         record = evidence.record(feature).to_dict()
         faces = evidence.constituent_faces(feature)
         if (
@@ -448,12 +137,13 @@ def edit_feature(
             or len(faces) != 1
         ):
             raise ValueError("hole has dependent or non-cylindrical geometry; edit refused")
+        # Verify the STEP index against live analytic geometry even for enlargements.
+        for face_id in faces:
+            evidence.face(face_id)
         if abs(diameter - record["diameter"]) <= 1e-6:
             raise ValueError("new diameter equals the current diameter")
 
         from build123d import Align, Cylinder, Plane
-
-        from build123d_mcp.tools._recognition import build_evidence
 
         axis = record["axis"]
         opening = record["location"]
@@ -507,7 +197,7 @@ def edit_feature(
             raise ValueError("changed region differs from the predicted hole annulus")
         if any(abs(a - b) > 0.01 for a, b in zip(_bounds(source), _bounds(candidate))):
             raise ValueError("outer envelope moved during hole edit")
-        after = build_evidence(candidate)
+        after = build_evidence(candidate, session)
         before_holes = _hole_records(evidence)
         before_holes.remove(record)
         after_holes = _hole_records(after)
@@ -538,7 +228,8 @@ def edit_feature(
         return json.dumps(
             {
                 "result_name": name,
-                "handle": handle,
+                **session.object_access(name),
+                "feature_id": feature_id,
                 "predicted": {
                     "added_volume": round(expected_added, 6),
                     "removed_volume": round(expected_removed, 6),

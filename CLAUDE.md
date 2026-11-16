@@ -62,8 +62,9 @@ tools/export.py    — STEP/STL export; path traversal blocked
 
 - **Namespace persists** across `execute()` calls — imports and variables accumulate.
 - **`current_shape`** is auto-detected after each execute: an explicit `show()`/`annotate()` in the call wins, then a variable named `result`, then any new `BuildPart` or `Shape`.
-- **`objects` dict** holds named shapes registered via `show(shape, name=None)`. Name defaults to `"shape"` if omitted.
-- **Snapshots** save `current_shape` + `objects` only — the Python namespace is NOT restored on `restore_snapshot()`.
+- **`objects` dict** holds named shapes registered by import, `show(shape, name=None)`, drawing helpers, library loading, feature edits and `execute_file` result promotion. `show` defaults to `"shape"`. Registrations bind the exact object as a variable in the worker's execute namespace when the name is an identifier, not a keyword, builtin, helper, user import or unrelated user variable. A variable already holding the exact newly registered object may be adopted without overwriting it. Noncanonical Unicode identifier spellings use the accessor to avoid Python normalization changing the access path. Responses expose `execute_name` or a collision warning and `get_object(name)` fallback. Replacements rebind the variable; edits assigned to a variable warn until registered with `show` to update the registry.
+- **`get_object(name)` / `select_faces(shape, ...)`** are injected like `show`, without imports. The accessor returns any registered name; selection matches caller-frame analytic geometry, never STEP face indices.
+- **Snapshots** save `current_shape` + `objects` only. `restore_snapshot()` rebinds restored registered names and removes departed object bindings. Other Python variables/imports are NOT restored. User values that replaced an object variable are preserved; restore reports the `get_object(name)` fallback.
 - **`reset()`** clears everything: namespace, shapes, objects, snapshots.
 
 ## Concurrency model
@@ -105,7 +106,7 @@ Known limits: memory exhaustion is not bounded; Python introspection chains can 
 ## Gotchas
 
 - After a timeout the namespace may be partially modified — don't trust state without a reset.
-- `restore_snapshot()` restores geometry only; Python variables set after the snapshot remain in scope.
+- `restore_snapshot()` restores geometry and registered object bindings; other Python variables set after the snapshot remain in scope. Aliases to old geometry remain aliases; fetch the restored object by its registered variable or `get_object(name)`.
 - `show()` stores shapes by reference; mutating the shape object after calling `show()` will affect the stored object.
 - Clip plane in `render_view` slices at the mesh's own bounding-box midpoint, not world origin.
 

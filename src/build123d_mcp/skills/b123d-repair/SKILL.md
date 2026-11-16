@@ -172,6 +172,14 @@ pre-heal volume every time regardless — whichever wrapper you use, a wrapping
 bug or a genuinely bad heal both show up the same way (a wrong or zero
 volume), so the check is what actually tells them apart.
 
+Imports and `show(candidate, "repaired")` bind the exact registered result as
+`repaired` in `execute()` when the name is safe; otherwise use
+`get_object("repaired")` as reported by the response. Replacing a name rebinds it
+to the repair result. `restore_snapshot()` rebinds restored registered names;
+other variables and aliases to old geometry remain in scope. `bank_candidate()`
+exports/gates the selected object and optionally saves a snapshot; it does not
+register a different shape.
+
 Because build123d-mcp's `execute()` namespace persists across calls, a rung
 whose attempt raises does **not** clear a previous rung's `healed` — reassign
 `healed = None` before each attempt and check `healed is not None` before
@@ -440,6 +448,35 @@ same boundary with rung 4 option 2/3 or re-sewing that local face at a tighter,
 controlled tolerance before using destructive drop-and-sew. Then verify with the
 export gate, because the failure may only appear after STEP round-trip and finer
 tessellation.
+
+---
+
+### Explicit interior-chord split for a diagnosed mesh cusp
+
+When the gate localizes a coarse-mesh self-intersection to one otherwise valid
+planar/analytic face, an interior seam can change tessellation without moving
+material. Use the injected `split_face_chord` in your own `execute()` code;
+this is an explicit repair primitive, not an automatic healer. Diagnose and
+choose the face/chord first, and save a rollback snapshot.
+
+```python
+# Example coordinates for a centered 20 x 30 x 10 block; use the diagnosed face
+# and measured boundary points on the actual part.
+top = select_faces(part, kind="plane", direction=(0, 0, 1))[0]
+repaired = split_face_chord(part, top, (-10, 0, 5), (10, 0, 5))
+print(part.volume, repaired.volume, len(part.faces()), len(repaired.faces()))
+show(repaired, "repair_candidate")
+```
+
+The helper wraps `BRepFeat_SplitShape`, requires boundary endpoints within
+1e-7 mm of the face, checks that the whole straight chord stays inside the face
+(no crossing holes), and refuses volume drift above 1e-9 relative, topology
+loss, or a failing validity gate. A straight chord generally leaves a curved
+surface; use an actual straight generator or choose another ladder rung.
+It returns a new Solid and never registers, banks or displays it. Call
+`diff_step(old="part", new="repair_candidate")`, inspect the new seam and volume,
+then verify the written STEP with the export gate (Step 2). A successful split
+does not by itself prove the diagnosed mesh defect was repaired.
 
 ---
 

@@ -188,7 +188,7 @@ reading a number out of one tool result and re-typing it into the next call:
 `measure(part)["volume"]`, `[h for h in find_holes(part) if h.location[0] < 5]`,
 `clearance(a, b)["clearance"]`, `align_check(a, b)["delta"]`. These are
 in-`execute()` Python helpers for composing checks in code. For standalone MCP
-tool calls, use `compare(a="before", b="after", kind="shape")`,
+tool calls, use `diff_step(old="before", new="after")`,
 `compare(a="part", b="mate", kind="fit")`,
 `compare(a="a", b="b", kind="align")`, or
 `compare(a="snapshot_name", kind="snapshot")` instead of separate comparison verbs. Also available:
@@ -215,12 +215,11 @@ large shapes. The standalone MCP tools remain for one-shot queries.
   `clearance(a, b)` and `align_check(a, b)` remain available for branching in
   code. Connect parts with Joints (RigidJoint / RevoluteJoint / …) rather than
   raw `.move()` — see `build123d://quickref`.
-- Editing an imported reference: after changing a part loaded with
-  `import_cad_file()`, `compare(a="input", b="edited", kind="shape")` localizes *where* the
-  geometry changed and reports the exact added/removed volume and surface
-  displacement — confirm the changed region and magnitude match the request, and
-  that the rest stayed put. A tangential move (sliding a hole) shows no region;
-  cross-check `find_holes` and the bbox/center deltas for those.
+- Editing an imported reference: use `inspect_features(target="input")` to
+  inspect features and `diff_step(old="input", new="edited", render=True)` to
+  report adapted/orphaned/new features, measures, and unclaimed analytic face
+  offsets or tangential moves. Confirm requested dimensions, protected interfaces
+  and validity. Analytic face descriptors do not compare trim contours.
 - Use `find_holes`' bore axis for holes on curved or BSpline faces. Face centers
   and bounding-box centers can be off-axis; an apparent "already at target"
   result is a prompt to re-measure against the axis.
@@ -277,8 +276,8 @@ Field-proven decision rules:
 ## Step 4 — Experiments and recovery
 
 - `save_snapshot("before_fillet")` before any operation you might want to undo;
-  `restore_snapshot()` brings the geometry back (Python variables are NOT
-  restored — re-run assignments).
+  `restore_snapshot()` brings geometry and registered object bindings back;
+  other Python variables/imports remain in scope.
 - For "what if?" questions, use the loop: snapshot → mutate → measure/render →
   restore. It is cheaper and more accurate than rebuilding.
 - If an `execute()` times out, only that one step is dropped: the worker restarts
@@ -413,7 +412,9 @@ high-face-count boolean) still can't fit, drop out of the session for that one o
 
 1. Probe the API in-session with small `execute()` calls.
 2. Write the build as a script and run it with your shell tool.
-3. `import_cad_file("part.step", "part")` to bring the result back in.
+3. `import_cad_file("part.step", "part")` brings the result back and binds `part`
+   inside `execute()`. Use `get_object("part")` for any registered name, including
+   names whose collision warning prevented direct binding.
 4. Verify as usual: `measure("part")`, `render_view(objects="part")`.
 
 ## Step 6 — Finish

@@ -41,7 +41,7 @@ one default product surface.
 ### Inspection
 
 - `inspect_part(object_name="", expected="", section_axis="Z", section_slices=7)`
-- `compare(a="", b="", kind="shape")`
+- `diff_step(old="", new="")`
 - `validate(object_name="")`
 
 The standalone `measure` MCP tool remains visible during the migration. The normal

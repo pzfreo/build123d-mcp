@@ -27,3 +27,13 @@ def test_quickref_resource_uses_generated_text():
     from build123d_mcp.server import build123d_quickref
 
     assert build123d_quickref() == build_quickref_text()
+
+
+def test_execute_discovery_documents_bound_objects_and_face_selection():
+    from build123d_mcp.server import execute
+
+    for text in (execute.__doc__, build_quickref_text()):
+        assert "get_object(" in text
+        assert "select_faces(" in text
+        assert "bind safe names" in text
+        assert "user variables" in text

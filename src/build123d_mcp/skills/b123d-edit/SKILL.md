@@ -95,32 +95,38 @@ the feature in code. For spatial edits, render with labels or use
 `render_view(highlights=...)` to confirm the face/edge index before changing
 construction.
 
-For an imported B-rep with no feature history, call `recognise_features()`
-without `families` once for the compact shared inventory, then request only the
-likely family, for example `families="holes"` or `families="blends"`. Each
-returned `@feature[...]` handle can be resolved inside `execute()` with
-`recognition_faces(handle)` for all constituent faces, or
-`recognition_faces(handle, role="defining")` for the minimum recognition
-evidence. The default caller-coordinate records agree with the imported model;
-use `coordinate_frame="part"` only when a part-relative frame is useful. Handles
-are run-local and deliberately fail after their named source geometry is
-replaced, so recognise again after an edit. Empty families are explicit misses,
-not permission to substitute a nearby feature. Pockets, channels, blind slots and
-passages are all reported as `section_recesses`; a record whose `record_type`
-is `SectionRecessRefusal` means a recess was detected but its geometry was not
-proved, so do not reconstruct from it.
+For an imported B-rep, call `inspect_features(target="part")` for a compact
+inventory, then expand likely families with `families="holes,bosses,fillets"`.
+Records and selected face descriptors use the imported model's coordinates.
+Importing as `name="part"` binds the exact registered object as `part` inside
+`execute()`. Responses show `execute_name` or a `get_object("part")` fallback
+for naming collisions. A repair/edit registered with `show(candidate, "part")`
+rebinds `part` to that result; snapshot restore rebinds registered objects too.
 
-For an edit described by kind, axis, side or starting size, use
-`find_candidates(kind="hole", qualifiers='{"axis":"Z","side":"+X"}',
-stated_value=6)` before selecting a handle. It reports all recognised instances
-under the literal axes and every proper rotation of the request frame
-(grouped by the candidates each selects) and flags an unmatched stated
-value. `interface_features()` suggests flat faces with hole openings and their
-handles; identify the actual mating interface before editing. For a plain
-through hole with one cylindrical wall, `edit_feature(handle, diameter=8,
-protected_refs='[...]')` predicts and measures its change and rejects an edit
-that moves another recognised hole or the outer envelope. It refuses complex
-hole stacks; use the manual workflow below for those.
+Request descriptors with `feature_ids="holes:12@<digest>"`; paste the returned
+face dict/list into `select_faces(part, faces=...)` in `execute()`. This returns
+live `ShapeList` faces by analytic geometry, without trusting STEP indices.
+Every descriptor must uniquely match or raises a clear error. Keyword filters
+return all matches, e.g. `select_faces(part, kind="cylinder", radius=4)`.
+Default length tolerance is max(1e-5 mm, bbox diagonal * 1e-7), area tolerance
+max(1e-5 mm², face area * 1e-7), fixed direction/angle 1e-5. `tol` overrides
+length tolerance in mm; area tolerance is then 2*sqrt(face area)*tol + tol²
+(mm²). It never relaxes direction checks. Cone `radius` is the reference radius
+in the surface parameter frame; torus `radius` is the minor radius.
+Descriptor lists must be nonempty and resolve to distinct faces, and cannot be
+combined with keyword filters. A variable reassignment warns until registered
+with `show`; registrations preserve unrelated user variables and report
+`get_object(name)` as the access path when binding is refused.
+IDs describe the current STEP bytes:
+inspect again after changing geometry. Empty recognition is not permission to
+substitute a nearby feature. Check axis, location and starting dimensions
+against the request, and identify mating interfaces explicitly.
+
+For a plain through hole with one cylindrical wall, use
+`edit_feature(feature_id="holes:12@<digest>", diameter=8, object_name="part",
+protected_refs='["holes:13@<digest>"]')`. It checks predicted material change, all other
+holes and the envelope, and refuses dependent hole stacks or face mismatches.
+For other features, use the manual workflow below and verify with `diff_step`.
 
 ## Step 3 - Make One Explicit Edit
 
@@ -179,17 +185,13 @@ Then choose the evidence that matches the edit:
   `compare(a="a", b="b", kind="align", axis="Z", mode="flush")`
 - source-level edit may be brittle: run `design_audit()`
 - shape should otherwise match a baseline: run
-  `compare(a="before", b="edited", kind="shape")`
+  `diff_step(old="before", new="edited")`
 
-For imported B-reps, `compare(kind="shape")` can have noisy mesh localisation
-after a valid defeature or analytic face extension. Do not throw away a clean
-validated candidate solely because compare reports spread regions. First prove
-the exact delta directly: no added material when only removal was requested, the
-delta bounding box sits on the intended feature, the target faces are gone or
-changed as requested, and protected feature counts/dimensions are unchanged. If
-that evidence is clean, keep the validated defeatured result instead of replacing
-it with a raw boolean that preserves old face partitioning but creates extra
-seam faces.
+For imported B-reps, use `diff_step(old="baseline", new="edited", render=True)`
+to inspect adapted, orphaned and new features and unclaimed analytic face changes.
+Verify the requested dimensions and protected interfaces explicitly; the diff's
+analytic descriptors do not prove that every trim contour is unchanged. Retain
+the validity/export gate and exact material checks where required.
 
 For mesh-derived solids imported from 3MF or reconstructed from tessellated data,
 add these checks to the loop:
@@ -286,6 +288,43 @@ to a topology-preserving cutter that leaves extra cylindrical bands or seam face
 Accept the defeature only after the written export gate passes and the delta
 proof shows the removed material is localized to the requested fillet/chamfer.
 
+### Move an Imported Face Set Locally
+
+Use this when there is no editable source feature and a broad cut would damage
+other blends or a closed interior cavity. The helpers are explicit operations
+inside `execute()`, not automatic editing tools. Establish a valid baseline first.
+
+1. Call `inspect_features("part", families="bosses,fillets")`, then request the
+   selected content-bound feature IDs to obtain face descriptors. Check the
+   starting height, axis and fillet radius.
+2. Copy the returned face arrays for the cap and its top fillet into
+   `cap_descriptors` and `top_blend_descriptors` inside `execute()`. Select with
+   those descriptors; do not replace them with broader keyword filters:
+
+
+   ```python
+   cap = select_faces(part, faces=cap_descriptors)
+   top_blend = select_faces(part, faces=top_blend_descriptors)
+   assert len(cap) == 1 and len(top_blend) == 1
+   edited = translate_faces(part, cap + top_blend, (0, 0, -5))
+   ```
+
+3. Register a review candidate with `show(edited, "candidate")`; call
+   `diff_step(old="part", new="candidate")` and verify the intended boss height,
+   retained R3 blend and unchanged interior cavity/features. After accepting the
+   delta, call `show(edited, "part")`, then bank/export through the written gate.
+
+`translate_faces` preserves the rigidly moved patches and extends/trims adjacent
+planes/cylinders. Select tangent blends together with a moving wall/cap; a pocket
+wall and its two corner fillets can move together without changing their radii.
+`offset_faces(part, selected, 2)` instead applies an outward-normal offset (e.g.
+a cylindrical wall changes radius). Both return a new gated Solid, register
+nothing and preserve their input. They refuse unsupported neighbours/connecting
+curves, face collapse, tangent offset propagation and self-intersection. A cone,
+sphere or torus neighbour is refused if its unchanged support cannot contain the
+translated boundary. Restore the baseline and change the source construction
+when the explicit local operation is refused; do not accept collateral edits.
+
 ### Topology-Sensitive Edits
 
 For edits that often create open shells, duplicate internal faces, or disjoint
@@ -295,7 +334,7 @@ solids, ask the MCP for a recipe before trying variants:
 repair_advice(
   error_text="<validate/export failure text>",
   goal="lengthen the flanged boss and its through bore by 8mm",
-  context="<locate_gate_defects or compare(a='before', b='candidate', kind='shape') notes>"
+  context="<locate_gate_defects or diff_step(old='before', new='candidate') notes>"
 )
 ```
 

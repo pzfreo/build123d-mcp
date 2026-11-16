@@ -180,18 +180,31 @@ script, and try the next smaller step.
 
 ### Editing an imported part
 
-After importing a STEP and establishing a valid baseline, use
-`find_candidates(kind="hole", qualifiers='{"axis":"Z","side":"+X"}',
-stated_value=6)` to list every recognised candidate and check both the part's
-literal axes and every proper rotation of the request frame (grouped by the
-candidates each selects). `interface_features()` suggests flat
-faces carrying holes; choose which hole handles to protect. For a plain through
-hole, `edit_feature(handle, diameter=8, protected_refs='["@feature[...]"]')`
-resizes it and reports predicted and measured added or removed volume. It
-registers the result only when the hole, other recognised holes, and the outer
-envelope pass its checks. Holes with counterbores, spotfaces, countersinks or
-multiple constituent faces are refused; edit those in `execute()` and verify
-them with `compare(kind="shape")` and the STEP export gate.
+`import_cad_file("input.step", "part")` binds the exact imported object as `part`
+inside `execute()`. Named registrations and replacements through `show`,
+`edit_feature`, library loading and drawing helpers also bind safe identifiers.
+Responses provide `execute_name`; names colliding with builtins, helpers, imports
+or unrelated user variables remain accessible with `get_object("name")`.
+Snapshot restore rebinds registered objects; reset clears them.
+
+After importing a STEP and establishing a valid baseline, call
+`inspect_features(target="part")` for measures and a compact feature inventory.
+Expand `families="holes,bosses,fillets"`, or request analytic face descriptors
+with `feature_ids="holes:12@<digest>"`. Coordinates match the input model.
+Paste the returned face descriptors into `select_faces(part, faces=...)` inside
+`execute()` to get live build123d faces; each descriptor must match exactly one
+face. Keyword filters such as `select_faces(part, kind="cylinder", radius=4)`
+return all matches. Descriptor mode rejects empty/duplicate selections and
+keyword filters combined with `faces=`. No helper import is needed. Reassigning
+a bound variable warns that the registry is unchanged. Register edits with
+`show(edited, "part")` to replace the object and its binding. For a plain
+through hole, `edit_feature(feature_id="holes:12@<digest>", diameter=8, object_name="part",
+protected_refs='["holes:13@<digest>"]')` verifies predicted material change, other holes
+and the envelope before registering the result. Complex hole stacks are refused.
+Inspect again after edits. Verify revisions with
+`diff_step(old="input.step", new="part", render=True)` and the STEP export gate.
+The diff reports feature changes and bare analytic face changes; its descriptors
+do not prove trim-contour equality. Python 3.11 or later is supported.
 
 Good prompts usually ask the assistant to use the MCP tools explicitly and to
 verify the result before exporting. For example:
