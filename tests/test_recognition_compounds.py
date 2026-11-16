@@ -1,6 +1,7 @@
 """Multi-solid inspection keeps the whole engine part and its placement."""
 
 import importlib
+import importlib.metadata
 import json
 
 import pytest
@@ -12,6 +13,17 @@ from build123d_mcp.session import Session
 from build123d_mcp.tools._recognition import resolve_analysis
 from build123d_mcp.tools.diff_step import diff_step
 from build123d_mcp.tools.inspect_features import inspect_features
+
+# build123d 0.10 exports this nested compound as a two-part assembly, which
+# specify-core refuses ("choose one"); cx/part4 failed it the same way.
+_BUILD123D = tuple(int(x) for x in importlib.metadata.version("build123d").split(".")[:2])
+_OLD_EXPORT = _BUILD123D < (0, 11)
+_NESTED = pytest.param(
+    "nested_assembly",
+    marks=pytest.mark.xfail(
+        _OLD_EXPORT, strict=True, reason="build123d 0.10 exports a two-part assembly"
+    ),
+)
 
 
 def compound(radius, arrangement):
@@ -28,7 +40,7 @@ def compound(radius, arrangement):
 
 
 @pytest.mark.parametrize("target_kind", ["session", "step"])
-@pytest.mark.parametrize("arrangement", ["compound", "nested_assembly", "translated_compound"])
+@pytest.mark.parametrize("arrangement", ["compound", _NESTED, "translated_compound"])
 def test_inspect_and_diff_multi_solid_part(tmp_path, target_kind, arrangement):
     session = Session()
     targets = []
