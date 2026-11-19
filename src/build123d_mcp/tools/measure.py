@@ -365,6 +365,55 @@ def measure(session, object_name: str = "", density: float = 0.0, material: str 
     )
 
 
+def _betti(shape) -> dict:
+    """Solid count, through-openings and internal voids, from B-rep counts alone.
+
+    Per solid, Euler-Poincare gives V - E + F - (L - F) = 2 (S - G), with L the
+    face wires and S the shells, so the genus (through-openings) is
+    G = S - (V - E + 2F - L) / 2. Degenerate edges (the apex of a drill-point or
+    countersink cone, a sphere pole) are not part of the surface's cell
+    structure and are left out of E. Voids are the inner shells. Returns {}
+    when there is no solid or the counts are not those of a closed solid.
+    """
+    from OCP.BRep import BRep_Tool
+    from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_SHELL, TopAbs_VERTEX, TopAbs_WIRE
+    from OCP.TopExp import TopExp
+
+    from build123d_mcp._ocp_compat import IndexedMapOfShape, to_edge
+
+    def index(occ, kind):
+        found = IndexedMapOfShape()
+        TopExp.MapShapes_s(occ, kind, found)
+        return found
+
+    solids = shape.solids()
+    if not solids:
+        return {}
+    openings = voids = 0
+    for solid in solids:
+        occ = solid.wrapped
+        edges = index(occ, TopAbs_EDGE)
+        degenerate = sum(
+            BRep_Tool.Degenerated_s(to_edge(edges.FindKey(i))) for i in range(1, edges.Extent() + 1)
+        )
+        faces = index(occ, TopAbs_FACE)
+        loops = sum(
+            index(faces.FindKey(i), TopAbs_WIRE).Extent() for i in range(1, faces.Extent() + 1)
+        )
+        shells = index(occ, TopAbs_SHELL).Extent()
+        chi = (
+            index(occ, TopAbs_VERTEX).Extent()
+            - (edges.Extent() - degenerate)
+            + 2 * faces.Extent()
+            - loops
+        )
+        if chi % 2 or shells - chi // 2 < 0:
+            return {}
+        openings += shells - chi // 2
+        voids += shells - 1
+    return {"solids": len(solids), "through_openings": openings, "voids": voids}
+
+
 def _measure_report(shape, rho: float) -> str:
     bb = shape.bounding_box()
     cx = round((bb.min.X + bb.max.X) / 2, 4)
@@ -391,6 +440,7 @@ def _measure_report(shape, rho: float) -> str:
                 "faces": len(shape.faces()),
                 "edges": len(shape.edges()),
                 "vertices": len(shape.vertices()),
+                **_betti(shape),
             },
             "bbox": {
                 "xmin": round(bb.min.X, 4),

@@ -4,6 +4,11 @@
 
 ### Added
 
+- `measure()` topology now reports `solids`, `through_openings` (genus) and
+  `voids` for solid shapes, from B-rep Euler-Poincare counts with degenerate
+  cone/pole edges excluded. On 7 CADGenBench outputs it matches the scorer's
+  topology tuple exactly. A blind hole cut through shows up as an extra opening.
+
 - Explicit `translate_faces`, `offset_faces` and `split_face_chord` primitives
   inside `execute()` (#500 part 4). Local analytic face edits preserve selected
   rigid blends and unrelated cavity shells; chord splits preserve volume. Each
