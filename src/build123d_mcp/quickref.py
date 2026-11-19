@@ -408,7 +408,8 @@ show(result, "constrained_arc")""",
 - These helpers do not register/show/bank; check diff_step then show() explicitly
 - fold_sheet(outline_face, thickness, bends=[dict(line=((x1,y1),(x2,y2)), direction="up"|"down", angle=90, radius=R, k=0.33)], fixed=(x,y)):
   folds a flat sheet-metal pattern (XY plane, z 0..thickness) exactly; line = bend centre line in the flat; zone width = angle*(R+k*t);
-  "up" bends towards +Z with the inside radius on top. Build the flat blank from the drawing's flat pattern, never hand-place flanges
+  "up" bends towards +Z with the inside radius on top; position="far"|"near" (with fixed=) when the drawn line is the bend-zone edge
+  away from / on the fixed side. Build the flat blank from the drawing's flat pattern, never hand-place flanges; check formed dims after folding
 - get_object/select_faces/translate_faces/offset_faces/split_face_chord/fold_sheet are injected helpers; no import required
 - named_face(shape, "top") returns the highest-Z face; also: bottom/front/back/left/right
 - find_edges(shape, geom="circle", radius=4.25, at_z=10.2) filters edges for fillet/chamfer; prints count + radii + Z levels""",

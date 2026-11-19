@@ -43,7 +43,7 @@ def _positive(value, what, allow_zero=False):
 def _parse_bend(i, bend, thickness, default_k):
     if not isinstance(bend, dict):
         raise ValueError(f"fold_sheet: bend {i} must be a dict")
-    allowed = {"line", "angle", "direction", "radius", "k"}
+    allowed = {"line", "angle", "direction", "radius", "k", "position"}
     unknown = set(bend) - allowed
     if unknown:
         raise ValueError(f"fold_sheet: bend {i} has unknown keys {sorted(unknown)}")
@@ -67,6 +67,9 @@ def _parse_bend(i, bend, thickness, default_k):
     k = float(bend.get("k", default_k))
     if not (0.0 <= k <= 1.0):
         raise ValueError(f"fold_sheet: bend {i} k must be between 0 and 1")
+    position = str(bend.get("position", "center")).lower()
+    if position not in ("center", "near", "far"):
+        raise ValueError(f"fold_sheet: bend {i} position must be 'center', 'near' or 'far'")
     theta = math.radians(angle)
     d = ((p2[0] - p1[0]) / length, (p2[1] - p1[1]) / length)
     return {
@@ -79,7 +82,27 @@ def _parse_bend(i, bend, thickness, default_k):
         "up": direction == "up",
         "radius": radius,
         "allowance": theta * (radius + k * thickness),
+        "position": position,
     }
+
+
+def _centre_lines(parsed, fixed):
+    """Move 'near'/'far' lines to the bend-zone centre, relative to the fixed side."""
+    for i, b in enumerate(parsed):
+        if b["position"] == "center":
+            continue
+        if fixed is None:
+            raise ValueError(f"fold_sheet: bend {i} position={b['position']!r} needs fixed=(x, y)")
+        side = (fixed[0] - b["p1"][0]) * b["n"][0] + (fixed[1] - b["p1"][1]) * b["n"][1]
+        if abs(side) < _EPS:
+            raise ValueError(f"fold_sheet: fixed point lies on bend {i}'s line")
+        towards_fixed = 1.0 if side > 0 else -1.0
+        # 'far': the line is the zone edge away from the fixed side, so the centre
+        # is half a bend allowance towards the fixed side; 'near' is the opposite.
+        shift = towards_fixed * (1 if b["position"] == "far" else -1) * b["allowance"] / 2
+        dx, dy = b["n"][0] * shift, b["n"][1] * shift
+        b["p1"] = (b["p1"][0] + dx, b["p1"][1] + dy)
+        b["p2"] = (b["p2"][0] + dx, b["p2"][1] + dy)
 
 
 def _strip(b, half_width, margin):
@@ -112,7 +135,11 @@ def fold_sheet(
         bends: one dict per bend: ``line=((x1, y1), (x2, y2))`` the bend centre
             line across the full flange width, ``direction="up"|"down"``,
             ``angle`` in degrees (default 90), ``radius`` the inside bend radius
-            (default = thickness) and optionally ``k`` (neutral factor).
+            (default = thickness), optionally ``k`` (neutral factor) and
+            ``position``: "center" (default) when the line is the bend centre
+            line, "far" when it is the bend-zone edge away from the fixed side,
+            "near" when it is the edge on the fixed side. "near"/"far" need
+            ``fixed``.
         fixed: an (x, y) point inside the region that stays flat in place
             (default: the largest region).
         k: default neutral factor for bends that do not give one.
@@ -134,6 +161,7 @@ def fold_sheet(
     if abs(bb.min.Z) > 1e-4 or abs(bb.max.Z) > 1e-4:
         raise ValueError("fold_sheet: outline must lie in the XY plane at z = 0")
     parsed = [_parse_bend(i, b, t, k) for i, b in enumerate(bends)]
+    _centre_lines(parsed, None if fixed is None else _xy(fixed, "fixed"))
 
     # Split the blank into flat regions and bend zones.
     zones = [blank & _strip(b, b["allowance"] / 2, 0.5) for b in parsed]

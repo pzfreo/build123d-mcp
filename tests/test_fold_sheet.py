@@ -164,3 +164,31 @@ def test_available_inside_execute_without_import():
     data = json.loads(measure(session))
     assert data["topology"]["solids"] == 1
     assert data["bbox"]["zmax"] == pytest.approx(T + R + 100 - 60 - BA90 / 2, abs=1e-3)
+
+
+@pytest.mark.parametrize(
+    ("position", "line_x"), [("center", 60), ("far", 60 + BA90 / 2), ("near", 60 - BA90 / 2)]
+)
+def test_zone_edge_positions_match_the_centre_line(position, line_x):
+    s = fold_sheet(
+        blank(),
+        T,
+        [
+            {
+                "line": ((line_x, 0), (line_x, 40)),
+                "direction": "up",
+                "radius": R,
+                "position": position,
+            }
+        ],
+        fixed=(10, 20),
+    )
+    ref = fold_sheet(
+        blank(), T, [{"line": ((60, 0), (60, 40)), "direction": "up", "radius": R}], fixed=(10, 20)
+    )
+    assert box(s) == pytest.approx(box(ref), abs=1e-6)
+
+
+def test_zone_edge_position_needs_fixed():
+    with pytest.raises(ValueError, match="needs fixed"):
+        fold_sheet(blank(), T, [{"line": ((60, 0), (60, 40)), "position": "far"}])
