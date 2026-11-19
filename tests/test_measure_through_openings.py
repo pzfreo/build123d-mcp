@@ -48,6 +48,17 @@ CASES = [
     ("torus", "result = Torus(20, 5)", (1, 1, 0)),
     ("sphere", "result = Sphere(10)", (1, 0, 0)),
     ("void", "result = Box(20, 20, 20) - Sphere(4)", (1, 0, 1)),
+    ("toroidal_void", "result = Box(60, 60, 30) - Torus(15, 4)", (1, 1, 1)),
+    (
+        "tube_radial_one_wall",
+        "result = (Cylinder(10, 40) - Cylinder(8, 40)) - Pos(5, 0, 0) * Rot(0, 90, 0) * Cylinder(2, 10)",
+        (1, 2, 0),
+    ),
+    (
+        "tube_radial_both_walls",
+        "result = (Cylinder(10, 40) - Cylinder(8, 40)) - Rot(0, 90, 0) * Cylinder(2, 30)",
+        (1, 3, 0),
+    ),
     (
         "two_solids",
         "result = Compound([Box(5, 5, 5), Pos(20, 0, 0) * (Box(10, 10, 4) - Cylinder(2, 10))])",
@@ -66,4 +77,13 @@ def test_through_openings(session, code, expected):
 def test_no_solid_reports_no_betti(session):
     execute_code(session, "result = Rectangle(10, 10)")
     topo = json.loads(measure(session))["topology"]
-    assert "through_openings" not in topo
+    assert not {"solids", "through_openings", "voids"} & topo.keys()
+
+
+def test_open_solid_reports_solids_but_no_counts(session):
+    execute_code(
+        session, "result = Solid(Shell(Box(10, 10, 10).faces().filter_by(Axis.Z, reverse=True)))"
+    )
+    topo = json.loads(measure(session))["topology"]
+    assert topo["solids"] == 1
+    assert topo["through_openings"] is None and topo["voids"] is None
