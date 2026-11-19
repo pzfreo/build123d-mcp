@@ -406,7 +406,10 @@ show(result, "constrained_arc")""",
 - split_face_chord(shape, face, p0, p1): straight interior boundary-to-boundary chord; no volume drift
 - Face edits return a new gated Solid, preserve the input, and refuse unsupported neighbours/topology changes/self-intersections
 - These helpers do not register/show/bank; check diff_step then show() explicitly
-- get_object/select_faces/translate_faces/offset_faces/split_face_chord are injected helpers; no import required
+- fold_sheet(outline_face, thickness, bends=[dict(line=((x1,y1),(x2,y2)), direction="up"|"down", angle=90, radius=R, k=0.33)], fixed=(x,y)):
+  folds a flat sheet-metal pattern (XY plane, z 0..thickness) exactly; line = bend centre line in the flat; zone width = angle*(R+k*t);
+  "up" bends towards +Z with the inside radius on top. Build the flat blank from the drawing's flat pattern, never hand-place flanges
+- get_object/select_faces/translate_faces/offset_faces/split_face_chord/fold_sheet are injected helpers; no import required
 - named_face(shape, "top") returns the highest-Z face; also: bottom/front/back/left/right
 - find_edges(shape, geom="circle", radius=4.25, at_z=10.2) filters edges for fillet/chamfer; prints count + radii + Z levels""",
     ),
