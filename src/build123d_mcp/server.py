@@ -1498,11 +1498,11 @@ def build123d_repair_skill() -> str:
 
 
 @mcp.tool(annotations=_MUTATING)
-def install_skill(target: str = "claude", force: bool = False, skill: str = "modeling") -> str:
+def install_skill(target: str = "dot-agents", force: bool = False, skill: str = "modeling") -> str:
     """Copy a b123d workflow skill into the current project.
 
-    Writes the appropriate config file for the requested agent so the
-    step-by-step workflow is available in future sessions.
+    Writes an Agent Skills spec-compliant SKILL.md (with YAML frontmatter)
+    so the step-by-step workflow is discoverable in future sessions.
 
     skill: which workflow to install (default "modeling")
       - drawing   → DEPRECATED; still installs, but drawing generation has moved to
@@ -1510,11 +1510,10 @@ def install_skill(target: str = "claude", force: bool = False, skill: str = "mod
       - modeling  → build 3D parts/assemblies (incl. from technical drawings)
       - edit      → modify existing build123d code and verify geometry deltas
       - repair    → repair a solid that fails the validity gate
-    target: one of "claude" (default), "agents-md", "cursor", "windsurf"
+    target: one of "dot-agents" (default), "claude"
+      - dot-agents → .agents/skills/<skill-dir>/SKILL.md
+                     (Codex CLI, Antigravity, OpenCode, Cursor, GitHub Copilot, Cline)
       - claude     → .claude/skills/<skill-dir>/SKILL.md  (Claude Code)
-      - agents-md  → AGENTS.md  (Codex CLI, Antigravity, GitHub Copilot, Cline)
-      - cursor     → .cursor/rules/<skill-dir>.mdc
-      - windsurf   → .windsurfrules
     force: overwrite existing installation (default False)
     """
     from build123d_mcp.tools.install_skill import install_skill as _install

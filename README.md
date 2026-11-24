@@ -304,21 +304,23 @@ For the complete tool and resource reference, see [llms.md](llms.md).
 
 ## Guidance For Assistants
 
-The server includes workflow guidance that helps assistants use the CAD loop
-properly. This is especially useful in coding agents that read project guidance
-files.
+The server includes workflow skills (following the [Agent Skills](https://agentskills.io/specification)
+spec) that help assistants use the CAD loop properly.
 
 After connecting the server, ask your assistant to call `install_skill` for the
 workflow you need:
 
 ```text
-install_skill(target="agents-md", skill="modeling")
-install_skill(target="agents-md", skill="drawing")
-install_skill(target="agents-md", skill="repair")
+install_skill(skill="modeling")
+install_skill(skill="edit")
+install_skill(skill="repair")
 ```
 
-`install_skill` also supports `target="claude"`, `"cursor"`, and `"windsurf"`.
-Use `skill="modeling"` for 3D parts, `skill="drawing"` for engineering drawings,
+By default, `install_skill` uses `target="dot-agents"` and installs to
+`.agents/skills/<skill>/SKILL.md` (supported by Codex CLI, Antigravity, OpenCode,
+Cursor, GitHub Copilot, and Cline). Pass `target="claude"` to install to
+`.claude/skills/<skill>/SKILL.md` for Claude Code.
+Use `skill="modeling"` for 3D parts, `skill="edit"` for modifying existing models,
 and `skill="repair"` when a solid fails validation.
 
 You can also paste [default_prompt.md](default_prompt.md) into your AI app as a

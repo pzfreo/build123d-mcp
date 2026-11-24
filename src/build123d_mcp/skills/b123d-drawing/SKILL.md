@@ -1,3 +1,8 @@
+---
+name: b123d-drawing
+description: Create or fix multi-view 2D engineering drawings from build123d geometry using the build123d-mcp MCP server (deprecated in favor of draftwright).
+---
+
 # Create Engineering Drawing from build123d Geometry
 
 Use this skill when asked to create or fix an engineering drawing for a
