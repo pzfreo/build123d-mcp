@@ -7,9 +7,9 @@ Four skills are available:
   repair    → b123d-repair   (repair a solid that fails the validity gate)
 
 Supports two Agent Skills spec-compliant targets:
+  claude     → .claude/skills/<skill-dir>/SKILL.md  (Claude Code; default)
   dot-agents → .agents/skills/<skill-dir>/SKILL.md
                (Codex CLI, Antigravity, OpenCode, Cursor, GitHub Copilot, Cline)
-  claude     → .claude/skills/<skill-dir>/SKILL.md  (Claude Code)
 """
 
 from __future__ import annotations
@@ -18,18 +18,26 @@ import re
 from importlib.resources import files
 from pathlib import Path
 
-TARGETS = ("dot-agents", "claude")
+TARGETS = ("claude", "dot-agents")
 
 _RETIRED_TARGETS = ("agents-md", "cursor", "windsurf")
 
+_LEGACY_CLEANUP_HINT = (
+    "If AGENTS.md or .windsurfrules contains "
+    "<!-- b123d-...:start --> ... <!-- b123d-...:end --> "
+    "sections from an earlier install, remove them."
+)
+
+_FRONTMATTER_RE = re.compile(r"\A---\r?\n.*?\r?\n---(?:\r?\n)+", re.DOTALL)
+
 _TARGET_ROOTS: dict[str, tuple[str, ...]] = {
-    "dot-agents": (".agents", "skills"),
     "claude": (".claude", "skills"),
+    "dot-agents": (".agents", "skills"),
 }
 
 _TARGET_LABELS: dict[str, str] = {
-    "dot-agents": ".agents/skills",
     "claude": "Claude Code",
+    "dot-agents": ".agents/skills",
 }
 
 SKILLS = {
@@ -44,6 +52,11 @@ def _load_raw(skill: str = "modeling") -> str:
     return (files("build123d_mcp") / "skills" / SKILLS[skill]["dir"] / "SKILL.md").read_text(
         encoding="utf-8"
     )
+
+
+def _strip_frontmatter(text: str) -> str:
+    """Remove leading YAML frontmatter (`--- ... ---`) if present."""
+    return _FRONTMATTER_RE.sub("", text, count=1)
 
 
 def _strip_claude_markers(text: str) -> str:
@@ -95,21 +108,21 @@ DRAWING_DEPRECATED = (
 
 
 def install_skill(
-    target: str = "dot-agents",
+    target: str = "claude",
     force: bool = False,
     cwd: Path | None = None,
     skill: str = "modeling",
 ) -> str:
     """Install a b123d skill into the current project for *target*.
 
-    Returns a human-readable status string. The default is target="dot-agents"
+    Returns a human-readable status string. The default is target="claude"
     and skill="modeling"; "drawing" still installs but its status line carries
     the deprecation notice (#465).
     """
     if target in _RETIRED_TARGETS:
         return (
             f"Target '{target}' has been retired in favor of 'dot-agents' (.agents/skills/). "
-            f"Supported targets: {', '.join(TARGETS)}"
+            f"Supported targets: {', '.join(TARGETS)}. {_LEGACY_CLEANUP_HINT}"
         )
     if target not in TARGETS:
         return f"Unknown target '{target}'. Supported targets: {', '.join(TARGETS)}"
@@ -131,4 +144,7 @@ def _install_skill(target: str, force: bool, cwd: Path | None, skill: str) -> st
         return f"Already installed at {dest_file} — use force=True to overwrite."
     dest_file.parent.mkdir(parents=True, exist_ok=True)
     dest_file.write_text(content, encoding="utf-8")
-    return f"Installed {skill_dir} skill for {_TARGET_LABELS[target]} → {dest_file}"
+    msg = f"Installed {skill_dir} skill for {_TARGET_LABELS[target]} → {dest_file}"
+    if target == "dot-agents":
+        msg += f"\n{_LEGACY_CLEANUP_HINT}"
+    return msg

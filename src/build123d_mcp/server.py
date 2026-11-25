@@ -1456,9 +1456,9 @@ def suggest_view_layout(
 )
 def build123d_drawing_skill() -> str:
     """b123d-drawing engineering workflow skill."""
-    from build123d_mcp.tools.install_skill import _load_raw
+    from build123d_mcp.tools.install_skill import _load_raw, _strip_frontmatter
 
-    return _load_raw("drawing")
+    return _strip_frontmatter(_load_raw("drawing"))
 
 
 @mcp.resource(
@@ -1468,9 +1468,9 @@ def build123d_drawing_skill() -> str:
 )
 def build123d_modeling_skill() -> str:
     """b123d-modeling workflow skill."""
-    from build123d_mcp.tools.install_skill import _load_raw
+    from build123d_mcp.tools.install_skill import _load_raw, _strip_frontmatter
 
-    return _load_raw("modeling")
+    return _strip_frontmatter(_load_raw("modeling"))
 
 
 @mcp.resource(
@@ -1480,9 +1480,9 @@ def build123d_modeling_skill() -> str:
 )
 def build123d_edit_skill() -> str:
     """b123d-edit workflow skill."""
-    from build123d_mcp.tools.install_skill import _load_raw
+    from build123d_mcp.tools.install_skill import _load_raw, _strip_frontmatter
 
-    return _load_raw("edit")
+    return _strip_frontmatter(_load_raw("edit"))
 
 
 @mcp.resource(
@@ -1492,13 +1492,13 @@ def build123d_edit_skill() -> str:
 )
 def build123d_repair_skill() -> str:
     """b123d-repair workflow skill."""
-    from build123d_mcp.tools.install_skill import _load_raw
+    from build123d_mcp.tools.install_skill import _load_raw, _strip_frontmatter
 
-    return _load_raw("repair")
+    return _strip_frontmatter(_load_raw("repair"))
 
 
 @mcp.tool(annotations=_MUTATING)
-def install_skill(target: str = "dot-agents", force: bool = False, skill: str = "modeling") -> str:
+def install_skill(target: str = "claude", force: bool = False, skill: str = "modeling") -> str:
     """Copy a b123d workflow skill into the current project.
 
     Writes an Agent Skills spec-compliant SKILL.md (with YAML frontmatter)
@@ -1510,10 +1510,10 @@ def install_skill(target: str = "dot-agents", force: bool = False, skill: str = 
       - modeling  → build 3D parts/assemblies (incl. from technical drawings)
       - edit      → modify existing build123d code and verify geometry deltas
       - repair    → repair a solid that fails the validity gate
-    target: one of "dot-agents" (default), "claude"
+    target: one of "claude" (default), "dot-agents"
+      - claude     → .claude/skills/<skill-dir>/SKILL.md  (Claude Code)
       - dot-agents → .agents/skills/<skill-dir>/SKILL.md
                      (Codex CLI, Antigravity, OpenCode, Cursor, GitHub Copilot, Cline)
-      - claude     → .claude/skills/<skill-dir>/SKILL.md  (Claude Code)
     force: overwrite existing installation (default False)
     """
     from build123d_mcp.tools.install_skill import install_skill as _install

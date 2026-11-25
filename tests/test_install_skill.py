@@ -12,6 +12,7 @@ from build123d_mcp.tools.install_skill import (
     _dest_exists,
     _load_raw,
     _strip_claude_markers,
+    _strip_frontmatter,
     install_skill,
 )
 
@@ -126,6 +127,27 @@ def test_shipped_skills_have_valid_agent_skills_frontmatter(skill):
 
 
 # ---------------------------------------------------------------------------
+# _strip_frontmatter
+# ---------------------------------------------------------------------------
+
+
+def test_strip_frontmatter_removes_leading_yaml_only():
+    doc = "---\nname: demo\ndescription: test\n---\n\n# Heading\n\n---\n\nBody\n"
+    out = _strip_frontmatter(doc)
+    assert out == "# Heading\n\n---\n\nBody\n"
+
+
+def test_strip_frontmatter_handles_crlf():
+    doc = "---\r\nname: demo\r\n---\r\n\r\n# Heading\r\n"
+    assert _strip_frontmatter(doc) == "# Heading\r\n"
+
+
+def test_strip_frontmatter_noop_without_frontmatter():
+    doc = "# Heading\n\n---\n\nBody\n"
+    assert _strip_frontmatter(doc) == doc
+
+
+# ---------------------------------------------------------------------------
 # _strip_claude_markers
 # ---------------------------------------------------------------------------
 
@@ -160,57 +182,19 @@ def test_shipped_skills_have_no_personal_markers():
 
 
 # ---------------------------------------------------------------------------
-# target: dot-agents (default)
+# target: claude (default)
 # ---------------------------------------------------------------------------
 
 
-def test_install_defaults_to_dot_agents_modeling(tmp_path):
+def test_install_defaults_to_claude_modeling(tmp_path):
     result = install_skill(cwd=tmp_path)
-    dest = tmp_path / ".agents" / "skills" / "b123d-modeling" / "SKILL.md"
+    dest = tmp_path / ".claude" / "skills" / "b123d-modeling" / "SKILL.md"
     assert dest.exists()
     content = _read(dest)
     fm, _ = _parse_frontmatter(content)
     assert fm["name"] == "b123d-modeling"
     assert "Build 3D Geometry" in content
     assert "Installed" in result
-
-
-@pytest.mark.parametrize(
-    ("skill", "skill_dir", "heading"),
-    [
-        ("modeling", "b123d-modeling", "Build 3D Geometry"),
-        ("edit", "b123d-edit", "Edit Existing build123d Geometry"),
-        ("repair", "b123d-repair", "Repair Invalid Geometry"),
-        ("drawing", "b123d-drawing", "Engineering Drawing"),
-    ],
-)
-def test_install_dot_agents_all_skills(tmp_path, skill, skill_dir, heading):
-    result = install_skill(target="dot-agents", cwd=tmp_path, skill=skill)
-    dest = tmp_path / ".agents" / "skills" / skill_dir / "SKILL.md"
-    assert dest.exists()
-    content = _read(dest)
-    fm, _ = _parse_frontmatter(content)
-    assert fm["name"] == skill_dir
-    assert heading in content
-    assert "[SEND:" not in content
-    assert "Installed" in result
-
-
-def test_install_dot_agents_no_overwrite(tmp_path):
-    install_skill(target="dot-agents", cwd=tmp_path, skill="modeling")
-    result = install_skill(target="dot-agents", cwd=tmp_path, skill="modeling")
-    assert "already" in result.lower()
-
-
-def test_install_dot_agents_force(tmp_path):
-    install_skill(target="dot-agents", cwd=tmp_path, skill="modeling")
-    result = install_skill(target="dot-agents", force=True, cwd=tmp_path, skill="modeling")
-    assert "Installed" in result
-
-
-# ---------------------------------------------------------------------------
-# target: claude
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -253,15 +237,58 @@ def test_install_claude_preserves_raw_content(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# target: dot-agents
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("skill", "skill_dir", "heading"),
+    [
+        ("modeling", "b123d-modeling", "Build 3D Geometry"),
+        ("edit", "b123d-edit", "Edit Existing build123d Geometry"),
+        ("repair", "b123d-repair", "Repair Invalid Geometry"),
+        ("drawing", "b123d-drawing", "Engineering Drawing"),
+    ],
+)
+def test_install_dot_agents_all_skills(tmp_path, skill, skill_dir, heading):
+    result = install_skill(target="dot-agents", cwd=tmp_path, skill=skill)
+    dest = tmp_path / ".agents" / "skills" / skill_dir / "SKILL.md"
+    assert dest.exists()
+    content = _read(dest)
+    fm, _ = _parse_frontmatter(content)
+    assert fm["name"] == skill_dir
+    assert heading in content
+    assert "[SEND:" not in content
+    assert "Installed" in result
+    assert "AGENTS.md" in result
+    assert ".windsurfrules" in result
+
+
+def test_install_dot_agents_no_overwrite(tmp_path):
+    install_skill(target="dot-agents", cwd=tmp_path, skill="modeling")
+    result = install_skill(target="dot-agents", cwd=tmp_path, skill="modeling")
+    assert "already" in result.lower()
+
+
+def test_install_dot_agents_force(tmp_path):
+    install_skill(target="dot-agents", cwd=tmp_path, skill="modeling")
+    result = install_skill(target="dot-agents", force=True, cwd=tmp_path, skill="modeling")
+    assert "Installed" in result
+
+
+# ---------------------------------------------------------------------------
 # retired & unknown targets / skills
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("retired", ("agents-md", "cursor", "windsurf"))
-def test_retired_targets_point_to_dot_agents(tmp_path, retired):
+def test_retired_targets_point_to_dot_agents_and_cleanup(tmp_path, retired):
     result = install_skill(target=retired, cwd=tmp_path, skill="modeling")
     assert "retired" in result.lower()
     assert "dot-agents" in result
+    assert "AGENTS.md" in result
+    assert ".windsurfrules" in result
+    assert "<!-- b123d-" in result
     assert list(tmp_path.iterdir()) == []
 
 
@@ -315,7 +342,7 @@ def test_server_install_skill_defaults_match_tool():
 
     server_sig = inspect.signature(server.install_skill)
     tool_sig = inspect.signature(install_skill)
-    assert server_sig.parameters["target"].default == "dot-agents"
+    assert server_sig.parameters["target"].default == "claude"
     assert server_sig.parameters["target"].default == tool_sig.parameters["target"].default
     assert server_sig.parameters["skill"].default == tool_sig.parameters["skill"].default
 
@@ -351,3 +378,20 @@ def test_modeling_skill_resource_registered():
     assert "build123d://skill/edit" in uris
     assert "build123d://skill/drawing" in uris
     assert "build123d://skill/repair" in uris
+
+
+@pytest.mark.parametrize(
+    "fn_name",
+    (
+        "build123d_drawing_skill",
+        "build123d_modeling_skill",
+        "build123d_edit_skill",
+        "build123d_repair_skill",
+    ),
+)
+def test_skill_resources_strip_frontmatter(fn_name):
+    from build123d_mcp import server
+
+    text = getattr(server, fn_name)()
+    assert not text.startswith("---")
+    assert text.startswith("# ")

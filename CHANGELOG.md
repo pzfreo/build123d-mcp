@@ -59,6 +59,18 @@
 
 ### Changed
 
+- **`install_skill` adopts the Agent Skills spec (#507, #508).** Source
+  `SKILL.md` files now carry YAML frontmatter (`name` matching the skill
+  directory + `description`), and a new `dot-agents` target installs them into
+  `.agents/skills/<skill-dir>/SKILL.md` for progressive disclosure across
+  harnesses (Codex CLI, Antigravity, OpenCode, Cursor, GitHub Copilot, Cline).
+  `claude` remains the default target (`.claude/skills/<skill-dir>/SKILL.md`),
+  and the `agents-md`, `cursor`, and `windsurf` targets have been retired with
+  a message pointing to `dot-agents` and reminding agents to clean up old
+  `<!-- b123d-...:start/end -->` sections in `AGENTS.md` / `.windsurfrules`.
+  The `build123d://skill/*` resources strip frontmatter from their output, and
+  the CLI `install-skill` `--skill` default is aligned with `modeling`.
+
 - Replace direct quiddity recognition with specify-core 0.1.16, supporting
   Python 3.11–3.14. STEP bytes load in memory; cached loaded parts recognise
   features once across inspection, comparisons and overlay rendering.
