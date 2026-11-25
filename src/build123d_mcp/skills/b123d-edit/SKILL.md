@@ -1,3 +1,8 @@
+---
+name: b123d-edit
+description: Modify existing build123d CAD models or scripts explicitly (parameters, holes, bosses, clearance, and fit) and verify geometry deltas and export-gate validity with build123d-mcp.
+---
+
 # Edit Existing build123d Geometry (b123d-edit)
 
 Use this skill when the task is to change an existing build123d model or script:

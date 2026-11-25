@@ -21,13 +21,13 @@ def _cmd_install_skill(argv: list) -> None:
         "--target",
         choices=TARGETS,
         default="claude",
-        help="Agent to install for (default: claude)",
+        help="Agent target to install for (default: claude)",
     )
     p.add_argument(
         "--skill",
         choices=tuple(SKILLS),
-        default="drawing",
-        help=f"Workflow to install: {'/'.join(SKILLS)} (default: drawing)",
+        default="modeling",
+        help=f"Workflow to install: {'/'.join(SKILLS)} (default: modeling)",
     )
     p.add_argument("--force", action="store_true", help="Overwrite existing installation")
     args = p.parse_args(argv)
@@ -61,8 +61,8 @@ def main():
     _skill_list = "/".join(SKILLS)
     _skill_epilog = f"""\
 Subcommands:
-  install-skill     Copy a b123d workflow skill ({_skill_list}) into .claude/skills/ of the current project
-                    Usage: build123d-mcp install-skill [--skill {_skill_list}] [--force]
+  install-skill     Copy a b123d workflow skill ({_skill_list}) into .claude/skills/ or .agents/skills/
+                    Usage: build123d-mcp install-skill [--target claude|dot-agents] [--skill {_skill_list}] [--force]
 """
     parser = argparse.ArgumentParser(
         prog="build123d-mcp",

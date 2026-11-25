@@ -1,3 +1,8 @@
+---
+name: b123d-modeling
+description: Build 3D CAD parts and assemblies with build123d via the build123d-mcp MCP server, including spec extraction from technical drawings, incremental build/measure/render verification, dominant-form correction, and export.
+---
+
 # Build 3D Geometry with build123d
 
 Use this skill when asked to model, build, or modify a 3D part or assembly with

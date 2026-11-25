@@ -1,15 +1,18 @@
-"""Tests for the install_skill tool (all four targets)."""
+"""Tests for the install_skill tool (Agent Skills spec targets & frontmatter)."""
 
+import inspect
+import re
 from pathlib import Path
 
+import pytest
+
 from build123d_mcp.tools.install_skill import (
-    _END,
-    _START,
     SKILLS,
     TARGETS,
     _dest_exists,
     _load_raw,
     _strip_claude_markers,
+    _strip_frontmatter,
     install_skill,
 )
 
@@ -22,8 +25,22 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    """Parse leading YAML frontmatter (`---\\n...\\n---\\n`) into key/value pairs and body."""
+    m = re.match(r"\A---\n(.*?)\n---\n(.*)\Z", text, re.DOTALL)
+    assert m is not None, "SKILL.md must start with YAML frontmatter delimited by ---"
+    fm: dict[str, str] = {}
+    for line in m.group(1).splitlines():
+        if not line.strip():
+            continue
+        key, sep, value = line.partition(":")
+        assert sep == ":", f"Malformed frontmatter line: {line!r}"
+        fm[key.strip()] = value.strip()
+    return fm, m.group(2)
+
+
 # ---------------------------------------------------------------------------
-# _load_raw
+# _load_raw & Agent Skills spec frontmatter
 # ---------------------------------------------------------------------------
 
 
@@ -89,6 +106,47 @@ def test_load_raw_repair_returns_skill_content():
     assert len(content) > 1000
 
 
+@pytest.mark.parametrize("skill", tuple(SKILLS))
+def test_shipped_skills_have_valid_agent_skills_frontmatter(skill):
+    """Every SKILL.md must conform to https://agentskills.io/specification."""
+    raw = _load_raw(skill)
+    fm, body = _parse_frontmatter(raw)
+
+    expected_dir = SKILLS[skill]["dir"]
+    name = fm.get("name", "")
+    description = fm.get("description", "")
+
+    assert name == expected_dir, f"name {name!r} must match parent dir {expected_dir!r}"
+    assert 1 <= len(name) <= 64
+    assert re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name), f"invalid skill name: {name!r}"
+
+    assert 1 <= len(description) <= 1024
+    # Avoid unquoted YAML mapping syntax inside scalar descriptions.
+    assert ": " not in description, f"unquoted ': ' in description breaks YAML: {description!r}"
+    assert body.lstrip().startswith("# ")
+
+
+# ---------------------------------------------------------------------------
+# _strip_frontmatter
+# ---------------------------------------------------------------------------
+
+
+def test_strip_frontmatter_removes_leading_yaml_only():
+    doc = "---\nname: demo\ndescription: test\n---\n\n# Heading\n\n---\n\nBody\n"
+    out = _strip_frontmatter(doc)
+    assert out == "# Heading\n\n---\n\nBody\n"
+
+
+def test_strip_frontmatter_handles_crlf():
+    doc = "---\r\nname: demo\r\n---\r\n\r\n# Heading\r\n"
+    assert _strip_frontmatter(doc) == "# Heading\r\n"
+
+
+def test_strip_frontmatter_noop_without_frontmatter():
+    doc = "# Heading\n\n---\n\nBody\n"
+    assert _strip_frontmatter(doc) == doc
+
+
 # ---------------------------------------------------------------------------
 # _strip_claude_markers
 # ---------------------------------------------------------------------------
@@ -124,15 +182,38 @@ def test_shipped_skills_have_no_personal_markers():
 
 
 # ---------------------------------------------------------------------------
-# target: claude
+# target: claude (default)
 # ---------------------------------------------------------------------------
 
 
-def test_install_claude(tmp_path):
-    result = install_skill(target="claude", cwd=tmp_path, skill="drawing")
-    dest = tmp_path / ".claude" / "skills" / "b123d-drawing" / "SKILL.md"
+def test_install_defaults_to_claude_modeling(tmp_path):
+    result = install_skill(cwd=tmp_path)
+    dest = tmp_path / ".claude" / "skills" / "b123d-modeling" / "SKILL.md"
     assert dest.exists()
-    assert "Engineering Drawing" in _read(dest)
+    content = _read(dest)
+    fm, _ = _parse_frontmatter(content)
+    assert fm["name"] == "b123d-modeling"
+    assert "Build 3D Geometry" in content
+    assert "Installed" in result
+
+
+@pytest.mark.parametrize(
+    ("skill", "skill_dir", "heading"),
+    [
+        ("modeling", "b123d-modeling", "Build 3D Geometry"),
+        ("edit", "b123d-edit", "Edit Existing build123d Geometry"),
+        ("repair", "b123d-repair", "Repair Invalid Geometry"),
+        ("drawing", "b123d-drawing", "Engineering Drawing"),
+    ],
+)
+def test_install_claude_all_skills(tmp_path, skill, skill_dir, heading):
+    result = install_skill(target="claude", cwd=tmp_path, skill=skill)
+    dest = tmp_path / ".claude" / "skills" / skill_dir / "SKILL.md"
+    assert dest.exists()
+    content = _read(dest)
+    fm, _ = _parse_frontmatter(content)
+    assert fm["name"] == skill_dir
+    assert heading in content
     assert "Installed" in result
 
 
@@ -148,119 +229,79 @@ def test_install_claude_force(tmp_path):
     assert "Installed" in result
 
 
-def test_install_claude_preserves_claude_markers(tmp_path):
+def test_install_claude_preserves_raw_content(tmp_path):
     install_skill(target="claude", cwd=tmp_path, skill="drawing")
     dest = tmp_path / ".claude" / "skills" / "b123d-drawing" / "SKILL.md"
-    # Claude target keeps [SEND:] / [ASK:] markers intact
     raw = _load_raw("drawing")
     assert _read(dest) == raw
 
 
 # ---------------------------------------------------------------------------
-# target: agents-md
+# target: dot-agents
 # ---------------------------------------------------------------------------
 
 
-def test_install_agents_md_creates_file(tmp_path):
-    result = install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
-    dest = tmp_path / "AGENTS.md"
+@pytest.mark.parametrize(
+    ("skill", "skill_dir", "heading"),
+    [
+        ("modeling", "b123d-modeling", "Build 3D Geometry"),
+        ("edit", "b123d-edit", "Edit Existing build123d Geometry"),
+        ("repair", "b123d-repair", "Repair Invalid Geometry"),
+        ("drawing", "b123d-drawing", "Engineering Drawing"),
+    ],
+)
+def test_install_dot_agents_all_skills(tmp_path, skill, skill_dir, heading):
+    result = install_skill(target="dot-agents", cwd=tmp_path, skill=skill)
+    dest = tmp_path / ".agents" / "skills" / skill_dir / "SKILL.md"
     assert dest.exists()
-    assert _START in _read(dest)
-    assert _END in _read(dest)
-    assert "[SEND:" not in _read(dest)
+    content = _read(dest)
+    fm, _ = _parse_frontmatter(content)
+    assert fm["name"] == skill_dir
+    assert heading in content
+    assert "[SEND:" not in content
     assert "Installed" in result
+    assert "AGENTS.md" in result
+    assert ".windsurfrules" in result
 
 
-def test_install_agents_md_appends_to_existing(tmp_path):
-    existing = "# My project\n\nSome existing instructions.\n"
-    (tmp_path / "AGENTS.md").write_text(existing, encoding="utf-8")
-    install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
-    content = _read(tmp_path / "AGENTS.md")
-    assert "Some existing instructions." in content
-    assert _START in content
-
-
-def test_install_agents_md_no_overwrite(tmp_path):
-    install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
-    result = install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
+def test_install_dot_agents_no_overwrite(tmp_path):
+    install_skill(target="dot-agents", cwd=tmp_path, skill="modeling")
+    result = install_skill(target="dot-agents", cwd=tmp_path, skill="modeling")
     assert "already" in result.lower()
 
 
-def test_install_agents_md_force_replaces_section(tmp_path):
-    install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
-    (tmp_path / "AGENTS.md").write_text(
-        _read(tmp_path / "AGENTS.md").replace("Engineering Drawing", "OLD CONTENT"),
-        encoding="utf-8",
-    )
-    install_skill(target="agents-md", force=True, cwd=tmp_path, skill="drawing")
-    content = _read(tmp_path / "AGENTS.md")
-    assert "OLD CONTENT" not in content
-    assert "Engineering Drawing" in content
-    # Only one copy of the section
-    assert content.count(_START) == 1
-
-
-# ---------------------------------------------------------------------------
-# target: cursor
-# ---------------------------------------------------------------------------
-
-
-def test_install_cursor_creates_mdc(tmp_path):
-    result = install_skill(target="cursor", cwd=tmp_path, skill="drawing")
-    dest = tmp_path / ".cursor" / "rules" / "b123d-drawing.mdc"
-    assert dest.exists()
-    content = _read(dest)
-    assert "alwaysApply: false" in content
-    assert "description:" in content
-    assert "Engineering Drawing" in content
-    assert "[SEND:" not in content
-    assert "Installed" in result
-    # globs must be a quoted string, not a YAML block list
-    assert 'globs: "' in content
-    assert "  - " not in content.split("---")[1]  # no YAML list items in frontmatter
-
-
-def test_install_cursor_no_overwrite(tmp_path):
-    install_skill(target="cursor", cwd=tmp_path, skill="drawing")
-    result = install_skill(target="cursor", cwd=tmp_path, skill="drawing")
-    assert "already" in result.lower()
-
-
-def test_install_cursor_force(tmp_path):
-    install_skill(target="cursor", cwd=tmp_path, skill="drawing")
-    result = install_skill(target="cursor", force=True, cwd=tmp_path, skill="drawing")
+def test_install_dot_agents_force(tmp_path):
+    install_skill(target="dot-agents", cwd=tmp_path, skill="modeling")
+    result = install_skill(target="dot-agents", force=True, cwd=tmp_path, skill="modeling")
     assert "Installed" in result
 
 
 # ---------------------------------------------------------------------------
-# target: windsurf
+# retired & unknown targets / skills
 # ---------------------------------------------------------------------------
 
 
-def test_install_windsurf_creates_file(tmp_path):
-    result = install_skill(target="windsurf", cwd=tmp_path, skill="drawing")
-    dest = tmp_path / ".windsurfrules"
-    assert dest.exists()
-    content = _read(dest)
-    assert _START in content
-    assert "[SEND:" not in content
-    assert "Installed" in result
+@pytest.mark.parametrize("retired", ("agents-md", "cursor", "windsurf"))
+def test_retired_targets_point_to_dot_agents_and_cleanup(tmp_path, retired):
+    result = install_skill(target=retired, cwd=tmp_path, skill="modeling")
+    assert "retired" in result.lower()
+    assert "dot-agents" in result
+    assert "AGENTS.md" in result
+    assert ".windsurfrules" in result
+    assert "<!-- b123d-" in result
+    assert list(tmp_path.iterdir()) == []
 
 
-def test_install_windsurf_appends_to_existing(tmp_path):
-    existing = "# existing windsurf rules\n\nUse tabs.\n"
-    (tmp_path / ".windsurfrules").write_text(existing, encoding="utf-8")
-    install_skill(target="windsurf", cwd=tmp_path, skill="drawing")
-    content = _read(tmp_path / ".windsurfrules")
-    assert "Use tabs." in content
-    assert _START in content
+def test_unknown_target_returns_error():
+    result = install_skill(target="unknown-agent", skill="drawing")
+    assert "Unknown target" in result
+    assert "unknown-agent" in result
 
 
-def test_install_windsurf_force_replaces_section(tmp_path):
-    install_skill(target="windsurf", cwd=tmp_path, skill="drawing")
-    install_skill(target="windsurf", force=True, cwd=tmp_path, skill="drawing")
-    content = _read(tmp_path / ".windsurfrules")
-    assert content.count(_START) == 1
+def test_unknown_skill_returns_error():
+    result = install_skill(skill="welding")
+    assert "Unknown skill" in result
+    assert "welding" in result
 
 
 # ---------------------------------------------------------------------------
@@ -275,121 +316,35 @@ def test_dest_exists_false_before_install(tmp_path):
 
 def test_dest_exists_true_after_install(tmp_path):
     for target in TARGETS:
-        install_skill(target=target, cwd=tmp_path, skill="drawing")
-        assert _dest_exists(target, cwd=tmp_path, skill="drawing")
+        install_skill(target=target, cwd=tmp_path, skill="modeling")
+        assert _dest_exists(target, cwd=tmp_path, skill="modeling")
 
 
 def test_dest_exists_unknown_target():
     assert not _dest_exists("unknown")
 
 
-# ---------------------------------------------------------------------------
-# skill: modeling
-# ---------------------------------------------------------------------------
-
-
-def test_install_claude_modeling(tmp_path):
-    result = install_skill(target="claude", cwd=tmp_path, skill="modeling")
-    dest = tmp_path / ".claude" / "skills" / "b123d-modeling" / "SKILL.md"
-    assert dest.exists()
-    assert "Build 3D Geometry" in _read(dest)
-    assert "Installed" in result
-
-
-def test_install_claude_edit(tmp_path):
-    result = install_skill(target="claude", cwd=tmp_path, skill="edit")
-    dest = tmp_path / ".claude" / "skills" / "b123d-edit" / "SKILL.md"
-    assert dest.exists()
-    assert "Edit Existing build123d Geometry" in _read(dest)
-    assert "Installed" in result
-
-
-def test_agents_md_both_skills_coexist(tmp_path):
-    install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
-    install_skill(target="agents-md", cwd=tmp_path, skill="modeling")
-    content = _read(tmp_path / "AGENTS.md")
-    assert "<!-- b123d-drawing:start -->" in content
-    assert "<!-- b123d-modeling:start -->" in content
-    assert "Engineering Drawing" in content
-    assert "Build 3D Geometry" in content
-
-
-def test_agents_md_modeling_force_only_replaces_own_section(tmp_path):
-    install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
-    install_skill(target="agents-md", cwd=tmp_path, skill="modeling")
-    install_skill(target="agents-md", cwd=tmp_path, skill="modeling", force=True)
-    content = _read(tmp_path / "AGENTS.md")
-    assert content.count("<!-- b123d-drawing:start -->") == 1
-    assert content.count("<!-- b123d-modeling:start -->") == 1
-    assert "Engineering Drawing" in content
-
-
-def test_install_cursor_modeling_description_routed(tmp_path):
-    install_skill(target="cursor", cwd=tmp_path, skill="modeling")
-    content = _read(tmp_path / ".cursor" / "rules" / "b123d-modeling.mdc")
-    assert "description:" in content
-    assert "alwaysApply: false" in content
-    # modeling has no path affinity — no globs line at all
-    assert "globs" not in content.split("---")[1]
-
-
-def test_install_cursor_edit_description_routed(tmp_path):
-    install_skill(target="cursor", cwd=tmp_path, skill="edit")
-    content = _read(tmp_path / ".cursor" / "rules" / "b123d-edit.mdc")
-    assert "description:" in content
-    assert "alwaysApply: false" in content
-    # edit has no path affinity — no globs line at all
-    assert "globs" not in content.split("---")[1]
-
-
-def test_install_claude_repair(tmp_path):
-    result = install_skill(target="claude", cwd=tmp_path, skill="repair")
-    dest = tmp_path / ".claude" / "skills" / "b123d-repair" / "SKILL.md"
-    assert dest.exists()
-    assert "Repair Invalid Geometry" in _read(dest)
-    assert "Installed" in result
-
-
-def test_agents_md_all_four_skills_coexist(tmp_path):
-    install_skill(target="agents-md", cwd=tmp_path, skill="drawing")
-    install_skill(target="agents-md", cwd=tmp_path, skill="modeling")
-    install_skill(target="agents-md", cwd=tmp_path, skill="edit")
-    install_skill(target="agents-md", cwd=tmp_path, skill="repair")
-    content = _read(tmp_path / "AGENTS.md")
-    assert content.count("<!-- b123d-drawing:start -->") == 1
-    assert content.count("<!-- b123d-modeling:start -->") == 1
-    assert content.count("<!-- b123d-edit:start -->") == 1
-    assert content.count("<!-- b123d-repair:start -->") == 1
-    assert "Edit Existing build123d Geometry" in content
-    assert "Repair Invalid Geometry" in content
-
-
-def test_install_cursor_repair_description_routed(tmp_path):
-    install_skill(target="cursor", cwd=tmp_path, skill="repair")
-    content = _read(tmp_path / ".cursor" / "rules" / "b123d-repair.mdc")
-    assert "description:" in content
-    assert "alwaysApply: false" in content
-    # repair has no path affinity — no globs line at all
-    assert "globs" not in content.split("---")[1]
-
-
 def test_dest_exists_tracks_skills_independently(tmp_path):
-    install_skill(target="claude", cwd=tmp_path, skill="drawing")
-    assert _dest_exists("claude", cwd=tmp_path, skill="drawing")
-    assert not _dest_exists("claude", cwd=tmp_path, skill="modeling")
-    assert not _dest_exists("claude", cwd=tmp_path, skill="edit")
-    assert not _dest_exists("claude", cwd=tmp_path, skill="repair")
-
-
-def test_unknown_skill_returns_error():
-    result = install_skill(skill="welding")
-    assert "Unknown skill" in result
-    assert "welding" in result
+    install_skill(target="dot-agents", cwd=tmp_path, skill="drawing")
+    assert _dest_exists("dot-agents", cwd=tmp_path, skill="drawing")
+    assert not _dest_exists("dot-agents", cwd=tmp_path, skill="modeling")
+    assert not _dest_exists("dot-agents", cwd=tmp_path, skill="edit")
+    assert not _dest_exists("dot-agents", cwd=tmp_path, skill="repair")
 
 
 # ---------------------------------------------------------------------------
-# server instructions + skill resources
+# server instructions, tool signature, + skill resources
 # ---------------------------------------------------------------------------
+
+
+def test_server_install_skill_defaults_match_tool():
+    from build123d_mcp import server
+
+    server_sig = inspect.signature(server.install_skill)
+    tool_sig = inspect.signature(install_skill)
+    assert server_sig.parameters["target"].default == "claude"
+    assert server_sig.parameters["target"].default == tool_sig.parameters["target"].default
+    assert server_sig.parameters["skill"].default == tool_sig.parameters["skill"].default
 
 
 def test_server_instructions_registered():
@@ -425,12 +380,18 @@ def test_modeling_skill_resource_registered():
     assert "build123d://skill/repair" in uris
 
 
-# ---------------------------------------------------------------------------
-# unknown target
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "fn_name",
+    (
+        "build123d_drawing_skill",
+        "build123d_modeling_skill",
+        "build123d_edit_skill",
+        "build123d_repair_skill",
+    ),
+)
+def test_skill_resources_strip_frontmatter(fn_name):
+    from build123d_mcp import server
 
-
-def test_unknown_target_returns_error():
-    result = install_skill(target="unknown-agent", skill="drawing")
-    assert "Unknown target" in result
-    assert "unknown-agent" in result
+    text = getattr(server, fn_name)()
+    assert not text.startswith("---")
+    assert text.startswith("# ")

@@ -1,3 +1,8 @@
+---
+name: b123d-repair
+description: Diagnose and repair invalid build123d or imported STEP solids that fail validate() or the export gate using explicit build123d/OCP repair code, snapshots, and export-gate verification.
+---
+
 # Repair Invalid Geometry with build123d (b123d-repair)
 
 Use this skill when `validate()` or the `export()` gate reports FAIL on a shape —
