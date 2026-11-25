@@ -311,14 +311,15 @@ After connecting the server, ask your assistant to call `install_skill` for the
 workflow you need:
 
 ```text
-install_skill(target="dot-agents", skill="modeling")
-install_skill(target="dot-agents", skill="edit")
-install_skill(target="dot-agents", skill="repair")
+install_skill(skill="modeling")
+install_skill(skill="edit")
+install_skill(skill="repair")
 ```
 
-`target="dot-agents"` installs to `.agents/skills/<skill>/SKILL.md` (supported by
-Codex CLI, Antigravity, OpenCode, Cursor, GitHub Copilot, and Cline). For Claude
-Code, `target="claude"` (the default) installs to `.claude/skills/<skill>/SKILL.md`.
+By default, `install_skill` uses `target="claude"` and installs to
+`.claude/skills/<skill>/SKILL.md` for Claude Code. For other harnesses (Codex
+CLI, Antigravity, OpenCode, Cursor, GitHub Copilot, and Cline), pass
+`target="dot-agents"` to install to `.agents/skills/<skill>/SKILL.md`.
 Use `skill="modeling"` for 3D parts, `skill="edit"` for modifying existing models,
 and `skill="repair"` when a solid fails validation.
 
